@@ -55,7 +55,7 @@ func TestParseDirective(t *testing.T) {
 func TestParseTODO(t *testing.T) {
 	// Unimplemented statement types should produce warnings, not errors
 	c := newComp()
-	c.Parse([]ast.Stmt{ast.LabelStmt{}})
+	c.Parse([]ast.Stmt{ast.UnknownOpStmt{Loc: ast.Loc{File: "t", Line: 1}}})
 	if c.HasErrors() { t.Error("should not have errors, only warnings") }
 	if len(c.Warnings) == 0 { t.Error("should have TODO warning") }
 }
