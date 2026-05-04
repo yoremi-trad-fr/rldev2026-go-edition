@@ -160,6 +160,7 @@ type Options struct {
 	HexDump          bool   // Generate hex dump
 	RawStrings       bool   // Don't process text encoding
 	MakeMap          bool   // Generate seen map
+	FuncReg          *FuncRegistry // KFN function definitions (nil = use hardcoded)
 	SrcExt           string // Source file extension (default "org")
 	Encoding         string // Output encoding (default "CP932")
 	BOM              bool   // Write UTF-8 BOM
@@ -292,6 +293,15 @@ func (r *FuncRegistry) ModuleName(num int) string {
 		return name
 	}
 	return fmt.Sprintf("%03d", num)
+}
+
+// AllNames returns all registered function names.
+func (r *FuncRegistry) AllNames() []string {
+	names := make([]string, 0, len(r.funcs))
+	for _, d := range r.funcs {
+		names = append(names, d.Name)
+	}
+	return names
 }
 
 // HasFlag checks if a function definition has a specific flag.

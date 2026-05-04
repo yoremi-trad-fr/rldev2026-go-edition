@@ -675,8 +675,14 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 	// Read function arguments
 	args, err := readFuncArgs(r, argc)
 	if err != nil {
-		// If we fail to parse args, emit what we can
-		cmd.Kepago = []CommandElem{ElemString{Value: fmt.Sprintf("op<%s>(?)", opStr)}}
+		// If we fail to parse args, emit with name if known
+		funcName := fmt.Sprintf("op<%s>", opStr)
+		if opts.FuncReg != nil {
+			if def, ok := opts.FuncReg.Lookup(opStr); ok {
+				funcName = def.Name
+			}
+		}
+		cmd.Kepago = []CommandElem{ElemString{Value: fmt.Sprintf("%s(?)", funcName)}}
 		cmd.Opcode = opStr
 		result.Commands = append(result.Commands, cmd)
 		return nil // Don't propagate - try to continue
@@ -696,9 +702,20 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 		cmd.Kepago = []CommandElem{ElemString{Value: "ret"}}
 		cmd.IsJmp = true
 	default:
-		// Generic function
+		// Try KFN registry lookup
+		funcName := ""
+		if opts.FuncReg != nil {
+			if def, ok := opts.FuncReg.Lookup(opStr); ok {
+				funcName = def.Name
+			}
+		}
+
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("op<%s>", opStr))
+		if funcName != "" {
+			sb.WriteString(funcName)
+		} else {
+			sb.WriteString(fmt.Sprintf("op<%s>", opStr))
+		}
 		if len(args) > 0 {
 			sb.WriteByte('(')
 			for i, arg := range args {

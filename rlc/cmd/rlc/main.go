@@ -27,6 +27,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yoremi/rldev-go/rlc/pkg/codegen"
+	"github.com/yoremi/rldev-go/rlc/pkg/compilerframe"
 	"github.com/yoremi/rldev-go/rlc/pkg/ini"
 	"github.com/yoremi/rldev-go/rlc/pkg/kfn"
 	"github.com/yoremi/rldev-go/rlc/pkg/lexer"
@@ -130,6 +132,8 @@ func parseFlags(args []string) (*Options, error) {
 	fs.StringVar(&opts.OutDir, "d", opts.OutDir, "output directory")
 	fs.StringVar(&opts.OutFile, "o", opts.OutFile, "output filename")
 	fs.StringVar(&opts.Gameexe, "g", opts.Gameexe, "GAMEEXE.INI path")
+	fs.StringVar(&opts.Gameexe, "i", opts.Gameexe, "GAMEEXE.INI path (alias for -g)")
+	fs.StringVar(&opts.Gameexe, "ini", opts.Gameexe, "GAMEEXE.INI path (alias for -g)")
 	fs.StringVar(&opts.KfnFile, "K", opts.KfnFile, "reallive.kfn path")
 	fs.StringVar(&opts.CastFile, "cast", opts.CastFile, "cast file")
 	fs.StringVar(&opts.GameFile, "game", opts.GameFile, "game.cfg path")
@@ -227,15 +231,53 @@ func compileFile(opts *Options, srcPath string) error {
 		fmt.Fprintf(os.Stderr, "  Statements: %d\n", len(program.Stmts))
 	}
 
-	// 5. Compile (TODO: once compilerFrame is ready)
-	// For now, just report success at the parse stage.
-	if opts.Verbose > 0 {
-		fmt.Fprintf(os.Stderr, "  Parsed %d statements successfully.\n", len(program.Stmts))
-		fmt.Fprintf(os.Stderr, "  (compilerFrame not yet implemented — full bytecode emission pending)\n")
+	// 5. Compile via compilerframe
+	compiler := compilerframe.New(kfnReg, iniTable)
+	compiler.Verbose = opts.Verbose
+	compiler.Compile(program.Stmts)
+
+	// Report diagnostics
+	for _, w := range compiler.Warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
+	if compiler.HasErrors() {
+		for _, e := range compiler.Errors {
+			fmt.Fprintf(os.Stderr, "error: %v\n", e)
+		}
+		return fmt.Errorf("%d compilation errors", len(compiler.Errors))
 	}
 
-	_ = iniTable
-	_ = kfnReg
+	// 6. Generate bytecode
+	if opts.Verbose > 0 {
+		fmt.Fprintf(os.Stderr, "  Compiled %d statements, IR length: %d\n",
+			len(program.Stmts), compiler.Out.Length())
+	}
+
+	genOpts := codegen.DefaultOptions()
+	bytecode, err := compiler.Out.Generate(genOpts)
+	if err != nil {
+		return fmt.Errorf("bytecode generation: %w", err)
+	}
+
+	// Determine output filename
+	outName := compiler.Directive.OutFile
+	if outName == "" {
+		base := filepath.Base(srcPath)
+		ext := filepath.Ext(base)
+		outName = strings.TrimSuffix(base, ext) + ".TXT"
+	}
+	if opts.OutDir != "" {
+		outName = filepath.Join(opts.OutDir, outName)
+	}
+
+	if err := os.WriteFile(outName, bytecode, 0644); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+
+	if opts.Verbose > 0 {
+		fmt.Fprintf(os.Stderr, "  Output: %s (%d bytes)\n", outName, len(bytecode))
+	}
+
 	return nil
 }
 

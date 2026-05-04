@@ -63,6 +63,10 @@ var (
 	noCodes        = flag.Bool("r", false, "don't generate control codes")
 	debugInfo      = flag.Bool("g", false, "read debug information")
 	target         = flag.String("t", "", "target: RealLive, AVG2000, Kinetic")
+	targetVersion  = flag.String("f", "", "interpreter version (n.n.n.n) or filename")
+	kfnFile        = flag.String("kfn", "", "RealLive function definition file (default: reallive.kfn)")
+	castFile       = flag.String("cast", "", "cast of characters translation file")
+	decKey         = flag.String("y", "", "decoder key for compiler version 110002")
 	srcExt         = flag.String("ext", "org", "source file extension")
 	showOpcodes    = flag.Bool("opcodes", false, "show opcode annotations")
 	hexDump        = flag.Bool("hexdump", false, "generate hex dump")
@@ -278,6 +282,29 @@ func doDisassemble(args []string, opts kprl.Options) error {
 		}
 	}
 
+	// Load KFN function definitions
+	kfnPath := *kfnFile
+	if kfnPath == "" {
+		// Auto-detect: search near executable, in lib/, etc.
+		candidates := findKFN()
+		if candidates != "" {
+			kfnPath = candidates
+		}
+	}
+	if kfnPath != "" {
+		reg, err := disasm.LoadKFN(kfnPath)
+		if err != nil {
+			if *verbose > 0 {
+				fmt.Fprintf(os.Stderr, "warning: cannot load KFN %s: %v\n", kfnPath, err)
+			}
+		} else {
+			disOpts.FuncReg = reg
+			if *verbose > 0 {
+				fmt.Fprintf(os.Stderr, "Loaded KFN: %s (%d functions)\n", kfnPath, len(reg.AllNames()))
+			}
+		}
+	}
+
 	writer := disasm.NewWriter(opts.OutDir, disOpts)
 
 	// Check if first file is an archive
@@ -385,4 +412,36 @@ func disassembleFile(fname string, opts kprl.Options, disOpts disasm.Options, wr
 func fatal(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "Error: "+format+"\n", args...)
 	os.Exit(1)
+}
+
+// findKFN searches for reallive.kfn in common locations.
+func findKFN() string {
+	execPath, _ := os.Executable()
+	execDir := filepath.Dir(execPath)
+	home, _ := os.UserHomeDir()
+	rldev := os.Getenv("RLDEV")
+
+	candidates := []string{
+		filepath.Join(execDir, "reallive.kfn"),
+		filepath.Join(execDir, "lib", "reallive.kfn"),
+	}
+	if rldev != "" {
+		candidates = append([]string{
+			filepath.Join(rldev, "lib", "reallive.kfn"),
+			filepath.Join(rldev, "reallive.kfn"),
+		}, candidates...)
+	}
+	if home != "" {
+		candidates = append(candidates,
+			filepath.Join(home, "rldev", "lib", "reallive.kfn"),
+			filepath.Join(home, ".rldev", "lib", "reallive.kfn"),
+		)
+	}
+
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return ""
 }
