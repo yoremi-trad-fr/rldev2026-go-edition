@@ -339,11 +339,26 @@ func (r *Reader) getExprTerm() (string, error) {
 }
 
 // readIntVar reads an integer variable reference (intA[idx], intB[idx], etc.)
+// or special cases: $0xff = immediate constant, $0xc8 = store register.
 func (r *Reader) readIntVar() (string, error) {
 	// Variable type byte
 	varType, err := r.Next()
 	if err != nil {
 		return "", err
+	}
+
+	// Special case: $0xff = immediate integer constant
+	if varType == 0xff {
+		v, err := r.ReadInt32()
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%d", v), nil
+	}
+
+	// Special case: $0xc8 = store register
+	if varType == 0xc8 {
+		return "store", nil
 	}
 
 	// Read array index expression enclosed in [ ]
