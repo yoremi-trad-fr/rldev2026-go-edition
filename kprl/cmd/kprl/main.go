@@ -391,8 +391,8 @@ func disassembleFile(fname string, opts kprl.Options, disOpts disasm.Options, wr
 		return fmt.Errorf("cannot read '%s': %w", fname, err)
 	}
 
-	// Decompress if needed
-	if arr.Len() >= 4 && !bytecode.UncompressedHeader(arr.Read(0, 4)) {
+	// Decompress if needed (for standalone files, also accept raw RealLive headers)
+	if arr.Len() >= 4 && !bytecode.UncompressedHeader(arr.Read(0, 4)) && !bytecode.IsRawRealLive(arr.Read(0, 4)) {
 		decompressed, err := rlcmp.Decompress(arr, opts.Keys, true)
 		if err != nil {
 			return fmt.Errorf("failed to decompress '%s': %w", fname, err)

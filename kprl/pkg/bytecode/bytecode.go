@@ -82,8 +82,12 @@ func UncompressedHeader(magic string) bool {
 	case magicKPRL, magicKP2K, magicKPRM, magicRDRL, magicRD2K, magicRDRM:
 		return true
 	}
-	// Also detect raw RealLive files: first 4 bytes = header size
-	// 0x1d0 (RealLive) or 0x1cc (AVG2000)
+	return false
+}
+
+// IsRawRealLive checks if data starts with a raw RealLive header (0x1d0/0x1cc).
+// Only use this for standalone files, NOT for archive entries.
+func IsRawRealLive(magic string) bool {
 	if len(magic) >= 4 {
 		sz := uint32(magic[0]) | uint32(magic[1])<<8 | uint32(magic[2])<<16 | uint32(magic[3])<<24
 		if sz == 0x1d0 || sz == 0x1cc {

@@ -51,10 +51,13 @@ func TestReaderInt(t *testing.T) {
 }
 
 func TestReaderExpression(t *testing.T) {
-	// Test immediate integer: 0xff followed by LE int32
-	data := make([]byte, 5)
-	data[0] = 0xff
-	binary.LittleEndian.PutUint32(data[1:], 42)
+	// Test immediate integer: '$' 0xff followed by LE int32.
+	// In OCaml, 0xff (immediate int) is a get_expr_token, which is reachable
+	// only after a '$' prefix at the start of a term.
+	data := make([]byte, 6)
+	data[0] = '$'
+	data[1] = 0xff
+	binary.LittleEndian.PutUint32(data[2:], 42)
 
 	r := NewReader(data, 0, len(data), ModeRealLive)
 	expr, err := r.GetExpression()

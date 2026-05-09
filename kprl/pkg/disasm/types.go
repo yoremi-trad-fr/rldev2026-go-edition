@@ -112,6 +112,11 @@ type ElemStore struct{ Value string }
 
 func (ElemStore) isCommandElem() {}
 
+// ElemText is a text element containing raw SJIS bytes.
+type ElemText struct{ Value string }
+
+func (ElemText) isCommandElem() {}
+
 // Command represents one disassembled instruction.
 type Command struct {
 	Offset  int           // Byte offset from start of code section
@@ -136,6 +141,8 @@ func (c *Command) Text() string {
 			sb.WriteString(v.Value)
 		case ElemPointer:
 			sb.WriteString(fmt.Sprintf("@ptr_%d", v.Offset))
+		case ElemText:
+			sb.WriteString(v.Value)
 		}
 	}
 	return sb.String()

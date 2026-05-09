@@ -158,213 +158,249 @@ func (r *Reader) ReadBytes(n int) ([]byte, error) {
 // Translates the OCaml get_expression/get_expr_term/get_expr_arith/etc.
 
 // GetExpression reads an expression from the bytecode, returning its string representation.
+//
+// OCaml reference: get_expression / get_expr_bool (disassembler.ml ~L526, L512).
+// CRITICAL: every binary/unary operator in RealLive bytecode is prefixed by
+// 0x5C ('\\'). All four expression layers below must consume two bytes per
+// operator: 0x5C followed by the actual op byte. Reading a single byte will
+// desynchronize the entire reader after the first expression.
 func (r *Reader) GetExpression() (string, error) {
 	return r.getExprBool()
 }
 
+// peek2 returns true and the second byte if the next two bytes match (b0, *).
+// Does NOT advance position.
+func (r *Reader) peek2() (byte, byte, bool) {
+	if r.pos+1 >= r.limit {
+		return 0, 0, false
+	}
+	return r.data[r.pos], r.data[r.pos+1], true
+}
+
+// matchBackslashOp checks if the next two bytes are 0x5C followed by an op
+// byte in [lo, hi]. Returns the op byte and true if matched (and consumes
+// both bytes); otherwise returns 0, false and does NOT advance.
+func (r *Reader) matchBackslashOp(lo, hi byte) (byte, bool) {
+	b0, b1, ok := r.peek2()
+	if !ok {
+		return 0, false
+	}
+	if b0 != 0x5c {
+		return 0, false
+	}
+	if b1 < lo || b1 > hi {
+		return 0, false
+	}
+	r.pos += 2
+	return b1, true
+}
+
+// getExprBool — OCaml get_expr_bool (disassembler.ml L512).
+// Handles "\<" (0x5C 0x3C) for && and "\=" (0x5C 0x3D) for ||.
 func (r *Reader) getExprBool() (string, error) {
 	left, err := r.getExprCond()
 	if err != nil {
 		return "", err
 	}
-
 	for {
-		b, err := r.Peek()
-		if err != nil {
+		op, ok := r.matchBackslashOp(0x3c, 0x3d)
+		if !ok {
 			return left, nil
 		}
-		switch b {
-		case 0x3c: // &&
-			r.Next()
-			right, err := r.getExprCond()
-			if err != nil {
-				return "", err
-			}
+		right, err := r.getExprCond()
+		if err != nil {
+			return "", err
+		}
+		switch op {
+		case 0x3c:
 			left = left + " && " + right
-		case 0x3d: // ||
-			r.Next()
-			right, err := r.getExprCond()
-			if err != nil {
-				return "", err
-			}
+		case 0x3d:
 			left = left + " || " + right
-		default:
-			return left, nil
 		}
 	}
 }
 
+// getExprCond — OCaml get_expr_cond (disassembler.ml L496).
+// Handles "\(" (0x28) "==", "\)" (0x29) "!=", etc., all 0x5C-prefixed.
 func (r *Reader) getExprCond() (string, error) {
 	left, err := r.getExprArith()
 	if err != nil {
 		return "", err
 	}
+	for {
+		op, ok := r.matchBackslashOp(0x28, 0x2d)
+		if !ok {
+			return left, nil
+		}
+		right, err := r.getExprArith()
+		if err != nil {
+			return "", err
+		}
+		var s string
+		switch op {
+		case 0x28:
+			s = "=="
+		case 0x29:
+			s = "!="
+		case 0x2a:
+			s = "<="
+		case 0x2b:
+			s = "<"
+		case 0x2c:
+			s = ">="
+		case 0x2d:
+			s = ">"
+		}
+		left = left + " " + s + " " + right
+	}
+}
 
+// op_string mapping shared between assignment and arithmetic.
+// Index by (op_byte - 0x14) for assignment, or directly by op_byte for arith.
+// OCaml: let op_string = [| "+"; "-"; "*"; "/"; "%"; "&"; "|"; "^"; "<<"; ">>"; "" |]
+var opStringTable = [11]string{
+	"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "",
+}
+
+// getExprArith — OCaml get_expr_arith (disassembler.ml L471).
+// Two-pass for precedence:
+//   - high prec ops "\*" through "\>>" (0x02-0x09)
+//   - low prec ops "\+" / "\-"          (0x00-0x01)
+func (r *Reader) getExprArith() (string, error) {
+	loopHi := func(left string) (string, error) {
+		for {
+			op, ok := r.matchBackslashOp(0x02, 0x09)
+			if !ok {
+				return left, nil
+			}
+			right, err := r.getExprTerm()
+			if err != nil {
+				return "", err
+			}
+			left = left + " " + opStringTable[op] + " " + right
+		}
+	}
+	term, err := r.getExprTerm()
+	if err != nil {
+		return "", err
+	}
+	left, err := loopHi(term)
+	if err != nil {
+		return "", err
+	}
+	for {
+		op, ok := r.matchBackslashOp(0x00, 0x01)
+		if !ok {
+			return left, nil
+		}
+		rhsTerm, err := r.getExprTerm()
+		if err != nil {
+			return "", err
+		}
+		rhs, err := loopHi(rhsTerm)
+		if err != nil {
+			return "", err
+		}
+		left = left + " " + opStringTable[op] + " " + rhs
+	}
+}
+
+// getExprTerm — OCaml get_expr_term (disassembler.ml L450).
+// Valid term starts:
+//   - "$"          → variable token (handled via get_expr_token)
+//   - "\\\000"     → unary plus (ignored, just descends)
+//   - "\\\001"     → unary minus
+//   - "("          → parenthesized expression
+//
+// IMPORTANT: 0xff (immediate int) and 0xc8 (store) are NOT top-level term
+// starts — they live inside the get_expr_token reader, which is invoked
+// after the leading "$" via readIntVar.
+func (r *Reader) getExprTerm() (string, error) {
 	b, err := r.Peek()
 	if err != nil {
-		return left, nil
+		return "", err
 	}
 
-	var op string
 	switch b {
-	case 0x28:
-		op = "=="
-	case 0x29:
-		op = "!="
-	case 0x2a:
-		op = "<="
-	case 0x2b:
-		op = "<"
-	case 0x2c:
-		op = ">="
-	case 0x2d:
-		op = ">"
-	default:
-		return left, nil
-	}
-
-	r.Next()
-	right, err := r.getExprArith()
-	if err != nil {
-		return "", err
-	}
-	return left + " " + op + " " + right, nil
-}
-
-func (r *Reader) getExprArith() (string, error) {
-	left, err := r.getExprTerm()
-	if err != nil {
-		return "", err
-	}
-
-	for {
-		b, err := r.Peek()
-		if err != nil {
-			return left, nil
-		}
-
-		var op string
-		switch b {
-		case 0x00:
-			op = "+"
-		case 0x01:
-			op = "-"
-		case 0x02:
-			op = "*"
-		case 0x03:
-			op = "/"
-		case 0x04:
-			op = "%"
-		case 0x05:
-			op = "&"
-		case 0x06:
-			op = "|"
-		case 0x07:
-			op = "^"
-		case 0x08:
-			op = "<<"
-		case 0x09:
-			op = ">>"
-		default:
-			return left, nil
-		}
-
+	case '$':
 		r.Next()
-		right, err := r.getExprTerm()
-		if err != nil {
-			return "", err
-		}
-		left = left + " " + op + " " + right
-	}
-}
+		return r.readExprToken()
 
-func (r *Reader) getExprTerm() (string, error) {
-	b, err := r.Next()
-	if err != nil {
-		return "", err
-	}
-
-	switch {
-	case b == 0xff: // Immediate integer constant
-		v, err := r.ReadInt32()
-		if err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("%d", v), nil
-
-	case b == 0xc8: // Store register
-		return "store", nil
-
-	case b == 0x0a: // Unary minus
-		term, err := r.getExprTerm()
-		if err != nil {
-			return "", err
-		}
-		return "-" + term, nil
-
-	case b == 0x0b: // Parenthesized expression
+	case '(':
+		r.Next()
 		expr, err := r.GetExpression()
 		if err != nil {
 			return "", err
 		}
-		if err := r.Expect(0x29, "getExprTerm/paren"); err != nil {
-			// Try to continue
+		if perr := r.Expect(')', "getExprTerm/paren"); perr != nil {
+			// continue best-effort
+			_ = perr
 		}
 		return "(" + expr + ")", nil
 
-	case b >= 0x14 && b <= 0x1e: // Unary operators
-		switch b {
-		case 0x14:
+	case 0x5c:
+		// Two-byte form: 0x5C 0x00 (unary plus, ignored) or 0x5C 0x01 (unary minus).
+		_, b1, ok := r.peek2()
+		if !ok {
+			return "", fmt.Errorf("EOF after 0x5c at expr term offset 0x%x", r.pos)
+		}
+		switch b1 {
+		case 0x00:
+			r.pos += 2
+			return r.getExprTerm()
+		case 0x01:
+			r.pos += 2
 			term, err := r.getExprTerm()
 			if err != nil {
 				return "", err
 			}
-			return "~" + term, nil
+			return "-" + term, nil
 		default:
-			// Other unary ops - read term
-			term, err := r.getExprTerm()
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("op_%02x(%s)", b, term), nil
+			return "", fmt.Errorf("unexpected 0x5c %02x in expr term at offset 0x%x", b1, r.pos)
 		}
 
-	case b == '$': // Integer variable
-		return r.readIntVar()
-
 	default:
-		r.Rollback(1)
-		return "", fmt.Errorf("unexpected byte 0x%02x in expression at offset 0x%x", b, r.pos)
+		return "", fmt.Errorf("expected $/\\/( in expr term, got 0x%02x at offset 0x%x", b, r.pos)
 	}
 }
 
-// readIntVar reads an integer variable reference (intA[idx], intB[idx], etc.)
-// or special cases: $0xff = immediate constant, $0xc8 = store register.
-func (r *Reader) readIntVar() (string, error) {
-	// Variable type byte
-	varType, err := r.Next()
+// readExprToken — OCaml get_expr_token (disassembler.ml L431).
+// Called after the leading "$" has been consumed.
+//   - 0xff → immediate int32 (4 bytes follow)
+//   - 0xc8 → "store"
+//   - any other byte (≠ 0xff, ≠ 0xc8) followed by '[' → variable reference
+func (r *Reader) readExprToken() (string, error) {
+	b, err := r.Next()
 	if err != nil {
 		return "", err
 	}
-
-	// Special case: $0xff = immediate integer constant
-	if varType == 0xff {
+	switch b {
+	case 0xff:
 		v, err := r.ReadInt32()
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("%d", v), nil
-	}
-
-	// Special case: $0xc8 = store register
-	if varType == 0xc8 {
+	case 0xc8:
 		return "store", nil
+	default:
+		// Variable: var_type byte then '[' expr ']'
+		return r.readVarBody(b)
 	}
+}
 
+// readVarBody reads the body of a variable reference: '[' expr ']'.
+// The first byte (varType) has already been consumed by the caller.
+//
+// OCaml reference: variable_name (disassembler.ml ~L1100, full table).
+// Both integer AND string variables are decoded here. The OCaml table
+// distinguishes integer-prefixed (intA, intZ, ...) and string-prefixed
+// (strK, strL, strM, strS) variables by varType byte.
+func (r *Reader) readVarBody(varType byte) (string, error) {
 	// Read array index expression enclosed in [ ]
-	if err := r.Expect('[', "readIntVar"); err != nil {
-		r.Rollback(1)
-		// Some formats use different bracketing
+	if err := r.Expect('[', "readVarBody"); err != nil {
+		// Continue best-effort
+		_ = err
 	}
 
 	idx, err := r.GetExpression()
@@ -372,111 +408,366 @@ func (r *Reader) readIntVar() (string, error) {
 		return "", err
 	}
 
-	if err := r.Expect(']', "readIntVar"); err != nil {
-		// Try to continue
+	if err := r.Expect(']', "readVarBody"); err != nil {
+		// Continue best-effort
+		_ = err
 	}
 
-	prefix := "int"
-	switch {
-	case varType < 6:
-		letters := []string{"A", "B", "C", "D", "E", "F"}
-		prefix = "int" + letters[varType]
-	case varType == 6:
-		prefix = "intG"
-	case varType == 7:
-		prefix = "intZ"
-	case varType == 0x0a:
-		prefix = "intL"
-	default:
-		prefix = fmt.Sprintf("int_%02x", varType)
-	}
-
-	return fmt.Sprintf("%s[%s]", prefix, idx), nil
+	return varPrefix(varType) + "[" + idx + "]", nil
 }
 
-// GetData reads a "data" element - either a string or expression.
-// This is the main data reader used for function arguments.
-func (r *Reader) GetData() (string, error) {
-	b, err := r.Peek()
-	if err != nil {
-		return "", err
-	}
-
-	if b == '"' || b == 0x0a {
-		// String data
-		return r.readStringData()
-	}
-
-	// Expression data
-	return r.GetExpression()
-}
-
-// readStringData reads a string argument (quoted string or string variable).
-func (r *Reader) readStringData() (string, error) {
-	b, err := r.Next()
-	if err != nil {
-		return "", err
-	}
-
-	switch b {
-	case '"':
-		// Literal string
-		var sb strings.Builder
-		sb.WriteByte('"')
-		for {
-			c, err := r.Next()
-			if err != nil {
-				break
-			}
-			if c == '"' {
-				sb.WriteByte('"')
-				break
-			}
-			sb.WriteByte(c)
-		}
-		return sb.String(), nil
-
+// varPrefix maps a variable-type byte to its kepago prefix.
+//
+// Faithful translation of OCaml variable_name decode table (disassembler.ml
+// L1102-L1124 in Jérémy's fork).  Note: 0x0a = strK, 0x0c = strM, 0x12 = strS
+// are STRING variables; everything else is integer.  Bit-width suffixes:
+//   - bare      → 32-bit
+//   - "b"       → 8-bit  (banks 0x1a-0x33)
+//   - "2b"      → 16-bit (banks 0x34-0x4d)
+//   - "4b"      → 32-bit (banks 0x4e-0x67)
+//   - "8b"      → 64-bit (banks 0x68-0x81)
+func varPrefix(t byte) string {
+	switch t {
+	// String variables (Config.svar_prefix in OCaml = "str")
 	case 0x0a:
-		// String variable reference
-		return r.readStrVar()
+		return "strK"
+	case 0x0c:
+		return "strM"
+	case 0x12:
+		return "strS"
+
+	// 32-bit integer banks (Config.ivar_prefix = "int")
+	case 0x00:
+		return "intA"
+	case 0x01:
+		return "intB"
+	case 0x02:
+		return "intC"
+	case 0x03:
+		return "intD"
+	case 0x04:
+		return "intE"
+	case 0x05:
+		return "intF"
+	case 0x06:
+		return "intG"
+	case 0x0b:
+		return "intL"
+	case 0x19:
+		return "intZ"
+
+	// 8-bit integer banks
+	case 0x1a:
+		return "intAb"
+	case 0x1b:
+		return "intBb"
+	case 0x1c:
+		return "intCb"
+	case 0x1d:
+		return "intDb"
+	case 0x1e:
+		return "intEb"
+	case 0x1f:
+		return "intFb"
+	case 0x20:
+		return "intGb"
+	case 0x33:
+		return "intZb"
+
+	// 16-bit integer banks
+	case 0x34:
+		return "intA2b"
+	case 0x35:
+		return "intB2b"
+	case 0x36:
+		return "intC2b"
+	case 0x37:
+		return "intD2b"
+	case 0x38:
+		return "intE2b"
+	case 0x39:
+		return "intF2b"
+	case 0x3a:
+		return "intG2b"
+	case 0x4d:
+		return "intZ2b"
+
+	// 32-bit (split-bank) integer banks
+	case 0x4e:
+		return "intA4b"
+	case 0x4f:
+		return "intB4b"
+	case 0x50:
+		return "intC4b"
+	case 0x51:
+		return "intD4b"
+	case 0x52:
+		return "intE4b"
+	case 0x53:
+		return "intF4b"
+	case 0x54:
+		return "intG4b"
+	case 0x67:
+		return "intZ4b"
+
+	// 64-bit integer banks
+	case 0x68:
+		return "intA8b"
+	case 0x69:
+		return "intB8b"
+	case 0x6a:
+		return "intC8b"
+	case 0x6b:
+		return "intD8b"
+	case 0x6c:
+		return "intE8b"
+	case 0x6d:
+		return "intF8b"
+	case 0x6e:
+		return "intG8b"
+	case 0x81:
+		return "intZ8b"
 
 	default:
-		r.Rollback(1)
-		return "", fmt.Errorf("unexpected byte 0x%02x in string data", b)
+		return fmt.Sprintf("VAR%02x", t)
 	}
 }
 
-// readStrVar reads a string variable reference (strS[idx], etc.)
-func (r *Reader) readStrVar() (string, error) {
-	varType, err := r.Next()
-	if err != nil {
-		return "", err
+// GetData reads a "data" element — either a string or an expression.
+//
+// OCaml reference: get_data (disassembler.ml L1383, equivalent in fork).
+// Dispatch by next byte:
+//   - ','           → consumed (debug separator) and recurse
+//   - '\n' + 2/4 b  → consumed (debug line marker) and recurse
+//   - [A-Z 0-9 ? _ "] | sjs1 | "###PRINT(" → roll back, parse string
+//   - 'a' xx        → __special[xx](args)  (rare, mostly unused)
+//   - anything else → roll back, parse expression
+func (r *Reader) GetData() (string, error) {
+	return r.GetDataSep(false)
+}
+
+// GetDataSep is the underlying get_data with the sep_str flag from OCaml.
+// sep_str=true means "this string can be moved to the resource file".
+func (r *Reader) GetDataSep(sepStr bool) (string, error) {
+	for {
+		b, err := r.Peek()
+		if err != nil {
+			return "", err
+		}
+
+		switch {
+		case b == ',':
+			r.Next()
+			continue
+
+		case b == '\n':
+			// '\n' followed by debug-line int (size depends on engine mode)
+			r.Next()
+			if r.mode == ModeAvg2000 {
+				_, _ = r.ReadInt32()
+			} else {
+				_, _ = r.ReadUint16()
+			}
+			continue
+
+		case b == 'a':
+			// 0x61 NN  '(' arg, arg, ... ')'  →  __special[NN](args)
+			//
+			// OCaml reference: get_data ' a ' branch (disassembler.ml L1377).
+			// 'a' followed by an index byte and a paren block is a
+			// "general-case" complex parameter; the contents are read as
+			// repeated get_data calls until the matching ')'.
+			r.Next()
+			idx, err := r.Next()
+			if err != nil {
+				return "", err
+			}
+			if err := r.Expect('(', "GetDataSep/special"); err != nil {
+				return "", err
+			}
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "__special[%d](", idx)
+			first := true
+			for !r.AtEnd() {
+				bb, err := r.Peek()
+				if err != nil {
+					break
+				}
+				if bb == ')' {
+					r.Next()
+					break
+				}
+				if !first {
+					sb.WriteString(", ")
+				}
+				inner, err := r.GetData()
+				if err != nil {
+					return "", err
+				}
+				sb.WriteString(inner)
+				first = false
+			}
+			sb.WriteByte(')')
+			return sb.String(), nil
+
+		case b == '"' || isAsciiStringStart(b) || isShiftJISLead(b):
+			// Roll back nothing — readStringUnquot starts at this byte.
+			return r.readStringUnquot(sepStr)
+
+		default:
+			// Expression
+			return r.GetExpression()
+		}
+	}
+}
+
+// isAsciiStringStart returns true if the byte starts a bare unquoted
+// string in the OCaml grammar — that is one of [A-Z 0-9 ? _].
+// Lowercase letters are NOT included on purpose.
+func isAsciiStringStart(b byte) bool {
+	return (b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9') ||
+		b == '?' || b == '_'
+}
+
+// readStringUnquot — OCaml get_string (disassembler.ml L1313).
+//
+// Strings in RealLive bytecode use a peculiar two-mode encoding:
+//
+//   - "unquot" mode (default outside double-quotes):
+//       collects [A-Z 0-9 ? _ sjs-double-byte] runs as raw text;
+//       handles "###PRINT(expr)" → \i{expr} or \s{expr};
+//       a '"' switches to quot mode;
+//       any other byte ends the string (rolled back for caller).
+//
+//   - "quot" mode (after seeing a '"'):
+//       \" → '"' literal in output;
+//       \  → "\\" (escape backslash);
+//       '  → "'" or "\'" depending on sep_str;
+//       a closing '"' returns to unquot mode;
+//       sjs1 lead-byte + any → 2-byte SJIS char;
+//       anything else → raw byte.
+func (r *Reader) readStringUnquot(sepStr bool) (string, error) {
+	var b strings.Builder
+
+unquotLoop:
+	for {
+		c, err := r.Peek()
+		if err != nil {
+			break
+		}
+
+		switch {
+		case c == '"':
+			// Enter quot mode
+			r.Next()
+			if !r.readStringQuot(&b, sepStr) {
+				break unquotLoop
+			}
+			continue
+
+		case c == '#':
+			// Maybe "###PRINT("
+			if r.matchLiteral("###PRINT(") {
+				expr, err := r.GetExpression()
+				if err != nil {
+					return b.String(), err
+				}
+				_ = r.Expect(')', "readStringUnquot/print")
+				kind := 'i'
+				if len(expr) > 0 && expr[0] == 's' {
+					kind = 's'
+				}
+				fmt.Fprintf(&b, "\\%c{%s}", kind, expr)
+				continue
+			}
+			// '#' alone is a command boundary — let caller handle.
+			break unquotLoop
+
+		case isAsciiStringStart(c):
+			r.Next()
+			b.WriteByte(c)
+
+		case isShiftJISLead(c):
+			// 2-byte SJIS character
+			r.Next()
+			c2, err := r.Next()
+			if err != nil {
+				b.WriteByte(c)
+				break unquotLoop
+			}
+			b.WriteByte(c)
+			b.WriteByte(c2)
+
+		default:
+			break unquotLoop
+		}
 	}
 
-	if err := r.Expect('[', "readStrVar"); err != nil {
-		r.Rollback(1)
-	}
+	return b.String(), nil
+}
 
-	idx, err := r.GetExpression()
-	if err != nil {
-		return "", err
-	}
+// readStringQuot — OCaml's quot inner lexer (disassembler.ml L1318).
+// Reads bytes until a closing '"' or EOF. Returns true to continue in
+// unquot mode after the close quote, false on EOF.
+func (r *Reader) readStringQuot(b *strings.Builder, sepStr bool) bool {
+	for {
+		c, err := r.Next()
+		if err != nil {
+			return false
+		}
 
-	if err := r.Expect(']', "readStrVar"); err != nil {
-		// Continue
-	}
+		switch c {
+		case '\\':
+			// Escape: \" → ", everything else → \\
+			peek, err := r.Peek()
+			if err == nil && peek == '"' {
+				r.Next()
+				b.WriteByte('"')
+			} else {
+				b.WriteString("\\\\")
+			}
 
-	prefix := "str"
-	switch varType {
-	case 0x0c:
-		prefix = "strS"
-	case 0x12:
-		prefix = "strM"
-	default:
-		prefix = fmt.Sprintf("str_%02x", varType)
-	}
+		case '\'':
+			if sepStr {
+				b.WriteByte('\'')
+			} else {
+				b.WriteString("\\'")
+			}
 
-	return fmt.Sprintf("%s[%s]", prefix, idx), nil
+		case '"':
+			// End of quot mode → back to unquot.
+			return true
+
+		default:
+			if isShiftJISLead(c) {
+				c2, err := r.Next()
+				if err != nil {
+					b.WriteByte(c)
+					return false
+				}
+				b.WriteByte(c)
+				b.WriteByte(c2)
+			} else {
+				b.WriteByte(c)
+			}
+		}
+	}
+}
+
+// matchLiteral checks if the next bytes match the given literal string.
+// Consumes the bytes if matched; otherwise leaves position unchanged.
+func (r *Reader) matchLiteral(s string) bool {
+	if r.pos+len(s) > r.limit {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if r.data[r.pos+i] != s[i] {
+			return false
+		}
+	}
+	r.pos += len(s)
+	return true
 }
 
 // --- Main disassembly loop ---
@@ -683,199 +974,434 @@ func readCommand(r *Reader, hdr *bytecode.FileHeader, result *DisassemblyResult,
 }
 
 // readFunction handles a function call opcode.
+//
+// OCaml reference: read_function (disassembler.ml L2507 in fork).
+// Most opcodes are handled via the KFN registry's per-function parameter
+// signatures (see read_soft_function). This Go port hard-codes the most
+// common control-flow opcodes (goto, gosub, conditionals, ret) which all
+// have parameter shapes that don't match the generic argc-based reader.
 func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, argc int, opts Options) error {
-	cmd := Command{Offset: offset}
-	opStr := op.String()
+	cmd := Command{Offset: offset, Opcode: op.String()}
 
-	// Read function arguments
+	// Special-case control-flow opcodes BEFORE generic arg parsing — they
+	// have an out-of-band pointer (4-byte int) inside the parens that argc
+	// doesn't account for. Letting readFuncArgs near them desyncs the
+	// reader for the rest of the file.
+	//
+	// Module/function numbers come from reallive.kfn:
+	//   module 001 = Jmp (flow control)
+	//     fn  0  goto         <0:Jmp:00000, 0>
+	//     fn  1  goto_if      <0:Jmp:00001, 0> (<'condition')
+	//     fn  2  goto_unless  <0:Jmp:00002, 0> (<'condition')
+	//     fn  3  goto_on        ('value') { label+ }
+	//     fn  4  goto_case      ('value') { case+ }
+	//     fn  5  gosub        <0:Jmp:00005, 0>
+	//     fn  6  gosub_if     <0:Jmp:00006, 0>
+	//     fn  7  gosub_unless <0:Jmp:00007, 0>
+	//     fn  8  gosub_on
+	//     fn  9  gosub_case
+	//     fn 10  ret          <0:Jmp:00010, 0>
+	//     fn 11  jump         <0:Jmp:00011, 1>
+	//     fn 12  farcall      <0:Jmp:00012, 1>
+	switch {
+	case op.Module == 1 && (op.Function == 0 || op.Function == 5):
+		// goto / gosub: 4-byte pointer follows directly.
+		return readGotoLike(r, result, &cmd, op, opts)
+
+	case op.Module == 1 && (op.Function == 1 || op.Function == 2 ||
+		op.Function == 6 || op.Function == 7):
+		// goto_if / goto_unless / gosub_if / gosub_unless:
+		// '(' expr ')' then 4-byte pointer.
+		return readCondGotoLike(r, result, &cmd, op, opts)
+
+	case op.Module == 1 && (op.Function == 3 || op.Function == 8):
+		// goto_on / gosub_on: '(' expr ')' '{' ptr×argc '}'
+		return readGotoOnLike(r, result, &cmd, op, argc, opts)
+
+	case op.Module == 1 && (op.Function == 4 || op.Function == 9):
+		// goto_case / gosub_case: '(' expr ')' '{' ('('case')'|'()') ptr ×argc '}'
+		return readGotoCaseLike(r, result, &cmd, op, argc, opts)
+
+	case op.Module == 1 && op.Function == 10:
+		// ret: zero args, no parens.
+		cmd.Kepago = []CommandElem{ElemString{Value: "ret"}}
+		cmd.IsJmp = true
+		result.Commands = append(result.Commands, cmd)
+		return nil
+	}
+
+	// Generic path: KFN-or-fallback.
 	args, err := readFuncArgs(r, argc)
 	if err != nil {
-		// If we fail to parse args, emit with name if known
-		funcName := fmt.Sprintf("op<%s>", opStr)
+		// Best-effort: emit with name if known.
+		funcName := fmt.Sprintf("op<%s>", op.String())
 		if opts.FuncReg != nil {
-			if def, ok := opts.FuncReg.Lookup(opStr); ok {
+			if def, ok := opts.FuncReg.Lookup(op.String()); ok {
 				funcName = def.Name
 			}
 		}
 		cmd.Kepago = []CommandElem{ElemString{Value: fmt.Sprintf("%s(?)", funcName)}}
-		cmd.Opcode = opStr
 		result.Commands = append(result.Commands, cmd)
-		return nil // Don't propagate - try to continue
+		return nil
 	}
 
-	// Special handling for known opcodes
-	switch {
-	case op.Module == 1 && (op.Function == 1 || op.Function == 3):
-		// goto / gosub - has pointer target
-		handleGoto(r, result, &cmd, op, args, offset)
-	case op.Module == 1 && (op.Function == 5 || op.Function == 8 ||
-		op.Function == 9 || op.Function == 16):
-		// Conditional goto/gosub
-		handleCondGoto(r, result, &cmd, op, args, offset)
-	case op.Module == 5 && op.Function == 1:
-		// ret
-		cmd.Kepago = []CommandElem{ElemString{Value: "ret"}}
-		cmd.IsJmp = true
-	default:
-		// Try KFN registry lookup
-		funcName := ""
-		if opts.FuncReg != nil {
-			if def, ok := opts.FuncReg.Lookup(opStr); ok {
-				funcName = def.Name
-			}
+	funcName := ""
+	if opts.FuncReg != nil {
+		if def, ok := opts.FuncReg.Lookup(op.String()); ok {
+			funcName = def.Name
 		}
-
-		var sb strings.Builder
-		if funcName != "" {
-			sb.WriteString(funcName)
-		} else {
-			sb.WriteString(fmt.Sprintf("op<%s>", opStr))
-		}
-		if len(args) > 0 {
-			sb.WriteByte('(')
-			for i, arg := range args {
-				if i > 0 {
-					sb.WriteString(", ")
-				}
-				sb.WriteString(arg)
-			}
-			sb.WriteByte(')')
-		}
-		cmd.Kepago = []CommandElem{ElemString{Value: sb.String()}}
-		cmd.Opcode = opStr
 	}
-
+	var sb strings.Builder
+	if funcName != "" {
+		sb.WriteString(funcName)
+	} else {
+		fmt.Fprintf(&sb, "op<%s>", op.String())
+	}
+	if len(args) > 0 {
+		sb.WriteByte('(')
+		for i, arg := range args {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(arg)
+		}
+		sb.WriteByte(')')
+	}
+	cmd.Kepago = []CommandElem{ElemString{Value: sb.String()}}
 	result.Commands = append(result.Commands, cmd)
 	return nil
 }
 
-// readFuncArgs reads argc function arguments.
+// readGotoOnLike reads goto_on / gosub_on: '(' expr ')' '{' int32×argc '}'.
+//
+// OCaml reference: read_goto_on (disassembler.ml L1815).
+// Each case is just a 4-byte pointer; argc tells how many. The ordering
+// indexes by the value of the expression.
+func readGotoOnLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, argc int, opts Options) error {
+	name := "goto_on"
+	cmd.IsJmp = false
+	if op.Function == 8 {
+		name = "gosub_on"
+	}
+
+	if err := r.Expect('(', "readGotoOnLike/expr-open"); err != nil {
+		return err
+	}
+	expr, err := r.GetExpression()
+	if err != nil {
+		return err
+	}
+	if err := r.Expect(')', "readGotoOnLike/expr-close"); err != nil {
+		return err
+	}
+	if err := r.Expect('{', "readGotoOnLike/brace-open"); err != nil {
+		return err
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s (%s) {", name, expr)
+	for i := 0; i < argc; i++ {
+		target, err := r.ReadInt32()
+		if err != nil {
+			return err
+		}
+		if result.Pointers != nil {
+			result.Pointers[int(target)] = true
+		}
+		if i > 0 {
+			sb.WriteString("; ")
+		} else {
+			sb.WriteByte(' ')
+		}
+		fmt.Fprintf(&sb, "@%d", target)
+	}
+	sb.WriteString(" }")
+
+	if err := r.Expect('}', "readGotoOnLike/brace-close"); err != nil {
+		return err
+	}
+
+	cmd.Kepago = []CommandElem{ElemString{Value: sb.String()}}
+	result.Commands = append(result.Commands, *cmd)
+	return nil
+}
+
+// readGotoCaseLike reads goto_case / gosub_case:
+//   '(' expr ')' '{' [ '(' case-expr ')' | '()' ] int32 ×argc '}'
+//
+// OCaml reference: read_goto_case (disassembler.ml L1796).
+// Each case is either a value-bearing case `(case-expr) ptr` or a default
+// case `() ptr`. The expression is the value being switched on.
+func readGotoCaseLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, argc int, opts Options) error {
+	name := "goto_case"
+	cmd.IsJmp = false
+	if op.Function == 9 {
+		name = "gosub_case"
+	}
+
+	if err := r.Expect('(', "readGotoCaseLike/expr-open"); err != nil {
+		return err
+	}
+	expr, err := r.GetExpression()
+	if err != nil {
+		return err
+	}
+	if err := r.Expect(')', "readGotoCaseLike/expr-close"); err != nil {
+		return err
+	}
+	if err := r.Expect('{', "readGotoCaseLike/brace-open"); err != nil {
+		return err
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s (%s) {", name, expr)
+
+	for i := 0; i < argc; i++ {
+		// '()' default case OR '(' case-expr ')'.
+		b0, b1, ok := r.peek2()
+		if !ok {
+			return fmt.Errorf("EOF in goto_case body")
+		}
+		var caseLabel string
+		if b0 == '(' && b1 == ')' {
+			r.pos += 2
+			caseLabel = "_"
+		} else if b0 == '(' {
+			r.Next()
+			caseExpr, err := r.GetExpression()
+			if err != nil {
+				return err
+			}
+			if err := r.Expect(')', "readGotoCaseLike/case-close"); err != nil {
+				return err
+			}
+			caseLabel = caseExpr
+		} else {
+			return fmt.Errorf("expected '(' in goto_case body, got 0x%02x at offset 0x%x", b0, r.pos)
+		}
+
+		target, err := r.ReadInt32()
+		if err != nil {
+			return err
+		}
+		if result.Pointers != nil {
+			result.Pointers[int(target)] = true
+		}
+		if i > 0 {
+			sb.WriteString("; ")
+		} else {
+			sb.WriteByte(' ')
+		}
+		fmt.Fprintf(&sb, "%s: @%d", caseLabel, target)
+	}
+	sb.WriteString(" }")
+
+	if err := r.Expect('}', "readGotoCaseLike/brace-close"); err != nil {
+		return err
+	}
+
+	cmd.Kepago = []CommandElem{ElemString{Value: sb.String()}}
+	result.Commands = append(result.Commands, *cmd)
+	return nil
+}
+
+// readGotoLike reads the bytecode shape for an unconditional jump:
+//   header already consumed; a 4-byte LE int32 pointer follows directly
+//   (no parens, no argc — the pointer is added by the IsGoto flag in the
+//   KFN).
+//
+// OCaml reference: read_soft_function L2356:
+//
+//	if List.mem IsGoto fndef.fn_flags
+//	  then [pointer (get_int lexbuf)]
+func readGotoLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, opts Options) error {
+	name := "goto"
+	cmd.IsJmp = true
+	if op.Function == 5 {
+		name = "gosub"
+		cmd.IsJmp = false
+	}
+	target, err := r.ReadInt32()
+	if err != nil {
+		return err
+	}
+	if result.Pointers != nil {
+		result.Pointers[int(target)] = true
+	}
+	cmd.Kepago = []CommandElem{ElemString{Value: fmt.Sprintf("%s @%d", name, target)}}
+	result.Commands = append(result.Commands, *cmd)
+	return nil
+}
+
+// readCondGotoLike reads a conditional goto/gosub:
+//   header already consumed; the condition expression is wrapped in parens
+//   '(' expr ')', then a 4-byte LE int32 pointer follows directly
+//   (no parens around the pointer).
+//
+// KFN signatures show '(<condition>)' for goto_if/unless and gosub_if/unless;
+// the condition is "<-prefixed" meaning it's not counted in argc but is read
+// from the bytecode in parens. The trailing pointer comes from the IsGoto
+// flag, just like readGotoLike.
+func readCondGotoLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, opts Options) error {
+	var name string
+	switch op.Function {
+	case 1:
+		name = "goto_if"
+	case 2:
+		name = "goto_unless"
+	case 6:
+		name = "gosub_if"
+	case 7:
+		name = "gosub_unless"
+	}
+
+	if err := r.Expect('(', "readCondGotoLike/cond-open"); err != nil {
+		return err
+	}
+	cond, err := r.GetExpression()
+	if err != nil {
+		return err
+	}
+	if err := r.Expect(')', "readCondGotoLike/cond-close"); err != nil {
+		return err
+	}
+	target, err := r.ReadInt32()
+	if err != nil {
+		return err
+	}
+	if result.Pointers != nil {
+		result.Pointers[int(target)] = true
+	}
+	cmd.Kepago = []CommandElem{ElemString{Value: fmt.Sprintf("%s (%s) @%d", name, cond, target)}}
+	result.Commands = append(result.Commands, *cmd)
+	return nil
+}
+
+// readFuncArgs reads function arguments enclosed in matched parens.
+//
+// OCaml reference: read_unknown_function (disassembler.ml L2058) and the
+// generic loop inside read_soft_function. Both read arguments until they
+// see the closing ')', regardless of argc. The argc count is only used as
+// a soft sanity check (a warning is emitted when it doesn't match).
+//
+// Critically, this function tracks paren *depth*: some opcodes (notably
+// those with `special(...)` parameters in the KFN, e.g. gosub_with, select)
+// embed inner paren groups whose contents are not standard expressions.
+// We consume balanced parens while reading the args so the reader stays
+// in sync with the bytecode for the next command.
 func readFuncArgs(r *Reader, argc int) ([]string, error) {
 	var args []string
 
-	// Check for opening paren
 	b, err := r.Peek()
 	if err != nil {
 		return nil, err
 	}
-	if b == '(' {
-		r.Next()
+	// No args block at all: return empty.
+	if b != '(' {
+		return nil, nil
 	}
+	r.Next() // consume opening '('
+	depth := 1
 
-	for i := 0; i < argc; i++ {
-		arg, err := r.GetData()
+	for !r.AtEnd() {
+		b, err := r.Peek()
 		if err != nil {
-			return args, err
+			break
 		}
-		args = append(args, arg)
-	}
 
-	// Check for closing paren
-	b, err = r.Peek()
-	if err == nil && b == ')' {
-		r.Next()
+		switch b {
+		case ')':
+			r.Next()
+			depth--
+			if depth == 0 {
+				if argc > 0 && len(args) != argc {
+					// Soft warning only — readers tolerate mismatch.
+				}
+				return args, nil
+			}
+			// Closing an inner paren — append it to the last arg if any,
+			// or skip silently. Here we just continue.
+
+		case '(':
+			// Nested paren group — consume balanced. The contents are read
+			// as raw bytes captured into the current arg.
+			start := r.Pos()
+			r.Next()
+			depth++
+			// Capture bytes until the matching close at this depth.
+			localDepth := 1
+			for !r.AtEnd() && localDepth > 0 {
+				bb, _ := r.Next()
+				switch bb {
+				case '(':
+					localDepth++
+				case ')':
+					localDepth--
+				}
+			}
+			depth--
+			// Append captured raw bytes as a hex/text snippet for visibility.
+			end := r.Pos()
+			args = append(args, fmt.Sprintf("/* nested:%d bytes */", end-start))
+
+		case ',':
+			// Argument separator — silently consumed in OCaml unquot.
+			r.Next()
+
+		default:
+			arg, err := r.GetData()
+			if err != nil {
+				// Best-effort: stop reading args on error and let the
+				// outer loop continue from the current position.
+				return args, nil
+			}
+			args = append(args, arg)
+		}
 	}
 
 	return args, nil
 }
 
-// handleGoto processes goto/gosub instructions.
-func handleGoto(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, args []string, offset int) {
-	name := "goto"
-	if op.Function == 3 {
-		name = "gosub"
-	}
-
-	cmd.IsJmp = (op.Function == 1) // goto is unconditional jump
-	cmd.Kepago = []CommandElem{ElemString{Value: name}}
-
-	// The argument is a pointer offset
-	if len(args) > 0 {
-		cmd.Kepago = append(cmd.Kepago, ElemString{Value: "(" + args[0] + ")"})
-	}
-}
-
-// handleCondGoto processes conditional goto/gosub.
-func handleCondGoto(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, args []string, offset int) {
-	name := "goto_if"
-	switch op.Function {
-	case 5:
-		name = "goto_if"
-	case 8:
-		name = "goto_unless"
-	case 9:
-		name = "gosub_if"
-	case 16:
-		name = "gosub_unless"
-	}
-
-	var sb strings.Builder
-	sb.WriteString(name)
-	if len(args) > 0 {
-		sb.WriteByte('(')
-		sb.WriteString(strings.Join(args, ", "))
-		sb.WriteByte(')')
-	}
-
-	cmd.Kepago = []CommandElem{ElemString{Value: sb.String()}}
-}
-
 // readAssignment reads a variable assignment ('$' prefix).
+//
+// OCaml reference: get_assignment (disassembler.ml L1294).
+// Format: '$' [varType] '[' expr ']'   ← consumed via readExprToken
+//         '\' [0x14-0x1e]              ← assignment operator (2 bytes)
+//         <expression>                 ← right-hand side
+//
+// The op-byte mapping is OCaml's `op_string.(byte - 0x14) ^ "="`:
+//   0x14 → "+=",  0x15 → "-=",  0x16 → "*=",  0x17 → "/=",  0x18 → "%=",
+//   0x19 → "&=",  0x1a → "|=",  0x1b → "^=",  0x1c → "<<=", 0x1d → ">>=",
+//   0x1e → "="    (op_string[10] is empty, so just "=")
+//
+// IMPORTANT: there is NO trailing 0x5c after the expression. The previous
+// implementation consumed an extra byte at the end of every assignment,
+// which desynchronized the entire reader and caused the textout chaos.
 func readAssignment(r *Reader, result *DisassemblyResult, offset int) error {
 	cmd := Command{Offset: offset}
 
-	// Read destination variable
-	dest, err := r.readIntVar()
+	// '$' is already consumed by readCommand. Now read get_expr_token directly:
+	// the next byte is the variable type, then '[' expr ']'.
+	dest, err := r.readExprToken()
 	if err != nil {
 		return err
 	}
 
-	// Read operator
-	opByte, err := r.Next()
-	if err != nil {
-		return err
+	// Read 2-byte operator: 0x5c followed by 0x14..0x1e
+	opByte, ok := r.matchBackslashOp(0x14, 0x1e)
+	if !ok {
+		// Try to recover: consume a byte and emit a synthetic op
+		b, _ := r.Peek()
+		return fmt.Errorf("expected '\\' [0x14-0x1e] in assignment, got 0x%02x at offset 0x%x", b, r.pos)
 	}
 
-	var op string
-	switch opByte {
-	case 0x14:
-		op = "="
-	case 0x15:
-		op = "+="
-	case 0x16:
-		op = "-="
-	case 0x17:
-		op = "*="
-	case 0x18:
-		op = "/="
-	case 0x19:
-		op = "%="
-	case 0x1a:
-		op = "&="
-	case 0x1b:
-		op = "|="
-	case 0x1c:
-		op = "^="
-	case 0x1d:
-		op = "<<="
-	case 0x1e:
-		op = ">>="
-	default:
-		op = fmt.Sprintf("?=%02x=", opByte)
-	}
+	op := opStringTable[opByte-0x14] + "="
 
-	// Read source expression
-	if err := r.Expect(0x5c, "readAssignment"); err != nil {
-		// backslash separator - may be missing in some versions
-	}
-
+	// Read source expression (no trailing terminator).
 	src, err := r.GetExpression()
 	if err != nil {
 		src = "???"
 	}
-
-	// Expect terminator
-	r.Expect(0x5c, "readAssignment/end")
 
 	cmd.Kepago = []CommandElem{ElemString{
 		Value: fmt.Sprintf("%s %s %s", dest, op, src),
@@ -884,97 +1410,173 @@ func readAssignment(r *Reader, result *DisassemblyResult, offset int) error {
 	return nil
 }
 
-// readTextout reads a textout command (displayed text).
-// This is the most important part for translation work.
+// readTextout reads a textout command (raw displayed text).
+//
+// OCaml reference: read_textout (disassembler.ml L1709 in fork).
+// Terminators (consumed at outer call, NOT in the lexer):
+//   - 0x00 (halt)
+//   - '#'  (function call)
+//   - '$'  (assignment)
+//   - '\n' (debug line)
+//   - '@'  (kidoku flag)
+//
+// CRITICAL: ',' is NOT a terminator inside textout — it's silently consumed
+// in unquot mode. '!' is NOT a terminator either. The previous Go version
+// terminated on both, which truncated lines.
+//
+// The text is collected as raw SJIS bytes and emitted as a resource string;
+// the writer takes care of converting to UTF-8 for output.
 func readTextout(r *Reader, result *DisassemblyResult, offset int, opts Options) error {
 	cmd := Command{Offset: offset, CType: "textout"}
 
-	var text strings.Builder
+	var b strings.Builder
+	inQuot := false
 
+textoutLoop:
 	for !r.AtEnd() {
-		b, err := r.Peek()
+		c, err := r.Peek()
 		if err != nil {
 			break
 		}
 
-		// Check for end of text markers
-		if b == 0x00 || b == '#' || b == '$' || b == '\n' || b == ',' ||
-			b == '@' || b == '!' {
-			break
-		}
-
-		r.Next()
-
-		switch {
-		case b == 0x03:
-			// Page break
-			text.WriteString("\\p")
-			break // End text on page break
-
-		case b == 0x04:
-			// Ruby text (furigana) start
-			text.WriteString("{ruby ")
-			// Read until 0x05 (ruby separator) and 0x06 (end)
-			for !r.AtEnd() {
-				c, err := r.Next()
-				if err != nil {
-					break
+		if !inQuot {
+			// unquot mode: terminators end the textout.
+			switch c {
+			case 0x00, '#', '$', '\n', '@':
+				break textoutLoop
+			case '"':
+				r.Next()
+				inQuot = true
+				continue
+			case ',':
+				// Silently consumed in OCaml unquot.
+				r.Next()
+				continue
+			case '\\':
+				r.Next()
+				b.WriteString("\\\\")
+				continue
+			case '\'':
+				r.Next()
+				if opts.SeparateStrings {
+					b.WriteByte('\'')
+				} else {
+					b.WriteString("\\'")
 				}
-				if c == 0x05 {
-					text.WriteString("}{")
+				continue
+			}
+
+			// 2-char "<" or "//" or "{-" — only the special prefix form
+			// triggers OCaml's escape; otherwise drop through to the
+			// generic SJIS / catchall handler.
+			if c == '<' {
+				r.Next()
+				if opts.SeparateStrings {
+					b.WriteString("\\<")
+				} else {
+					b.WriteByte('<')
+				}
+				continue
+			}
+			if c == '/' && r.peekByteAt(1) == '/' {
+				r.pos += 2
+				if opts.SeparateStrings {
+					b.WriteString("\\//")
+				} else {
+					b.WriteString("//")
+				}
+				continue
+			}
+			if c == '{' && r.peekByteAt(1) == '-' {
+				r.pos += 2
+				if opts.SeparateStrings {
+					b.WriteString("{\\-")
+				} else {
+					b.WriteString("{-")
+				}
+				continue
+			}
+
+			// Lenticulars: 0x81 0x79 → \{ , 0x81 0x7a → }
+			if c == 0x81 {
+				next := r.peekByteAt(1)
+				if next == 0x79 {
+					r.pos += 2
+					b.WriteString("\\{")
 					continue
 				}
-				if c == 0x06 {
-					text.WriteByte('}')
-					break
+				if next == 0x7a {
+					r.pos += 2
+					b.WriteByte('}')
+					continue
 				}
-				// ShiftJIS double-byte check
-				if isShiftJISLead(c) && !r.AtEnd() {
-					c2, _ := r.Next()
-					text.WriteByte(c)
-					text.WriteByte(c2)
+			}
+
+			// Regular SJIS pair
+			if isShiftJISLead(c) {
+				r.Next()
+				c2, err := r.Next()
+				if err != nil {
+					b.WriteByte(c)
+					break textoutLoop
+				}
+				b.WriteByte(c)
+				b.WriteByte(c2)
+				continue
+			}
+
+			// Plain ASCII / printable
+			r.Next()
+			if c >= 0x20 && c < 0x80 {
+				b.WriteByte(c)
+			} else if opts.ControlCodes {
+				fmt.Fprintf(&b, "\\x{%02x}", c)
+			} else {
+				b.WriteByte(c)
+			}
+
+		} else {
+			// quot mode: only EOF or '"' exit.
+			r.Next()
+			switch c {
+			case '"':
+				inQuot = false
+			case '\\':
+				peek, err := r.Peek()
+				if err == nil && peek == '"' {
+					r.Next()
+					b.WriteByte('"')
 				} else {
-					text.WriteByte(c)
+					b.WriteString("\\\\")
 				}
-			}
-
-		case b == 0x01:
-			// Line break
-			text.WriteString("\\n")
-
-		case b == 0x02:
-			// Pause (wait for click)
-			text.WriteString("\\w")
-
-		case isShiftJISLead(b):
-			// Double-byte ShiftJIS character
-			b2, err := r.Next()
-			if err != nil {
-				text.WriteByte(b)
-				break
-			}
-			text.WriteByte(b)
-			text.WriteByte(b2)
-
-		case b >= 0x20 && b < 0x80:
-			// ASCII
-			text.WriteByte(b)
-
-		default:
-			// Control code or unknown byte
-			if opts.ControlCodes {
-				text.WriteString(fmt.Sprintf("\\x{%02x}", b))
+			case '\'':
+				if opts.SeparateStrings {
+					b.WriteByte('\'')
+				} else {
+					b.WriteString("\\'")
+				}
+			default:
+				if isShiftJISLead(c) {
+					c2, err := r.Next()
+					if err != nil {
+						b.WriteByte(c)
+						break textoutLoop
+					}
+					b.WriteByte(c)
+					b.WriteByte(c2)
+				} else {
+					b.WriteByte(c)
+				}
 			}
 		}
 	}
 
-	if text.Len() == 0 {
-		return nil // Don't emit empty text commands
+	if b.Len() == 0 {
+		return nil
 	}
 
-	textStr := text.String()
+	textStr := b.String()
 
-	// Add as resource string
 	resIdx := len(result.ResStrs)
 	result.ResStrs = append(result.ResStrs, textStr)
 	cmd.ResIdx = resIdx
@@ -984,11 +1586,24 @@ func readTextout(r *Reader, result *DisassemblyResult, offset int, opts Options)
 			Value: fmt.Sprintf("<res_%04d>", resIdx),
 		}}
 	} else {
-		cmd.Kepago = []CommandElem{ElemString{Value: "'" + textStr + "'"}}
+		cmd.Kepago = []CommandElem{
+			ElemString{Value: "'"},
+			ElemText{Value: textStr},
+			ElemString{Value: "'"},
+		}
 	}
 
 	result.Commands = append(result.Commands, cmd)
 	return nil
+}
+
+// peekByteAt returns the byte at offset n from the current position, or 0
+// if past the limit. Does NOT advance. Used for multi-byte literal lookahead.
+func (r *Reader) peekByteAt(n int) byte {
+	if r.pos+n >= r.limit {
+		return 0
+	}
+	return r.data[r.pos+n]
 }
 
 // isShiftJISLead returns true if the byte is a ShiftJIS lead byte.

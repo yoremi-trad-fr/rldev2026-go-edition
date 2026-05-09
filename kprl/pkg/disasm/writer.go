@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/yoremi/rldev-go/pkg/encoding"
 )
 
 // Writer outputs disassembly results to files.
@@ -20,6 +22,19 @@ func NewWriter(outDir string, opts Options) *Writer {
 		opts:   opts,
 		outDir: outDir,
 	}
+}
+
+// convertText converts raw Shift-JIS bytes to the target encoding.
+func (w *Writer) convertText(sjisText string) string {
+	enc := strings.ToUpper(w.opts.Encoding)
+	if enc == "" || enc == "CP932" || enc == "SHIFT-JIS" || enc == "SJIS" || enc == "SHIFT_JIS" || enc == "SHIFTJIS" {
+		return sjisText
+	}
+	utf8Str, err := encoding.SJSToUTF8([]byte(sjisText))
+	if err != nil {
+		return sjisText
+	}
+	return utf8Str
 }
 
 // WriteSource writes the disassembled source and resource files.
@@ -100,7 +115,7 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 
 	// Write dramatis personae
 	for _, name := range result.Header.DramatisPersonae {
-		fmt.Fprintf(resFile, "#character '%s'\n", name)
+		fmt.Fprintf(resFile, "#character '%s'\n", w.convertText(name))
 	}
 	if resFile != srcFile && len(result.Header.DramatisPersonae) > 0 {
 		fmt.Fprintln(resFile)
@@ -133,10 +148,11 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 	// Write resource strings
 	if w.opts.SeparateStrings {
 		for i, s := range result.ResStrs {
+			converted := w.convertText(s)
 			if w.opts.IDStrings {
-				fmt.Fprintf(resFile, "<%04d> %s\n", i, s)
+				fmt.Fprintf(resFile, "<%04d> %s\n", i, converted)
 			} else {
-				fmt.Fprintf(resFile, "%s\n", s)
+				fmt.Fprintf(resFile, "%s\n", converted)
 			}
 		}
 	}
@@ -195,6 +211,18 @@ func formatCommand(cmd Command, labels map[int]int, opts Options) string {
 				sb.WriteString(fmt.Sprintf("@%d", idx))
 			} else {
 				sb.WriteString(fmt.Sprintf("@unknown_%d", v.Offset))
+			}
+		case ElemText:
+			// Convert SJIS text if output encoding is UTF-8
+			enc := strings.ToUpper(opts.Encoding)
+			if enc != "" && enc != "CP932" && enc != "SHIFT-JIS" && enc != "SJIS" {
+				if utf8Str, err := encoding.SJSToUTF8([]byte(v.Value)); err == nil {
+					sb.WriteString(utf8Str)
+				} else {
+					sb.WriteString(v.Value)
+				}
+			} else {
+				sb.WriteString(v.Value)
 			}
 		}
 	}
