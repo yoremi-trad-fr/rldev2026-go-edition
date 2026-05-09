@@ -283,10 +283,35 @@ func (r *FuncRegistry) Register(opStr string, def FuncDef) {
 	r.funcs[opStr] = def
 }
 
-// Lookup finds a function definition by opcode string.
+// Lookup finds a function definition by exact opcode string.
 func (r *FuncRegistry) Lookup(opStr string) (FuncDef, bool) {
 	d, ok := r.funcs[opStr]
 	return d, ok
+}
+
+// LookupOpcode finds a function definition by opcode, trying all
+// overloads if the exact one isn't registered.
+//
+// OCaml's KFN often only declares the most common overload (e.g.
+// `<1:Str:00000, 1>` for strcpy), but the bytecode may use a different
+// overload (`<1:Str:00000, 0>`). This helper tries the exact opcode
+// first, then walks overloads 0..7 to find a match.
+func (r *FuncRegistry) LookupOpcode(op Opcode) (FuncDef, bool) {
+	// Try exact match first.
+	if d, ok := r.funcs[op.String()]; ok {
+		return d, true
+	}
+	// Fall back to other overloads.
+	for ov := 0; ov < 8; ov++ {
+		if ov == op.Overload {
+			continue
+		}
+		alt := Opcode{Type: op.Type, Module: op.Module, Function: op.Function, Overload: ov}
+		if d, ok := r.funcs[alt.String()]; ok {
+			return d, true
+		}
+	}
+	return FuncDef{}, false
 }
 
 // RegisterModule sets the name for a module number.

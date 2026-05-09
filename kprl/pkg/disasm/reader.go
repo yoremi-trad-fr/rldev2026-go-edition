@@ -10,12 +10,21 @@ import (
 )
 
 // Reader reads bytecodes sequentially from a buffer.
+//
+// The reader carries optional pointers to the disassembly result and
+// the active Options. When set (via SetContext), string-collecting
+// helpers can route Japanese strings to the resource list automatically
+// (matching OCaml's --separate-all behavior on sjs1-prefixed strings).
 type Reader struct {
 	data   []byte
 	pos    int
 	origin int // data_offset (start of code section)
 	limit  int // end of data
 	mode   EngineMode
+
+	// Optional context for resource emission.
+	result *DisassemblyResult
+	opts   *Options
 }
 
 // NewReader creates a bytecode reader starting at origin.
@@ -27,6 +36,13 @@ func NewReader(data []byte, origin, limit int, mode EngineMode) *Reader {
 		limit:  limit,
 		mode:   mode,
 	}
+}
+
+// SetContext attaches the result and options to the reader so that
+// helpers can emit resources transparently. Passing nil disables that.
+func (r *Reader) SetContext(result *DisassemblyResult, opts *Options) {
+	r.result = result
+	r.opts = opts
 }
 
 // Pos returns the current read position.
@@ -647,6 +663,10 @@ func isAsciiStringStart(b byte) bool {
 //       a closing '"' returns to unquot mode;
 //       sjs1 lead-byte + any → 2-byte SJIS char;
 //       anything else → raw byte.
+//
+// The final string is wrapped in single quotes when sep_str is false
+// (inline argument mode). When sep_str is true the caller intends to
+// move the string to a resource file and handles the quoting itself.
 func (r *Reader) readStringUnquot(sepStr bool) (string, error) {
 	var b strings.Builder
 
@@ -704,7 +724,25 @@ unquotLoop:
 		}
 	}
 
-	return b.String(), nil
+	if sepStr {
+		// Caller handles formatting (e.g. textout → resource file).
+		return b.String(), nil
+	}
+
+	s := b.String()
+
+	// OCaml separate-all rule (disassembler.ml L1361):
+	//   if separate_strings && separate_all && first byte is sjs1
+	//   then push the string to the resource list and return "#res<NNNN>".
+	if r.opts != nil && r.opts.SeparateStrings && r.opts.SeparateAll &&
+		len(s) > 0 && isShiftJISLead(s[0]) && r.result != nil {
+		idx := len(r.result.ResStrs)
+		r.result.ResStrs = append(r.result.ResStrs, s)
+		return fmt.Sprintf("#res<%04d>", idx), nil
+	}
+
+	// Inline arg: wrap in single quotes like OCaml get_string L1368.
+	return "'" + s + "'", nil
 }
 
 // readStringQuot — OCaml's quot inner lexer (disassembler.ml L1318).
@@ -835,6 +873,10 @@ func Disassemble(arr *binarray.Buffer, opts Options) (*DisassemblyResult, error)
 		SeenMap:  NewSeenMap(),
 	}
 
+	// Hook the reader so string helpers can route Japanese strings into
+	// the resource list when separate_all is on (OCaml L1361-L1366).
+	reader.SetContext(result, &opts)
+
 	// Main disassembly loop
 	for !reader.AtEnd() {
 		cmdOffset := reader.RelPos()
@@ -952,7 +994,7 @@ func readCommand(r *Reader, hdr *bytecode.FileHeader, result *DisassemblyResult,
 			cmd.Unhide = true
 			cmd.CType = "entrypoint"
 			cmd.Kepago = []CommandElem{ElemString{
-				Value: fmt.Sprintf("#entrypoint %03d // Z%02d", entryIdx, entryIdx),
+				Value: fmt.Sprintf("#entrypoint %03d", entryIdx),
 			}}
 			result.SeenMap.EntryPoints = append(result.SeenMap.EntryPoints, offset)
 		} else {
@@ -1028,15 +1070,23 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 		cmd.IsJmp = true
 		result.Commands = append(result.Commands, cmd)
 		return nil
+
+	case op.Module == 10 && (op.Function == 0 || op.Function == 2) && op.Overload == 0:
+		// Strcpy / Strcat short form. OCaml disassembler.ml L2537-L2548:
+		//   overload 0:
+		//     <10:0,0> (a, b) → "a = b"  (strcpy short form)
+		//     <10:2,0> (a, b) → "a += b" (strcat short form)
+		//   overload 1: full form "strcpy(a, b, n)" / "strcat(a, b, n)"
+		return readStrAssign(r, result, &cmd, op, opts)
 	}
 
 	// Generic path: KFN-or-fallback.
 	args, err := readFuncArgs(r, argc)
 	if err != nil {
 		// Best-effort: emit with name if known.
-		funcName := fmt.Sprintf("op<%s>", op.String())
+		funcName := opcodeDisplay(op, opts.FuncReg)
 		if opts.FuncReg != nil {
-			if def, ok := opts.FuncReg.Lookup(op.String()); ok {
+			if def, ok := opts.FuncReg.LookupOpcode(op); ok {
 				funcName = def.Name
 			}
 		}
@@ -1046,19 +1096,23 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 	}
 
 	funcName := ""
+	var hasPushStore bool
 	if opts.FuncReg != nil {
-		if def, ok := opts.FuncReg.Lookup(op.String()); ok {
+		if def, ok := opts.FuncReg.LookupOpcode(op); ok {
 			funcName = def.Name
+			hasPushStore = def.HasFlag(FlagPushStore)
 		}
 	}
 	var sb strings.Builder
 	if funcName != "" {
 		sb.WriteString(funcName)
 	} else {
-		fmt.Fprintf(&sb, "op<%s>", op.String())
+		sb.WriteString(opcodeDisplay(op, opts.FuncReg))
 	}
 	if len(args) > 0 {
-		sb.WriteByte('(')
+		// OCaml emits "fn (arg1, arg2)" with a space before '(' for
+		// readability. Match that style.
+		sb.WriteString(" (")
 		for i, arg := range args {
 			if i > 0 {
 				sb.WriteString(", ")
@@ -1067,9 +1121,67 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 		}
 		sb.WriteByte(')')
 	}
-	cmd.Kepago = []CommandElem{ElemString{Value: sb.String()}}
+
+	// Build the command. When the function has PushStore, prepend an
+	// empty ElemStore marker so a follow-up "dst = store" assignment
+	// can fold into this command (matching OCaml STORE token).
+	if hasPushStore {
+		cmd.Kepago = []CommandElem{ElemStore{Value: ""}, ElemString{Value: sb.String()}}
+	} else {
+		cmd.Kepago = []CommandElem{ElemString{Value: sb.String()}}
+	}
 	result.Commands = append(result.Commands, cmd)
 	return nil
+}
+
+// readStrAssign handles the Strcpy/Strcat short form (overload 0).
+//
+// OCaml reference: disassembler.ml L2537-L2548. With overload=0 the
+// function call has exactly 2 args (dst, src) and is rendered as a
+// kepago-style assignment for readability:
+//
+//	<10:Str:0,0>(strS[i], 'foo')  → strS[i] = 'foo'
+//	<10:Str:2,0>(strS[i], 'bar')  → strS[i] += 'bar'
+//
+// Overload 1 is the 3-arg form `strcpy(a, b, n)` / `strcat(a, b, n)`,
+// handled by the generic KFN path.
+func readStrAssign(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, opts Options) error {
+	if err := r.Expect('(', "readStrAssign/open"); err != nil {
+		return err
+	}
+	a, err := r.GetData()
+	if err != nil {
+		return err
+	}
+	b, err := r.GetData()
+	if err != nil {
+		return err
+	}
+	if err := r.Expect(')', "readStrAssign/close"); err != nil {
+		return err
+	}
+
+	op2 := "="
+	if op.Function == 2 {
+		op2 = "+="
+	}
+	cmd.Kepago = []CommandElem{ElemString{
+		Value: fmt.Sprintf("%s %s %s", a, op2, b),
+	}}
+	result.Commands = append(result.Commands, *cmd)
+	return nil
+}
+// `op<type:Module:NNNNN, overload>` form, using the symbolic module name
+// when the registry knows it ("Sys", "Jmp", "Bgm", …) and the numeric
+// 3-digit form ("004") otherwise.
+//
+// OCaml reference: string_of_opcode (used in disassembler.ml L2157, etc.).
+func opcodeDisplay(op Opcode, reg *FuncRegistry) string {
+	mod := fmt.Sprintf("%03d", op.Module)
+	if reg != nil {
+		mod = reg.ModuleName(op.Module)
+	}
+	return fmt.Sprintf("op<%d:%s:%05d, %d>", op.Type, mod, op.Function, op.Overload)
 }
 
 // readGotoOnLike reads goto_on / gosub_on: '(' expr ')' '{' int32×argc '}'.
@@ -1113,7 +1225,7 @@ func readGotoOnLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opcod
 		} else {
 			sb.WriteByte(' ')
 		}
-		fmt.Fprintf(&sb, "@%d", target)
+		fmt.Fprintf(&sb, "@@PTR=%d@@", target)
 	}
 	sb.WriteString(" }")
 
@@ -1192,7 +1304,7 @@ func readGotoCaseLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opc
 		} else {
 			sb.WriteByte(' ')
 		}
-		fmt.Fprintf(&sb, "%s: @%d", caseLabel, target)
+		fmt.Fprintf(&sb, "%s: @@PTR=%d@@", caseLabel, target)
 	}
 	sb.WriteString(" }")
 
@@ -1228,20 +1340,19 @@ func readGotoLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode,
 	if result.Pointers != nil {
 		result.Pointers[int(target)] = true
 	}
-	cmd.Kepago = []CommandElem{ElemString{Value: fmt.Sprintf("%s @%d", name, target)}}
+	cmd.Kepago = []CommandElem{ElemString{Value: fmt.Sprintf("%s @@PTR=%d@@", name, target)}}
 	result.Commands = append(result.Commands, *cmd)
 	return nil
 }
 
-// readCondGotoLike reads a conditional goto/gosub:
-//   header already consumed; the condition expression is wrapped in parens
-//   '(' expr ')', then a 4-byte LE int32 pointer follows directly
-//   (no parens around the pointer).
+// readCondGotoLike reads a conditional goto/gosub.
+// Format: '(' condition-expr ')' int32-pointer.
 //
-// KFN signatures show '(<condition>)' for goto_if/unless and gosub_if/unless;
-// the condition is "<-prefixed" meaning it's not counted in argc but is read
-// from the bytecode in parens. The trailing pointer comes from the IsGoto
-// flag, just like readGotoLike.
+// OCaml reference: when fn_flags contains IsCond/IsNeg, the soft function
+// reader emits "goto_if (cond)" or "goto_unless (cond)" depending on IsNeg
+// and then appends the pointer. The condition expression is wrapped in
+// parens in the bytecode and ALSO in the source output. As a
+// kepago-readability touch, OCaml prints "!expr" instead of "expr == 0".
 func readCondGotoLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, opts Options) error {
 	var name string
 	switch op.Function {
@@ -1272,9 +1383,23 @@ func readCondGotoLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opc
 	if result.Pointers != nil {
 		result.Pointers[int(target)] = true
 	}
-	cmd.Kepago = []CommandElem{ElemString{Value: fmt.Sprintf("%s (%s) @%d", name, cond, target)}}
+	cmd.Kepago = []CommandElem{ElemString{Value: fmt.Sprintf("%s (%s) @@PTR=%d@@", name, prettifyCond(cond), target)}}
 	result.Commands = append(result.Commands, *cmd)
 	return nil
+}
+
+// prettifyCond rewrites "expr == 0" to "!expr" and "expr != 0" to "expr",
+// matching OCaml kprl output style for conditional gotos.
+func prettifyCond(s string) string {
+	const eqZero = " == 0"
+	const neZero = " != 0"
+	if strings.HasSuffix(s, eqZero) {
+		return "!" + strings.TrimSuffix(s, eqZero)
+	}
+	if strings.HasSuffix(s, neZero) {
+		return strings.TrimSuffix(s, neZero)
+	}
+	return s
 }
 
 // readFuncArgs reads function arguments enclosed in matched parens.
@@ -1403,6 +1528,33 @@ func readAssignment(r *Reader, result *DisassemblyResult, offset int) error {
 		src = "???"
 	}
 
+	// Store-fold: if the right-hand side is the literal `store`, walk
+	// back through previous commands looking for the most recent one
+	// whose first element is an ElemStore marker (planted by readFunction
+	// when the function has the PushStore flag). If found, replace the
+	// marker with "dst op= " and DON'T add a new command.
+	//
+	// OCaml reference: get_assignment unstored block (disassembler.ml
+	// L1300-L1311).
+	if src == "store" {
+		for i := len(result.Commands) - 1; i >= 0; i-- {
+			prev := &result.Commands[i]
+			if prev.Hidden {
+				continue
+			}
+			if len(prev.Kepago) == 0 {
+				break
+			}
+			if _, isStore := prev.Kepago[0].(ElemStore); !isStore {
+				break
+			}
+			// Replace ElemStore with the lhs prefix.
+			prev.Kepago[0] = ElemString{Value: fmt.Sprintf("%s %s ", dest, op)}
+			return nil
+		}
+		// Fall through: no fold target found; emit normally.
+	}
+
 	cmd.Kepago = []CommandElem{ElemString{
 		Value: fmt.Sprintf("%s %s %s", dest, op, src),
 	}}
@@ -1428,6 +1580,19 @@ func readAssignment(r *Reader, result *DisassemblyResult, offset int) error {
 // the writer takes care of converting to UTF-8 for output.
 func readTextout(r *Reader, result *DisassemblyResult, offset int, opts Options) error {
 	cmd := Command{Offset: offset, CType: "textout"}
+
+	// SeenEnd shortcut. Some bytecode files end with a fixed SJIS
+	// sentinel "ＳｅｅｎＥｎｄ" followed by 0xff padding (typically 32
+	// bytes). OCaml disassembler.ml L1786 detects this exact pattern
+	// in read_textout and emits a single `eof` marker. We match it at
+	// the start of every textout: if found, consume the prefix + all
+	// trailing 0xff bytes and emit `eof`.
+	if r.matchSeenEnd() {
+		cmd.IsJmp = true
+		cmd.Kepago = []CommandElem{ElemString{Value: "eof"}}
+		result.Commands = append(result.Commands, cmd)
+		return nil
+	}
 
 	var b strings.Builder
 	inQuot := false
@@ -1577,15 +1742,29 @@ textoutLoop:
 
 	textStr := b.String()
 
-	resIdx := len(result.ResStrs)
-	result.ResStrs = append(result.ResStrs, textStr)
-	cmd.ResIdx = resIdx
+	// SeenEnd marker detection. Some bytecode files end with a fixed
+	// SJIS sentinel "ＳｅｅｎＥｎｄ" (14 bytes: 82 72 82 85 82 85 82 8e
+	// 82 64 82 8e 82 84) followed by 32 bytes of 0xff padding. OCaml
+	// disassembler.ml L1786 special-cases this exact pattern in
+	// read_textout and emits a single `eof` marker instead of the
+	// garbage text. We do the same here.
+	if isSeenEndMarker(textStr) {
+		cmd.IsJmp = true
+		cmd.Kepago = []CommandElem{ElemString{Value: "eof"}}
+		result.Commands = append(result.Commands, cmd)
+		return nil
+	}
 
 	if opts.SeparateStrings {
+		resIdx := len(result.ResStrs)
+		result.ResStrs = append(result.ResStrs, textStr)
+		cmd.ResIdx = resIdx
+		// OCaml format: "#res<NNNN>" replaces the inline string in source.
 		cmd.Kepago = []CommandElem{ElemString{
-			Value: fmt.Sprintf("<res_%04d>", resIdx),
+			Value: fmt.Sprintf("#res<%04d>", resIdx),
 		}}
 	} else {
+		cmd.ResIdx = -1
 		cmd.Kepago = []CommandElem{
 			ElemString{Value: "'"},
 			ElemText{Value: textStr},
@@ -1597,6 +1776,40 @@ textoutLoop:
 	return nil
 }
 
+// seenEndPrefix is the SJIS encoding of "ＳｅｅｎＥｎｄ" (14 bytes).
+// This sentinel marks the logical end of a RealLive bytecode scenario;
+// what follows is 0xff padding to align to a block boundary.
+var seenEndPrefix = []byte{
+	0x82, 0x72, // Ｓ
+	0x82, 0x85, // ｅ
+	0x82, 0x85, // ｅ
+	0x82, 0x8e, // ｎ
+	0x82, 0x64, // Ｅ
+	0x82, 0x8e, // ｎ
+	0x82, 0x84, // ｄ
+}
+
+// isSeenEndMarker reports whether the given textout buffer is the
+// "SeenEnd" sentinel: the SJIS string "ＳｅｅｎＥｎｄ" followed only by
+// 0xff bytes (any number — typically 32, but the count can vary by
+// scenario size).
+func isSeenEndMarker(s string) bool {
+	if len(s) < len(seenEndPrefix) {
+		return false
+	}
+	for i, b := range seenEndPrefix {
+		if s[i] != b {
+			return false
+		}
+	}
+	for i := len(seenEndPrefix); i < len(s); i++ {
+		if s[i] != 0xff {
+			return false
+		}
+	}
+	return true
+}
+
 // peekByteAt returns the byte at offset n from the current position, or 0
 // if past the limit. Does NOT advance. Used for multi-byte literal lookahead.
 func (r *Reader) peekByteAt(n int) byte {
@@ -1604,6 +1817,32 @@ func (r *Reader) peekByteAt(n int) byte {
 		return 0
 	}
 	return r.data[r.pos+n]
+}
+
+// matchSeenEnd checks if the next bytes are the 14-byte SJIS prefix for
+// "ＳｅｅｎＥｎｄ". If so, consumes the prefix AND all immediately
+// following 0xff padding bytes, then returns true. Otherwise returns
+// false without advancing.
+//
+// OCaml reference: disassembler.ml L1786, which uses ulex regexp matching
+// against the literal bytes "\x82\x72\x82\x85...\xff\xff\xff..." (32 0xff
+// bytes). Our version is more lenient about the count of 0xff trailers
+// because the padding length depends on scenario size alignment.
+func (r *Reader) matchSeenEnd() bool {
+	if r.pos+len(seenEndPrefix) > r.limit {
+		return false
+	}
+	for i, b := range seenEndPrefix {
+		if r.data[r.pos+i] != b {
+			return false
+		}
+	}
+	// Prefix matched; consume it and any trailing 0xff padding.
+	r.pos += len(seenEndPrefix)
+	for r.pos < r.limit && r.data[r.pos] == 0xff {
+		r.pos++
+	}
+	return true
 }
 
 // isShiftJISLead returns true if the byte is a ShiftJIS lead byte.

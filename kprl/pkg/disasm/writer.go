@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/yoremi/rldev-go/pkg/encoding"
@@ -91,13 +92,17 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 		}
 	}
 
-	// Write source header
+	// Write source header. OCaml uses lowercase no-dash like "cp utf8".
 	enc := w.opts.Encoding
 	if enc == "" {
 		enc = "cp932"
 	}
+	encNorm := strings.ToLower(strings.ReplaceAll(enc, "-", ""))
+	if encNorm == "shiftjis" || encNorm == "shift_jis" || encNorm == "sjis" {
+		encNorm = "cp932"
+	}
 	fmt.Fprintf(srcFile, "{-# cp %s #- Disassembled with rldev-go -}\n\n#file '%s'\n",
-		strings.ToLower(enc), baseName)
+		encNorm, baseName)
 
 	if resFile != srcFile {
 		fmt.Fprintf(resFile, "// Resources for %s\n\n", baseName)
@@ -121,10 +126,13 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 		fmt.Fprintln(resFile)
 	}
 
-	// Write commands
+	// Write commands. OCaml emits commands flush-left (no leading
+	// indentation); labels are on their own lines indented by two spaces.
 	skipping := false
 	for _, cmd := range result.Commands {
-		// Print label if this offset is a pointer target
+		// Print label if this offset is a pointer target.
+		// OCaml indents labels with two spaces (matches the "@1" style
+		// in kepago source files).
 		if idx, ok := labels[cmd.Offset]; ok {
 			fmt.Fprintf(srcFile, "\n  @%d\n", idx)
 			skipping = false
@@ -135,9 +143,9 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 			skipping = false
 		}
 		if !skipping && !cmd.Hidden {
-			line := formatCommand(cmd, labels, w.opts)
+			line := formatCommand(cmd, labels, w.opts, result)
 			if line != "" {
-				fmt.Fprint(srcFile, "    "+line+"\n")
+				fmt.Fprint(srcFile, line+"\n")
 			}
 		}
 		if w.opts.SuppressUncalled && cmd.IsJmp {
@@ -145,15 +153,12 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 		}
 	}
 
-	// Write resource strings
+	// Write resource strings.
+	// OCaml format: each resource on its own line, prefixed with <NNNN>.
 	if w.opts.SeparateStrings {
 		for i, s := range result.ResStrs {
 			converted := w.convertText(s)
-			if w.opts.IDStrings {
-				fmt.Fprintf(resFile, "<%04d> %s\n", i, converted)
-			} else {
-				fmt.Fprintf(resFile, "%s\n", converted)
-			}
+			fmt.Fprintf(resFile, "<%04d> %s\n", i, converted)
 		}
 	}
 
@@ -193,17 +198,25 @@ func buildLabelMap(pointers map[int]bool) map[int]int {
 }
 
 // formatCommand renders a command as a string for output.
-func formatCommand(cmd Command, labels map[int]int, opts Options) string {
+//
+// In addition to the simple element kinds, this resolver post-processes
+// pointer references inside ElemString text:
+//   - "@@PTR=NNNN@@"     → "@<labelN>" (sequential label number)
+//   - "@@RES=NNNN@@"     → "#res<NNNN>" (resource reference)
+//
+// These tokens are emitted by the reader where it detects pointer or
+// resource targets but doesn't yet know the final mapping.
+func formatCommand(cmd Command, labels map[int]int, opts Options, result *DisassemblyResult) string {
 	var sb strings.Builder
 
 	for _, elem := range cmd.Kepago {
 		switch v := elem.(type) {
 		case ElemString:
-			// Skip #line directives if they start with that
+			// Skip #line directives if requested
 			if !opts.ReadDebugSymbols && strings.HasPrefix(v.Value, "#line ") {
 				continue
 			}
-			sb.WriteString(v.Value)
+			sb.WriteString(resolvePointers(v.Value, labels))
 		case ElemStore:
 			sb.WriteString(v.Value)
 		case ElemPointer:
@@ -242,6 +255,50 @@ func formatCommand(cmd Command, labels map[int]int, opts Options) string {
 	}
 
 	return text
+}
+
+// resolvePointers replaces inline pointer markers "@@PTR=NNNN@@" with the
+// corresponding label number from the labels map. Markers that don't
+// resolve fall back to the literal pointer offset.
+//
+// The reader emits these markers because at construction time we don't
+// know the label assignment (which depends on all pointers being seen).
+// The writer fixes them up here after buildLabelMap has run.
+func resolvePointers(s string, labels map[int]int) string {
+	const ptrPrefix = "@@PTR="
+	const ptrSuffix = "@@"
+	if !strings.Contains(s, ptrPrefix) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		j := strings.Index(s[i:], ptrPrefix)
+		if j < 0 {
+			b.WriteString(s[i:])
+			break
+		}
+		b.WriteString(s[i : i+j])
+		i += j + len(ptrPrefix)
+		k := strings.Index(s[i:], ptrSuffix)
+		if k < 0 {
+			b.WriteString(ptrPrefix)
+			break
+		}
+		num, err := strconv.Atoi(s[i : i+k])
+		if err != nil {
+			b.WriteString(ptrPrefix)
+			b.WriteString(s[i : i+k])
+			b.WriteString(ptrSuffix)
+		} else if idx, ok := labels[num]; ok {
+			fmt.Fprintf(&b, "@%d", idx)
+		} else {
+			fmt.Fprintf(&b, "@unknown_%d", num)
+		}
+		i += k + len(ptrSuffix)
+	}
+	return b.String()
 }
 
 // encodingToExt returns the file extension for resource files.

@@ -92,7 +92,14 @@ func ParseKFN(r io.Reader) (*FuncRegistry, error) {
 				if strings.Contains(trimmed, "(skip ") {
 					def.Flags = append(def.Flags, FlagIsGoto)
 				}
-				if strings.Contains(trimmed, "(store ") {
+				// PushStore: function leaves its return value on the
+				// implicit `store` register. The disassembler folds a
+				// subsequent `dst = store` assignment into the previous
+				// command (see resolveStoreFold in writer.go).
+				if strings.Contains(trimmed, "(store)") ||
+					strings.Contains(trimmed, "(store ") ||
+					strings.Contains(trimmed, " store)") ||
+					strings.Contains(trimmed, "(if store") {
 					def.Flags = append(def.Flags, FlagPushStore)
 				}
 				if strings.Contains(trimmed, "(call)") || strings.Contains(trimmed, "(store call)") {
