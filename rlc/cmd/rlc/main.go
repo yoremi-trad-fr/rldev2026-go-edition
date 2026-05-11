@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yoremi/rldev-go/pkg/encoding"
 	"github.com/yoremi/rldev-go/rlc/pkg/codegen"
 	"github.com/yoremi/rldev-go/rlc/pkg/compilerframe"
 	"github.com/yoremi/rldev-go/rlc/pkg/ini"
@@ -219,8 +220,20 @@ func compileFile(opts *Options, srcPath string) error {
 		return fmt.Errorf("reading source: %w", err)
 	}
 
+	// 3a. Decode the raw bytes to a Go (UTF-8) string according to the
+	// requested encoding. Without this step, Shift-JIS sources would
+	// arrive at the lexer as invalid UTF-8 — every multibyte SJIS
+	// character (〔, 古, 河, …) would become U+FFFD replacement runes
+	// and lose its original code point. Codegen relies on TextToken.Text
+	// being a true Unicode string so it can re-encode to bytecode via
+	// TextTransforms.
+	srcString, err := decodeSource(srcBytes, opts.Encoding)
+	if err != nil {
+		return fmt.Errorf("decoding source (%s): %w", opts.Encoding, err)
+	}
+
 	// 4. Lex + parse
-	lx := lexer.New(string(srcBytes), srcPath)
+	lx := lexer.New(srcString, srcPath)
 	if opts.Verbose > 1 {
 		fmt.Fprintf(os.Stderr, "  Lexer created for %s\n", srcPath)
 	}
@@ -438,5 +451,30 @@ func main() {
 
 	if errors > 0 {
 		os.Exit(1)
+	}
+}
+
+// decodeSource decodes raw source bytes according to the user-selected
+// encoding so the rest of the compiler can work with a proper Go (UTF-8)
+// string. Common spellings are accepted ("CP932", "Shift-JIS", "UTF-8",
+// …) and unrecognised encodings fall through to a permissive cast — that
+// path also covers sources that are already valid UTF-8.
+func decodeSource(data []byte, encName string) (string, error) {
+	switch strings.ToUpper(strings.ReplaceAll(encName, "_", "-")) {
+	case "", "UTF-8", "UTF8":
+		return string(data), nil
+	case "CP932", "SHIFT-JIS", "SJIS", "SHIFTJIS":
+		s, err := encoding.SJSToUTF8(data)
+		if err != nil {
+			return "", err
+		}
+		return s, nil
+	default:
+		enc := encoding.Parse(encName)
+		s, err := encoding.ToUTF8(data, enc)
+		if err != nil {
+			return string(data), nil
+		}
+		return s, nil
 	}
 }

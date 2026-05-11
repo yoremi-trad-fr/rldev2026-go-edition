@@ -23,6 +23,8 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/yoremi/rldev-go/pkg/text"
+	"github.com/yoremi/rldev-go/pkg/texttransforms"
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
 	"github.com/yoremi/rldev-go/rlc/pkg/kfn"
 )
@@ -195,10 +197,17 @@ func (o *Output) AddKidoku(loc ast.Loc, line int) {
 // Length returns the number of IR elements.
 func (o *Output) Length() int { return len(o.IR) }
 
+// maybeLine emits a line-number reference (IRLineref) when entering a
+// new source line, matching OCaml's add_line/maybe_line (codegen.ml
+// L98-115). Visual Art's compiler emits these `\x0a <line:u16>` markers
+// throughout the bytecode; reproducing them keeps our bytecode close to
+// byte-for-byte parity with the reference compiler.
 func (o *Output) maybeLine(loc ast.Loc) {
-	if loc != ast.Nowhere && loc.Line != o.lastLine {
-		o.lastLine = loc.Line
+	if loc == ast.Nowhere || loc.Line == o.lastLine {
+		return
 	}
+	o.IR = append(o.IR, IR{Type: IRLineref, Index: loc.Line, Loc: loc})
+	o.lastLine = loc.Line
 }
 
 // --- Expression emission helpers ---
@@ -240,7 +249,79 @@ func (o *Output) EmitExpr(e ast.Expr) {
 		o.AddCode(x.Loc, []byte{'('})
 		o.EmitExpr(x.Expr)
 		o.AddCode(x.Loc, []byte{')'})
+	case ast.StrLit:
+		// String literals are inlined in the bytecode as raw encoded
+		// bytes — there's no length prefix or terminator; the closing
+		// ')' of the surrounding parameter list serves as the delimiter.
+		// Reference: OCaml strTokens.ml to_string + TextTransforms.to_bytecode.
+		// Without this case, every `SetLocalName(0, '〔Nom〕')`,
+		// `strcpy(strS[…], 'foo')`, and other string parameter was
+		// silently dropped, leaving the bytecode 30-40 % too short.
+		bytes, err := encodeStrLit(x)
+		if err == nil {
+			o.AddCode(x.Loc, bytes)
+		} else {
+			// Best-effort: emit an empty quoted pair so the param list
+			// stays balanced. Bytecode will still be wrong but the
+			// reader won't desync past this opcode.
+			o.AddCode(x.Loc, []byte{'"', '"'})
+		}
+	case ast.ResRef:
+		// #res<KEY> reference: textual passthrough. Resources are kept
+		// as escape-style references in the bytecode; the engine reads
+		// the surrounding string context and substitutes the resource
+		// at runtime.
+		o.AddCode(x.Loc, []byte("#res<"+x.Key+">"))
 	}
+}
+
+// encodeStrLit serialises a string literal to bytecode bytes.
+//
+// The encoding mirrors OCaml strTokens.ml to_string with quote=true:
+// plain text is encoded via the active TextTransforms pipeline (which
+// resolves to Shift-JIS by default), and a handful of presentation
+// tokens (lenticulars, asterisk, percent, hyphen, right brace, double
+// quote) have fixed SJIS code points. Resource-reference tokens are
+// passed through as textual `#res<…>`. Rich tokens that can't legally
+// appear in a string parameter to an opcode (gloss, code, name) cause
+// the function to fail so the caller can emit a safe fallback.
+func encodeStrLit(s ast.StrLit) ([]byte, error) {
+	var buf []byte
+	for _, tok := range s.Tokens {
+		switch t := tok.(type) {
+		case ast.TextToken:
+			// TextToken.Text is a UTF-8 Go string. Convert to bytecode
+			// via the configured TextTransforms pipeline.
+			b, err := texttransforms.ToBytecode(text.Text([]rune(t.Text)))
+			if err != nil {
+				return nil, err
+			}
+			buf = append(buf, b...)
+		case ast.SpaceToken:
+			for i := 0; i < t.Count; i++ {
+				buf = append(buf, ' ')
+			}
+		case ast.LLenticToken:
+			buf = append(buf, 0x81, 0x6f)
+		case ast.RLenticToken:
+			buf = append(buf, 0x81, 0x70)
+		case ast.AsteriskToken:
+			buf = append(buf, 0x81, 0x96)
+		case ast.PercentToken:
+			buf = append(buf, 0x81, 0x93)
+		case ast.HyphenToken:
+			buf = append(buf, '-')
+		case ast.RCurToken:
+			buf = append(buf, '}')
+		case ast.DQuoteToken:
+			buf = append(buf, '"')
+		case ast.ResRefToken:
+			buf = append(buf, []byte("#res<"+t.Key+">")...)
+		default:
+			return nil, fmt.Errorf("unsupported string token %T", tok)
+		}
+	}
+	return buf, nil
 }
 
 // EmitAssignment encodes an assignment and appends it.
@@ -433,12 +514,17 @@ func buildRealLive(bytecode []byte, bytecodeLen, compressedLen int, entrypoints 
 
 	file := make([]byte, fileLen)
 
-	// Magic / header offset
-	if opts.Compress {
-		putInt32(file, 0x00, 0x1d0)
-	} else {
-		copy(file[0x00:], []byte("KPRL"))
-	}
+	// Magic / header offset.
+	// IMPORTANT: codegen does NOT compress the bytecode (see Phase 4
+	// below) — the buffer that follows the header is the raw bytecode.
+	// We therefore must use the "KPRL" textual magic so the archiver
+	// (kprl -a) recognises this file as uncompressed and compresses it
+	// before inserting it into the SEEN.TXT archive.
+	//
+	// Emitting the 0x1d0 numeric magic here would lie about the file
+	// being compressed: the archiver would store it as-is, producing
+	// a bloated and broken SEEN.TXT that the engine refuses to load.
+	copy(file[0x00:], []byte("KPRL"))
 	putInt32(file, 0x04, opts.CompilerVersion)
 	putInt32(file, 0x08, 0x1d0)                // kidoku table offset
 	putInt32(file, 0x0c, len(kidokuTable))       // kidoku count
@@ -449,6 +535,11 @@ func buildRealLive(bytecode []byte, bytecodeLen, compressedLen int, entrypoints 
 	putInt32(file, 0x20, bcOff)                  // bytecode offset
 	putInt32(file, 0x24, bytecodeLen)            // bytecode length
 	putInt32(file, 0x28, compressedLen)          // compressed length
+	// val_0x2c (#Z-1) defaults to 0; 0x30 (#Z-2) = val_0x2c + 3.
+	// OCaml bytecodeGen.ml L54-55. Although the engine itself doesn't
+	// check these fields, OCaml output sets them and certain tools may.
+	putInt32(file, 0x2c, 0)
+	putInt32(file, 0x30, 3)
 
 	// Entrypoints at 0x34 (up to 100 × 4 bytes)
 	for i := 0; i < len(entrypoints) && i < 100; i++ {

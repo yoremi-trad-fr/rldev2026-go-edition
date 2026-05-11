@@ -531,7 +531,15 @@ func etName(t ExprType) string {
 
 // LookupFuncDef retrieves a function definition from the registry.
 // When multiple definitions exist for the same name (inter-opcode
-// overloading, e.g. grpMulti), disambiguates by first parameter type.
+// overloading, e.g. grpMulti or bgmLoop which has both a Kinetic and a
+// RealLive variant), candidates are first filtered by target
+// compatibility, then disambiguated by first parameter type.
+//
+// Filtering by target is critical: bgmLoop is defined as both
+// `<0:Sys:2>` (under `ver Kinetic`) and `<1:Bgm:0>` (under `ver Avg2000,
+// RealLive`). Without the filter, the first entry wins and the Clannad
+// build gets the Kinetic opcode — which the engine doesn't expect and
+// which decompresses to a completely different instruction.
 func LookupFuncDef(reg *kfn.Registry, ident string, params []ast.Param, ctrlCode bool) (*kfn.FuncDef, error) {
 	var table map[string][]*kfn.FuncDef
 	if ctrlCode {
@@ -540,8 +548,8 @@ func LookupFuncDef(reg *kfn.Registry, ident string, params []ast.Param, ctrlCode
 		table = reg.Functions
 	}
 
-	fns, ok := table[ident]
-	if !ok || len(fns) == 0 {
+	allFns, ok := table[ident]
+	if !ok || len(allFns) == 0 {
 		// Synthesize a FuncDef from a literal opcode of the form
 		//   op<TYPE:MODULE:FUNCTION, OVERLOAD>
 		// emitted by the disassembler when the KFN had no name for an
@@ -553,6 +561,19 @@ func LookupFuncDef(reg *kfn.Registry, ident string, params []ast.Param, ctrlCode
 			return fn, nil
 		}
 		return nil, fmt.Errorf("undefined function '%s'", ident)
+	}
+
+	// Filter candidates by target compatibility. Falls back to the full
+	// list if nothing matches so legacy KFN entries (no target
+	// constraints) still work.
+	var fns []*kfn.FuncDef
+	for _, fn := range allFns {
+		if reg.ValidForTarget(fn) {
+			fns = append(fns, fn)
+		}
+	}
+	if len(fns) == 0 {
+		fns = allFns
 	}
 
 	if len(fns) == 1 {

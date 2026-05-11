@@ -505,7 +505,7 @@ func (c *Compiler) ParseNormElt(stmt ast.Stmt) {
 		gotojmp.EmitGotoCase(c.Out, s.Loc, c.Reg, s.Ident, s.Expr, arms) // L730
 
 	case ast.AssignStmt:
-		c.Out.EmitAssignment(s.Loc, s.Dest, s.Op, s.Expr) // L731
+		c.compileAssign(s) // L731 — with strcpy/strcat desugaring + store lift
 
 	case ast.FuncCallStmt:
 		c.compileFuncCall(s) // L749-762
@@ -596,6 +596,78 @@ func (c *Compiler) compileDeclStmt(s ast.DeclStmt) {
 }
 
 // compileFuncCall handles function call statements. (OCaml L749-762)
+// compileAssign compiles an assignment statement.
+//
+// Two special cases are handled before falling through to EmitAssignment:
+//
+//  1. String-to-string assignment is desugared to a strcpy/strcat call.
+//     RealLive has no native bytecode opcode for `strS[x] = 'foo'`; the
+//     OCaml compiler (expr.ml L963-974) rewrites these as
+//     `strcpy(dest, src)` for `=` and `strcat(dest, src)` for `+=`.
+//     Without this, EmitExpr had no case for ast.StrLit in expression
+//     position and every `strS[…] = '…'` produced invalid bytecode.
+//
+//  2. RHS that is a store-emitting function reference is lifted to a
+//     statement call with `dest = store`. See expr.ml L295-318.
+//     Covers both bare identifiers (`intA[3] = Timer`) and parenthesised
+//     calls (`intA[1000] = strcmp(strS[1004], 'NONE')`).
+//
+// Otherwise the assignment is encoded normally as `<dest> \op <expr>`.
+func (c *Compiler) compileAssign(s ast.AssignStmt) {
+	// (1) String destination → desugar to strcpy/strcat.
+	if _, isStrVar := s.Dest.(ast.StrVar); isStrVar {
+		var fnName string
+		switch s.Op {
+		case ast.AssignSet:
+			fnName = "strcpy"
+		case ast.AssignAdd:
+			fnName = "strcat"
+		default:
+			c.error(s.Loc, fmt.Sprintf("assignment operator %s is not valid for strings", s.Op))
+			return
+		}
+		c.compileFuncCall(ast.FuncCallStmt{
+			Loc:   s.Loc,
+			Ident: fnName,
+			Params: []ast.Param{
+				ast.SimpleParam{Loc: s.Loc, Expr: s.Dest},
+				ast.SimpleParam{Loc: s.Loc, Expr: s.Expr},
+			},
+		})
+		return
+	}
+
+	// (2) RHS that is a store-emitting function call.
+	switch rhs := s.Expr.(type) {
+	case ast.VarOrFunc:
+		if !c.Mem.Defined(rhs.Ident) {
+			if fd, ok := c.Reg.Lookup(rhs.Ident); ok && fd.HasFlag(kfn.FlagPushStore) {
+				c.compileFuncCall(ast.FuncCallStmt{
+					Loc:    s.Loc,
+					Ident:  rhs.Ident,
+					Params: nil,
+					Dest:   s.Dest,
+				})
+				return
+			}
+		}
+
+	case ast.FuncCall:
+		if fd, ok := c.Reg.Lookup(rhs.Ident); ok && fd.HasFlag(kfn.FlagPushStore) {
+			c.compileFuncCall(ast.FuncCallStmt{
+				Loc:    s.Loc,
+				Ident:  rhs.Ident,
+				Params: rhs.Params,
+				Label:  rhs.Label,
+				Dest:   s.Dest,
+			})
+			return
+		}
+	}
+
+	c.Out.EmitAssignment(s.Loc, s.Dest, s.Op, s.Expr)
+}
+
 func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 	if c.Intrin.IsBuiltin(s.Ident) {
 		result, err := c.Intrin.EvalAsExpr(s.Ident, s.Loc, s.Params)
@@ -623,13 +695,42 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 		overload = fd.SyntheticOverload
 	}
 
+	// Determine which params carry the `<` (FUncount) flag in the
+	// chosen prototype. The corresponding arguments are still emitted
+	// in the bytecode, but they don't count toward the opcode's `argc`
+	// field — this is how OCaml encodes condition arguments to
+	// goto_if/goto_unless (KFN proto: `(<'condition')`). The original
+	// bytecode at SEEN0414 offset 0x1eb confirms this: a goto_unless
+	// with one condition argument has argc=0 yet still carries
+	// `( $intA[1000] \= $0 )` in the parameter list.
+	uncountIdx := uncountParamSet(fd, overload, len(s.Params))
+	argc := 0
+	for i := range s.Params {
+		if !uncountIdx[i] {
+			argc++
+		}
+	}
+
+	// In a conditional parameter position, `!expr` must be normalised
+	// to `expr == 0` so the binary `\=` operator is emitted instead of
+	// a (silently-dropped) unary `!`. OCaml expr.ml L214-236
+	// (`unary_to_logop` / `conditional_unit`) does the same lowering.
+	emitParams := make([]ast.Param, len(s.Params))
+	for i, p := range s.Params {
+		if uncountIdx[i] {
+			emitParams[i] = normalizeCondParam(p)
+		} else {
+			emitParams[i] = p
+		}
+	}
+
 	// Emit opcode header
-	c.Out.EmitOpcode(s.Loc, fd.OpType, fd.OpModule, fd.OpCode, len(s.Params), overload)
+	c.Out.EmitOpcode(s.Loc, fd.OpType, fd.OpModule, fd.OpCode, argc, overload)
 
 	// Emit params wrapped in parens
-	if len(s.Params) > 0 {
+	if len(emitParams) > 0 {
 		c.Out.AddCode(s.Loc, []byte{'('})
-		for _, p := range s.Params {
+		for _, p := range emitParams {
 			if sp, ok := p.(ast.SimpleParam); ok {
 				c.Out.EmitExpr(sp.Expr)
 			}
@@ -1109,3 +1210,65 @@ func (c *Compiler) warning(loc ast.Loc, msg string) {
 	c.Warnings = append(c.Warnings, fmt.Sprintf("%s: %s", loc, msg))
 }
 
+
+// uncountParamSet builds the set of parameter indices whose KFN
+// prototype carries the FUncount (`<`) flag, given a chosen overload
+// for a function definition. Returns a boolean slice of length nParams
+// where entry i is true iff that parameter is uncounted.
+//
+// If the prototype information is missing or the overload is out of
+// range, every position defaults to "counted" — preserving the legacy
+// argc = len(Params) behaviour for normal opcodes.
+func uncountParamSet(fd *kfn.FuncDef, overload, nParams int) []bool {
+	out := make([]bool, nParams)
+	if fd == nil || overload < 0 || overload >= len(fd.Prototypes) {
+		return out
+	}
+	proto := fd.Prototypes[overload]
+	if !proto.Defined {
+		return out
+	}
+	for i := 0; i < nParams && i < len(proto.Params); i++ {
+		if proto.Params[i].HasFlag(kfn.FUncount) {
+			out[i] = true
+		}
+	}
+	return out
+}
+
+// normalizeCondParam rewrites a conditional parameter so that any
+// outer unary `!` is lowered to a comparison against 0.
+//
+// `goto_unless (!intA[x]) @label` → `goto_unless (intA[x] == 0) @label`
+//
+// Mirrors OCaml expr.ml's `unary_to_logop` (L214-236): the engine has
+// no `!` opcode at the bytecode level, so a leading not must become a
+// logical compare in any context where the expression is consumed as
+// a truth value. Parens around the inner expression are preserved.
+func normalizeCondParam(p ast.Param) ast.Param {
+	sp, ok := p.(ast.SimpleParam)
+	if !ok {
+		return p
+	}
+	return ast.SimpleParam{Loc: sp.Loc, Expr: liftNot(sp.Expr)}
+}
+
+// liftNot recursively rewrites `!e` as `e == 0` so the binary compare
+// can be emitted by EmitExpr. Recurses into ParenExpr so the surface
+// form `(!e)` is also handled.
+func liftNot(e ast.Expr) ast.Expr {
+	switch x := e.(type) {
+	case ast.UnaryExpr:
+		if x.Op == ast.UnaryNot {
+			return ast.CmpExpr{
+				Loc: x.Loc,
+				LHS: liftNot(x.Val),
+				Op:  ast.CmpEqu,
+				RHS: ast.IntLit{Loc: x.Loc, Val: 0},
+			}
+		}
+	case ast.ParenExpr:
+		return ast.ParenExpr{Loc: x.Loc, Expr: liftNot(x.Expr)}
+	}
+	return e
+}

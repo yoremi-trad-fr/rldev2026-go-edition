@@ -70,6 +70,16 @@ type Parameter struct {
 	Tag   string // for FTagged
 }
 
+// HasFlag reports whether the parameter carries the given flag.
+func (p Parameter) HasFlag(f ParamFlag) bool {
+	for _, x := range p.Flags {
+		if x == f {
+			return true
+		}
+	}
+	return false
+}
+
 // FuncFlag is a function-level flag.
 type FuncFlag int
 
@@ -265,11 +275,34 @@ func (r *Registry) validForTarget(fd *FuncDef) bool {
 	if len(fd.Targets) == 0 { return true }
 	target := r.Target
 	if target == TargetDefault { target = TargetRealLive }
+	// A KFN entry written as `ver Avg2000, RealLive` carries two
+	// TargetConstraint entries. The semantics are OR: the function is
+	// valid if ANY constraint matches the current target. (The previous
+	// AND-shaped loop rejected RealLive entries that also mentioned
+	// Avg2000, including bgmLoop and many others.)
+	//
+	// A version Compare clause is treated as a refinement of the class:
+	// only checked when the class itself matches the current target.
 	for _, tc := range fd.Targets {
-		if tc.Class != TargetDefault && tc.Class != target { return false }
-		if tc.Compare != nil && !tc.Compare(r.Version) { return false }
+		classOK := tc.Class == TargetDefault || tc.Class == target
+		if !classOK {
+			continue
+		}
+		if tc.Compare != nil && !tc.Compare(r.Version) {
+			continue
+		}
+		return true
 	}
-	return true
+	return false
+}
+
+// ValidForTarget is the exported form of validForTarget. It lets
+// callers outside the kfn package (notably function.LookupFuncDef)
+// filter overload candidates by the target/version selected at load
+// time — critical when an opcode like bgmLoop has both a Kinetic
+// `<0:Sys:2>` entry and a RealLive `<1:Bgm:0>` entry.
+func (r *Registry) ValidForTarget(fd *FuncDef) bool {
+	return r.validForTarget(fd)
 }
 
 // CurrentVersionString returns a display string like "RealLive 1.2.7".
