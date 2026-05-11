@@ -2,6 +2,7 @@ package disasm
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -25,8 +26,42 @@ func NewWriter(outDir string, opts Options) *Writer {
 	}
 }
 
-// convertText converts raw Shift-JIS bytes to the target encoding.
+// crlfWriter wraps an io.Writer and translates each unescaped LF (0x0a)
+// into CRLF (0x0d 0x0a). Existing CRLF sequences are passed through. We
+// emit CRLF in disassembled output to match OCaml kprl's historical
+// format, which Windows-side tools (and some text editors) prefer.
+type crlfWriter struct {
+	w        io.Writer
+	prevWasC bool // last byte written was 0x0d
+}
+
+func (c *crlfWriter) Write(p []byte) (int, error) {
+	written := 0
+	buf := make([]byte, 0, len(p)+len(p)/8)
+	for _, b := range p {
+		if b == '\n' && !c.prevWasC {
+			buf = append(buf, '\r', '\n')
+			c.prevWasC = false
+		} else {
+			buf = append(buf, b)
+			c.prevWasC = (b == '\r')
+		}
+		written++
+	}
+	if _, err := c.w.Write(buf); err != nil {
+		return 0, err
+	}
+	return written, nil
+}
+
+// convertText converts raw Shift-JIS bytes to the target encoding,
+// after first translating RealLive name markers (\l{...} / \m{...}).
 func (w *Writer) convertText(sjisText string) string {
+	// Decode RealLive name markers (0x81 0x93 / 0x96 + 0x82 NN)
+	// before any encoding conversion. Otherwise SJIS-to-UTF8 sees the
+	// marker bytes as fullwidth characters (e.g. 0x81 0x96 → ＊).
+	sjisText = decodeNameMarkers(sjisText)
+
 	enc := strings.ToUpper(w.opts.Encoding)
 	if enc == "" || enc == "CP932" || enc == "SHIFT-JIS" || enc == "SJIS" || enc == "SHIFT_JIS" || enc == "SHIFTJIS" {
 		return sjisText
@@ -36,6 +71,70 @@ func (w *Writer) convertText(sjisText string) string {
 		return sjisText
 	}
 	return utf8Str
+}
+
+// decodeNameMarkers replaces each RealLive name-marker byte sequence in s
+// by its kepago text form (\l{...} or \m{...}). Reference: kprl OCaml
+// disassembler.ml L1534-1555.
+//
+//	81 93 82 60..79                    → \l{A..Z}
+//	81 96 82 60..79                    → \m{A..Z}
+//	81 96 82 60..79 82 60..79          → \m{AA..ZZ}
+//	81 96 82 60..79 82 4f..58          → \m{A, 0..9}
+//	81 96 82 60..79 82 60..79 82 4f..58 → \m{AA, 0..9}
+//
+// Other bytes are passed through verbatim.
+func decodeNameMarkers(s string) string {
+	if !strings.Contains(s, "\x81\x93") && !strings.Contains(s, "\x81\x96") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		// Need at least 4 bytes for a marker.
+		if i+3 < len(s) && s[i] == 0x81 && (s[i+1] == 0x93 || s[i+1] == 0x96) &&
+			s[i+2] == 0x82 && s[i+3] >= 0x60 && s[i+3] <= 0x79 {
+			lm := byte('l')
+			if s[i+1] == 0x96 {
+				lm = 'm'
+			}
+			c1 := s[i+3] - 0x1f
+			j := i + 4
+			var c2 byte
+			hasC2 := false
+			if j+1 < len(s) && s[j] == 0x82 && s[j+1] >= 0x60 && s[j+1] <= 0x79 {
+				c2 = s[j+1] - 0x1f
+				hasC2 = true
+				j += 2
+			}
+			hasIdx := false
+			var idx int
+			if j+1 < len(s) && s[j] == 0x82 && s[j+1] >= 0x4f && s[j+1] <= 0x58 {
+				idx = int(s[j+1]) - 0x4f
+				hasIdx = true
+				j += 2
+			}
+			if hasIdx {
+				if hasC2 {
+					fmt.Fprintf(&b, "\\%c{%c%c, %d}", lm, c1, c2, idx)
+				} else {
+					fmt.Fprintf(&b, "\\%c{%c, %d}", lm, c1, idx)
+				}
+			} else {
+				if hasC2 {
+					fmt.Fprintf(&b, "\\%c{%c%c}", lm, c1, c2)
+				} else {
+					fmt.Fprintf(&b, "\\%c{%c}", lm, c1)
+				}
+			}
+			i = j
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
 }
 
 // WriteSource writes the disassembled source and resource files.
@@ -74,7 +173,8 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 
 	// Write resource file (or same as source if not separating)
 	var resFile *os.File
-	if w.opts.SeparateStrings && len(result.ResStrs) > 0 {
+	separateRes := w.opts.SeparateStrings && len(result.ResStrs) > 0
+	if separateRes {
 		resFile, err = os.Create(resName)
 		if err != nil {
 			return fmt.Errorf("cannot create resource file: %w", err)
@@ -82,6 +182,15 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 		defer resFile.Close()
 	} else {
 		resFile = srcFile
+	}
+
+	// Wrap output streams to translate LF → CRLF, matching OCaml kprl.
+	var srcOut io.Writer = &crlfWriter{w: srcFile}
+	var resOut io.Writer
+	if separateRes {
+		resOut = &crlfWriter{w: resFile}
+	} else {
+		resOut = srcOut
 	}
 
 	// Write BOM if requested
@@ -101,29 +210,29 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 	if encNorm == "shiftjis" || encNorm == "shift_jis" || encNorm == "sjis" {
 		encNorm = "cp932"
 	}
-	fmt.Fprintf(srcFile, "{-# cp %s #- Disassembled with rldev-go -}\n\n#file '%s'\n",
+	fmt.Fprintf(srcOut, "{-# cp %s #- Disassembled with rldev-go -}\n\n#file '%s'\n",
 		encNorm, baseName)
 
 	if resFile != srcFile {
-		fmt.Fprintf(resFile, "// Resources for %s\n\n", baseName)
-		fmt.Fprintf(srcFile, "#resource '%s'\n", filepath.Base(resName))
+		fmt.Fprintf(resOut, "// Resources for %s\n\n", baseName)
+		fmt.Fprintf(srcOut, "#resource '%s'\n", filepath.Base(resName))
 	}
-	fmt.Fprintln(srcFile)
+	fmt.Fprintln(srcOut)
 
 	// Write target directive
 	switch result.Mode {
 	case ModeAvg2000:
-		fmt.Fprintln(srcFile, "#target AVG2000")
+		fmt.Fprintln(srcOut, "#target AVG2000")
 	case ModeKinetic:
-		fmt.Fprintln(srcFile, "#target Kinetic")
+		fmt.Fprintln(srcOut, "#target Kinetic")
 	}
 
 	// Write dramatis personae
 	for _, name := range result.Header.DramatisPersonae {
-		fmt.Fprintf(resFile, "#character '%s'\n", w.convertText(name))
+		fmt.Fprintf(resOut, "#character '%s'\n", w.convertText(name))
 	}
 	if resFile != srcFile && len(result.Header.DramatisPersonae) > 0 {
-		fmt.Fprintln(resFile)
+		fmt.Fprintln(resOut)
 	}
 
 	// Write commands. OCaml emits commands flush-left (no leading
@@ -134,7 +243,7 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 		// OCaml indents labels with two spaces (matches the "@1" style
 		// in kepago source files).
 		if idx, ok := labels[cmd.Offset]; ok {
-			fmt.Fprintf(srcFile, "\n  @%d\n", idx)
+			fmt.Fprintf(srcOut, "\n  @%d\n", idx)
 			skipping = false
 		}
 
@@ -145,7 +254,7 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 		if !skipping && !cmd.Hidden {
 			line := formatCommand(cmd, labels, w.opts, result)
 			if line != "" {
-				fmt.Fprint(srcFile, line+"\n")
+				fmt.Fprint(srcOut, line+"\n")
 			}
 		}
 		if w.opts.SuppressUncalled && cmd.IsJmp {
@@ -158,7 +267,7 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 	if w.opts.SeparateStrings {
 		for i, s := range result.ResStrs {
 			converted := w.convertText(s)
-			fmt.Fprintf(resFile, "<%04d> %s\n", i, converted)
+			fmt.Fprintf(resOut, "<%04d> %s\n", i, converted)
 		}
 	}
 

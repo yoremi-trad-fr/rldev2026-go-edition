@@ -125,6 +125,10 @@ func (l *Lexer) scan() {
 			l.skipBlockComment()
 			continue
 		}
+		if c == '/' && c1 == '*' {
+			l.skipCBlockComment()
+			continue
+		}
 
 		// --- Three-char operators ---
 		if c == '<' && c1 == '<' && l.peek2() == '=' {
@@ -166,6 +170,25 @@ func (l *Lexer) scan() {
 
 		// --- Identifiers / keywords / directives ---
 		if isIdentStart(c) || c == '#' {
+			// Special case: an opcode literal of the form
+			//   op<TYPE:MODULE:FUNCTION, OVERLOAD>
+			// emitted by the disassembler when the KFN doesn't know the
+			// opcode name. Consume it as a single IDENT so the colons
+			// and comma inside don't break the parser.
+			if c == 'o' && l.peek1() == 'p' && l.peek2() == '<' {
+				if l.scanOpcodeLiteral() {
+					continue
+				}
+			}
+			// Special case: `#res<KEY>` resource reference. OCaml's
+			// keULexer.ml L302 produces a single DRES token here. The
+			// disassembler emits this form for `res`-typed parameters,
+			// e.g. `title (#res<0067>)`.
+			if c == '#' && l.matchesAhead("#res") {
+				if l.scanResRef() {
+					continue
+				}
+			}
 			l.scanIdentOrKeyword()
 			continue
 		}
@@ -429,10 +452,134 @@ func (l *Lexer) skipLineComment() {
 	}
 }
 
+// scanOpcodeLiteral consumes a literal of the form
+//   op<TYPE:MODULE:FUNCTION, OVERLOAD>
+// and emits it as a single IDENT token whose StrVal is the entire literal
+// (e.g. "op<35:035:21072,84>"). Returns true when the literal was matched
+// and consumed, false otherwise (in which case the lexer falls through
+// to normal identifier scanning).
+//
+// This shape comes from the disassembler when the KFN registry has no
+// name for an opcode. Treating it as a single token keeps the colons
+// and comma from triggering parseBlock or parseParamList paths that
+// would otherwise crash.
+func (l *Lexer) scanOpcodeLiteral() bool {
+	start := l.pos
+	if !(l.pos+2 < len(l.src) && l.src[l.pos] == 'o' && l.src[l.pos+1] == 'p' && l.src[l.pos+2] == '<') {
+		return false
+	}
+	pos := l.pos + 3
+	depth := 1
+	for pos < len(l.src) && depth > 0 {
+		switch l.src[pos] {
+		case '<':
+			depth++
+		case '>':
+			depth--
+		case '\n':
+			// Don't span lines.
+			return false
+		}
+		pos++
+	}
+	if depth != 0 {
+		return false
+	}
+	name := string(l.src[start:pos])
+	// Strip whitespace inside the literal so the IDENT is canonical.
+	var b strings.Builder
+	b.Grow(len(name))
+	for i := 0; i < len(name); i++ {
+		if name[i] == ' ' || name[i] == '\t' {
+			continue
+		}
+		b.WriteByte(name[i])
+	}
+	l.pos = pos
+	l.emitStr(token.IDENT, b.String())
+	return true
+}
+
+// matchesAhead reports whether the next len(s) runes of source starting
+// at the current position spell `s` exactly.
+func (l *Lexer) matchesAhead(s string) bool {
+	rs := []rune(s)
+	if l.pos+len(rs) > len(l.src) {
+		return false
+	}
+	for i, r := range rs {
+		if l.src[l.pos+i] != r {
+			return false
+		}
+	}
+	return true
+}
+
+// scanResRef consumes a `#res<KEY>` resource reference and emits a
+// single DRES token whose StrVal is the key. The OCaml reference is
+// keULexer.ml L302:
+//
+//	"#res" [" \t\r\n"]* "<" [" \t\r\n"]*  → DRES key
+//
+// The key continues until a closing `>` and is taken verbatim. Returns
+// true when the form is successfully consumed; on any mismatch the
+// position is restored and `false` is returned so the caller can fall
+// back to the regular identifier path.
+func (l *Lexer) scanResRef() bool {
+	start := l.pos
+	if !l.matchesAhead("#res") {
+		return false
+	}
+	pos := l.pos + 4
+	// Optional whitespace between '#res' and '<'.
+	for pos < len(l.src) && (l.src[pos] == ' ' || l.src[pos] == '\t') {
+		pos++
+	}
+	if pos >= len(l.src) || l.src[pos] != '<' {
+		// Not a resource reference — could be `#resource` etc.
+		l.pos = start
+		return false
+	}
+	pos++ // skip '<'
+	for pos < len(l.src) && (l.src[pos] == ' ' || l.src[pos] == '\t') {
+		pos++
+	}
+	keyStart := pos
+	for pos < len(l.src) && l.src[pos] != '>' && l.src[pos] != '\n' {
+		pos++
+	}
+	if pos >= len(l.src) || l.src[pos] != '>' {
+		l.pos = start
+		return false
+	}
+	key := strings.TrimSpace(string(l.src[keyStart:pos]))
+	l.pos = pos + 1 // skip '>'
+	l.emitStr(token.DRES, key)
+	return true
+}
+
 func (l *Lexer) skipBlockComment() {
 	l.pos += 2 // skip {-
 	for l.pos < len(l.src) {
 		if l.src[l.pos] == '-' && l.pos+1 < len(l.src) && l.src[l.pos+1] == '}' {
+			l.pos += 2
+			return
+		}
+		if l.src[l.pos] == '\n' {
+			l.line++
+		}
+		l.pos++
+	}
+}
+
+// skipCBlockComment handles C-style /* ... */ block comments. The
+// disassembler emits these around inline annotations such as
+// "/* nested:30 bytes */" and "/* STORE = */", so we tolerate them here
+// to keep the round-trip clean.
+func (l *Lexer) skipCBlockComment() {
+	l.pos += 2 // skip /*
+	for l.pos < len(l.src) {
+		if l.src[l.pos] == '*' && l.pos+1 < len(l.src) && l.src[l.pos+1] == '/' {
 			l.pos += 2
 			return
 		}

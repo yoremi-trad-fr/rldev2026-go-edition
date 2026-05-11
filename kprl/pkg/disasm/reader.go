@@ -725,8 +725,17 @@ unquotLoop:
 	}
 
 	if sepStr {
-		// Caller handles formatting (e.g. textout → resource file).
-		return b.String(), nil
+		// OCaml force_textout / get_string with sep_str=true:
+		// push to the resource list and return a #res<NNNN> token.
+		// (disassembler.ml L1486 force_textout, L1361 get_string body)
+		s := b.String()
+		if r.result != nil {
+			idx := len(r.result.ResStrs)
+			r.result.ResStrs = append(r.result.ResStrs, s)
+			return fmt.Sprintf("#res<%04d>", idx), nil
+		}
+		// No collection target attached — fall through to inline.
+		return "'" + s + "'", nil
 	}
 
 	s := b.String()
@@ -1081,7 +1090,22 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 	}
 
 	// Generic path: KFN-or-fallback.
-	args, err := readFuncArgs(r, argc)
+	// Look up the prototype so we know which parameters are typed as
+	// ResStr and need sep_str=true (resource-routed) when read.
+	var proto []ParamType
+	if opts.FuncReg != nil {
+		if def, ok := opts.FuncReg.LookupOpcode(op); ok {
+			if len(def.Prototypes) > 0 {
+				proto = def.Prototypes[0]
+			}
+		}
+	}
+	// Hand the resource-collection target to the reader so it can
+	// allocate `#res<NNNN>` indices when sep_str routing kicks in.
+	r.result = result
+	r.opts = &opts
+
+	args, err := readFuncArgsWithProto(r, argc, proto)
 	if err != nil {
 		// Best-effort: emit with name if known.
 		funcName := opcodeDisplay(op, opts.FuncReg)
@@ -1415,6 +1439,16 @@ func prettifyCond(s string) string {
 // We consume balanced parens while reading the args so the reader stays
 // in sync with the bytecode for the next command.
 func readFuncArgs(r *Reader, argc int) ([]string, error) {
+	return readFuncArgsWithProto(r, argc, nil)
+}
+
+// readFuncArgsWithProto is the proto-aware variant. When `proto` is
+// non-nil, each parameter at index `i` is read with `sepStr=true` if
+// `proto[i] == ParamResStr`, matching OCaml read_soft_function's
+// `sep_str:(separate_strings && ptype = ResStr)` (disassembler.ml
+// L2314). This routes resource-typed string arguments to the .utf
+// resource file regardless of SeparateAll or the leading byte.
+func readFuncArgsWithProto(r *Reader, argc int, proto []ParamType) ([]string, error) {
 	var args []string
 
 	b, err := r.Peek()
@@ -1474,7 +1508,12 @@ func readFuncArgs(r *Reader, argc int) ([]string, error) {
 			r.Next()
 
 		default:
-			arg, err := r.GetData()
+			// If we have a prototype, use sep_str=true for ResStr params.
+			sepStr := false
+			if proto != nil && len(args) < len(proto) && proto[len(args)] == ParamResStr {
+				sepStr = true
+			}
+			arg, err := r.GetDataSep(sepStr)
 			if err != nil {
 				// Best-effort: stop reading args on error and let the
 				// outer loop continue from the current position.
@@ -1677,6 +1716,60 @@ textoutLoop:
 				}
 			}
 
+			// Name markers: 0x81 0x93 → \l (Local Name), 0x81 0x96 → \m (Global Name)
+			//   followed by 0x82 [0x60-0x79] (=A-Z, fullwidth)
+			//   optionally another 0x82 [0x60-0x79] (=A-Z second char)
+			//   optionally a final 0x82 [0x4f-0x58] (= digit 0-9 → indexed)
+			//
+			// Encoded -> Display:
+			//   81 93 82 61                  → \l{A}
+			//   81 96 82 60                  → \m{A}
+			//   81 96 82 60 82 61            → \m{AA}
+			//   81 96 82 60 82 4f            → \m{A, 0}
+			//   81 96 82 60 82 61 82 4f      → \m{AA, 0}
+			//
+			// Reference: kprl/disassembler.ml L1534-1555.
+			if c == 0x81 && (r.peekByteAt(1) == 0x93 || r.peekByteAt(1) == 0x96) &&
+				r.peekByteAt(2) == 0x82 && r.peekByteAt(3) >= 0x60 && r.peekByteAt(3) <= 0x79 {
+				lm := byte('l')
+				if r.peekByteAt(1) == 0x96 {
+					lm = 'm'
+				}
+				c1 := r.peekByteAt(3) - 0x1f // 0x60→A=0x41 ... yes: 0x60-0x1f=0x41
+				// Optional second letter
+				offset := 4
+				var c2 byte
+				hasC2 := false
+				if r.peekByteAt(offset) == 0x82 && r.peekByteAt(offset+1) >= 0x60 && r.peekByteAt(offset+1) <= 0x79 {
+					c2 = r.peekByteAt(offset+1) - 0x1f
+					hasC2 = true
+					offset += 2
+				}
+				// Optional index (digit suffix 0x82 0x4f-0x58)
+				hasIdx := false
+				var idx int
+				if r.peekByteAt(offset) == 0x82 && r.peekByteAt(offset+1) >= 0x4f && r.peekByteAt(offset+1) <= 0x58 {
+					idx = int(r.peekByteAt(offset+1)) - 0x4f
+					hasIdx = true
+					offset += 2
+				}
+				r.pos += offset
+				if hasIdx {
+					if hasC2 {
+						fmt.Fprintf(&b, "\\%c{%c%c, %d}", lm, c1, c2, idx)
+					} else {
+						fmt.Fprintf(&b, "\\%c{%c, %d}", lm, c1, idx)
+					}
+				} else {
+					if hasC2 {
+						fmt.Fprintf(&b, "\\%c{%c%c}", lm, c1, c2)
+					} else {
+						fmt.Fprintf(&b, "\\%c{%c}", lm, c1)
+					}
+				}
+				continue
+			}
+
 			// Regular SJIS pair
 			if isShiftJISLead(c) {
 				r.Next()
@@ -1755,6 +1848,19 @@ textoutLoop:
 		return nil
 	}
 
+	// OCaml force_textout: always emit as resource when SeparateStrings.
+	// However, OCaml's add_textout_fails (disassembler.ml L1389) absorbs
+	// some textouts into the previous command instead of creating a new
+	// resource — notably stub textouts produced by isolated control bytes
+	// (e.g. 0x1e) that follow certain opcodes. We don't yet replicate
+	// add_textout_fails fully, but we can avoid the most visible
+	// regression: textouts that contain only escape sequences for
+	// control bytes (`\x{NN}` chains) carry no readable content.
+	if isOnlyControlEscapes(textStr) {
+		// Drop entirely; matches the most common OCaml outcome here.
+		return nil
+	}
+
 	if opts.SeparateStrings {
 		resIdx := len(result.ResStrs)
 		result.ResStrs = append(result.ResStrs, textStr)
@@ -1790,6 +1896,54 @@ var seenEndPrefix = []byte{
 }
 
 // isSeenEndMarker reports whether the given textout buffer is the
+// isOnlyControlEscapes reports whether s consists entirely of `\x{NN}`
+// escape sequences and surrounding non-content (whitespace, escaped
+// backslashes). These come from isolated control bytes (< 0x20) that
+// the textout reader emitted in the buffer when ControlCodes is
+// enabled. OCaml's add_textout_fails generally absorbs such stubs into
+// the previous command rather than creating a fresh resource entry.
+//
+// We look for the regex-equivalent ^([\\\s]*\\x\{[0-9a-fA-F]+\})+[\\\s]*$
+// — i.e. only escape sequences with optional decorative \\ or whitespace.
+func isOnlyControlEscapes(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	hasEscape := false
+	i := 0
+	for i < len(s) {
+		c := s[i]
+		// Skip whitespace and lone backslashes (e.g. "\\" or "\\\\" decoration).
+		if c == ' ' || c == '\t' || c == '\\' {
+			i++
+			continue
+		}
+		// Need exactly the form \x{HEX} starting here, with the leading
+		// backslash potentially already consumed above.
+		// Look back: was the previous char a backslash?
+		if i > 0 && s[i-1] == '\\' && c == 'x' && i+1 < len(s) && s[i+1] == '{' {
+			j := i + 2
+			for j < len(s) && s[j] != '}' {
+				ch := s[j]
+				isHex := (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')
+				if !isHex {
+					return false
+				}
+				j++
+			}
+			if j >= len(s) {
+				return false
+			}
+			i = j + 1
+			hasEscape = true
+			continue
+		}
+		// Anything else: real content.
+		return false
+	}
+	return hasEscape
+}
+
 // "SeenEnd" sentinel: the SJIS string "ＳｅｅｎＥｎｄ" followed only by
 // 0xff bytes (any number — typically 32, but the count can vary by
 // scenario size).

@@ -826,6 +826,18 @@ func (p *Parser) parsePrimary() ast.Expr {
 			p.advance()
 			idx := p.parseExpr()
 			p.expect(token.RSQU)
+			// `name[idx](args)` — Deref-of-array followed by a call,
+			// e.g. __special[0]('CGSH25'). This shape comes out of the
+			// disassembler for special parameter markers. Treat the
+			// whole thing as a function call where the index becomes the
+			// first parameter (decorative; codegen ignores __special).
+			if p.cur.Type == token.LPAR {
+				p.advance()
+				rest := p.parseParamList()
+				p.expect(token.RPAR)
+				params := append([]ast.Param{ast.SimpleParam{Loc: loc, Expr: idx}}, rest...)
+				return ast.FuncCall{Loc: loc, Ident: name, Params: params}
+			}
 			return ast.Deref{Loc: loc, Ident: name, Index: idx}
 		}
 		return ast.VarOrFunc{Loc: loc, Ident: name}
@@ -858,19 +870,64 @@ func (p *Parser) parseFuncCall(loc ast.Loc, name string) ast.Expr {
 	p.expect(token.LPAR)
 	params := p.parseParamList()
 	p.expect(token.RPAR)
+	// Only goto-like functions can have a trailing `@label`. For any
+	// other function, a `@N` token after the closing paren is a separate
+	// statement — a label definition for the next instruction.
+	//
+	// OCaml grammar (keAstParser.mly L324-327):
+	//
+	//   gotofunction:
+	//     | GOTO label
+	//     | GOTO LPAR param_list RPAR label
+	//
+	// i.e. only the GOTO token type accepts a trailing label. In our Go
+	// lexer, `goto`/`gosub`/`goto_if`/`goto_unless`/`gosub_if`/
+	// `gosub_unless` are emitted as plain IDENT (not a dedicated GOTO
+	// token), so we check the name here instead.
 	var label *ast.Label
-	if p.cur.Type == token.LABEL {
+	if p.cur.Type == token.LABEL && isGotoLike(name) {
 		lbl := ast.Label{Loc: p.loc(), Ident: p.cur.StrVal}
 		label = &lbl; p.advance()
 	}
 	return ast.FuncCall{Loc: loc, Ident: name, Params: params, Label: label}
 }
 
+// isGotoLike reports whether the given function name takes a trailing
+// `@label` argument in the kepago source syntax.
+func isGotoLike(name string) bool {
+	switch name {
+	case "goto", "gosub",
+		"goto_if", "goto_unless",
+		"gosub_if", "gosub_unless":
+		return true
+	}
+	return false
+}
+
 func (p *Parser) parseParamList() []ast.Param {
 	var params []ast.Param
 	if p.cur.Type == token.RPAR { return params }
-	params = append(params, p.parseParam())
+	// Empty-slot tolerance — see comment below. Applies to the leading
+	// position too: `(, expr)` after the lexer has skipped a stripped
+	// /* nested:N bytes */ commented out by the disassembler.
+	if p.cur.Type == token.COMMA {
+		params = append(params, ast.SimpleParam{Loc: p.loc(), Expr: ast.IntLit{Loc: p.loc(), Val: 0}})
+	} else {
+		params = append(params, p.parseParam())
+	}
 	for p.match(token.COMMA) {
+		// Empty slot tolerance: when the disassembler emits a nested
+		// arg block as `/* nested:N bytes */` and the lexer skips it,
+		// adjacent commas leave a hole. Treat the missing expression
+		// as IntLit(0) so the parser can keep going. The resulting
+		// bytecode won't be semantically correct for that argument,
+		// but the parse no longer panics; this matters for opcodes
+		// like InitExFrames whose nested-complex parameters aren't
+		// yet round-trippable through our toolchain.
+		if p.cur.Type == token.RPAR || p.cur.Type == token.COMMA {
+			params = append(params, ast.SimpleParam{Loc: p.loc(), Expr: ast.IntLit{Loc: p.loc(), Val: 0}})
+			continue
+		}
 		params = append(params, p.parseParam())
 	}
 	return params

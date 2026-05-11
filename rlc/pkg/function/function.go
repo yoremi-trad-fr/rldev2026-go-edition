@@ -15,6 +15,7 @@ package function
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
@@ -541,6 +542,16 @@ func LookupFuncDef(reg *kfn.Registry, ident string, params []ast.Param, ctrlCode
 
 	fns, ok := table[ident]
 	if !ok || len(fns) == 0 {
+		// Synthesize a FuncDef from a literal opcode of the form
+		//   op<TYPE:MODULE:FUNCTION, OVERLOAD>
+		// emitted by the disassembler when the KFN had no name for an
+		// opcode. We encode it directly with the parsed numeric coords.
+		// Module is stored numerically by the disassembler ("035") but
+		// may also have been re-named symbolically ("Sys"), so we
+		// accept both forms here.
+		if fn, ok := parseOpLiteralWithReg(ident, reg); ok {
+			return fn, nil
+		}
 		return nil, fmt.Errorf("undefined function '%s'", ident)
 	}
 
@@ -631,4 +642,129 @@ func BuildParamDefs(proto []kfn.Parameter, paramCount int) []kfn.Parameter {
 	}
 
 	return arr
+}
+
+// parseOpLiteralWithReg is the registry-aware variant of parseOpLiteral:
+// it accepts a symbolic module name (e.g. "Shl") and resolves it
+// against the registry's Modules table before bailing out.
+func parseOpLiteralWithReg(ident string, reg *kfn.Registry) (*kfn.FuncDef, bool) {
+	if fn, ok := parseOpLiteral(ident); ok {
+		return fn, true
+	}
+	// Symbolic module fallback. Re-parse manually accepting a name.
+	const prefix = "op<"
+	if len(ident) < len(prefix)+1 || ident[:len(prefix)] != prefix || ident[len(ident)-1] != '>' {
+		return nil, false
+	}
+	body := ident[len(prefix) : len(ident)-1]
+	commaIdx := -1
+	for i := 0; i < len(body); i++ {
+		if body[i] == ',' {
+			commaIdx = i
+			break
+		}
+	}
+	if commaIdx < 0 {
+		return nil, false
+	}
+	left := body[:commaIdx]
+	right := body[commaIdx+1:]
+	parts := []string{}
+	last := 0
+	for i := 0; i < len(left); i++ {
+		if left[i] == ':' {
+			parts = append(parts, left[last:i])
+			last = i + 1
+		}
+	}
+	parts = append(parts, left[last:])
+	if len(parts) != 3 {
+		return nil, false
+	}
+	typ, err1 := strconv.Atoi(parts[0])
+	if err1 != nil {
+		return nil, false
+	}
+	// Resolve module name through registry.
+	modNum, ok := reg.Modules[parts[1]]
+	if !ok {
+		return nil, false
+	}
+	fn, err3 := strconv.Atoi(parts[2])
+	if err3 != nil {
+		return nil, false
+	}
+	overload, err4 := strconv.Atoi(right)
+	if err4 != nil {
+		return nil, false
+	}
+	return &kfn.FuncDef{
+		Ident:             ident,
+		OpType:            typ,
+		OpModule:          modNum,
+		OpCode:            fn,
+		SyntheticOverload: overload,
+	}, true
+}
+
+// parseOpLiteral attempts to interpret an identifier as a literal opcode
+// of the form "op<TYPE:MODULE:FUNCTION,OVERLOAD>" emitted by the
+// disassembler when no symbolic name was available. MODULE may be either
+// numeric ("035") or symbolic ("Sys"); without access to the registry
+// here, we only accept numeric module values. (Symbolic-module lookup
+// happens at call sites that have a *kfn.Registry.)
+func parseOpLiteral(ident string) (*kfn.FuncDef, bool) {
+	const prefix = "op<"
+	if len(ident) < len(prefix)+1 || ident[:len(prefix)] != prefix || ident[len(ident)-1] != '>' {
+		return nil, false
+	}
+	body := ident[len(prefix) : len(ident)-1]
+	// body == "TYPE:MODULE:FUNCTION,OVERLOAD"
+	commaIdx := -1
+	for i := 0; i < len(body); i++ {
+		if body[i] == ',' {
+			commaIdx = i
+			break
+		}
+	}
+	if commaIdx < 0 {
+		return nil, false
+	}
+	left := body[:commaIdx]
+	right := body[commaIdx+1:]
+	parts := []string{}
+	last := 0
+	for i := 0; i < len(left); i++ {
+		if left[i] == ':' {
+			parts = append(parts, left[last:i])
+			last = i + 1
+		}
+	}
+	parts = append(parts, left[last:])
+	if len(parts) != 3 {
+		return nil, false
+	}
+	typ, err1 := strconv.Atoi(parts[0])
+	if err1 != nil {
+		return nil, false
+	}
+	modNum, err2 := strconv.Atoi(parts[1])
+	if err2 != nil {
+		return nil, false
+	}
+	fn, err3 := strconv.Atoi(parts[2])
+	if err3 != nil {
+		return nil, false
+	}
+	overload, err4 := strconv.Atoi(right)
+	if err4 != nil {
+		return nil, false
+	}
+	return &kfn.FuncDef{
+		Ident:             ident,
+		OpType:            typ,
+		OpModule:          modNum,
+		OpCode:            fn,
+		SyntheticOverload: overload,
+	}, true
 }

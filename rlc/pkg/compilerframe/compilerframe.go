@@ -617,6 +617,11 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 		return
 	}
 	overload, _ := fn.ChooseOverloadByParams(fd.Prototypes, s.Params)
+	if fd.SyntheticOverload != 0 {
+		// Synthetic FuncDef built from an op<...> literal: use its
+		// captured overload directly.
+		overload = fd.SyntheticOverload
+	}
 
 	// Emit opcode header
 	c.Out.EmitOpcode(s.Loc, fd.OpType, fd.OpModule, fd.OpCode, len(s.Params), overload)

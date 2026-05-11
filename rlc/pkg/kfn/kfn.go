@@ -169,6 +169,10 @@ type FuncDef struct {
 	OpCode     int
 	Prototypes []Prototype
 	Targets    []TargetConstraint
+	// SyntheticOverload, when non-zero, is used as the encoded overload
+	// for opcode literals that bypassed the registry (e.g. "op<X:Y:Z,W>").
+	// When zero, normal prototype-based overload selection applies.
+	SyntheticOverload int
 }
 
 // IdentOfOpcode builds a synthetic identifier from opcode components.
