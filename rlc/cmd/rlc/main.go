@@ -214,6 +214,33 @@ func compileFile(opts *Options, srcPath string) error {
 		fmt.Fprintf(os.Stderr, "  KFN functions: %d\n", len(kfnReg.Functions))
 	}
 
+	// 2a. Resolve interpreter version. Priority:
+	//   1. Explicit --target-version on command line (wins).
+	//   2. Auto-detected from RealLive.exe / kinetic.exe / … alongside
+	//      the .org source. Mirrors OCaml main.ml L408-428.
+	//   3. Default kfn.Version{1, 2, 7, 0}.
+	// The version drives the kidoku marker character (`@` vs `!`) and
+	// version-constrained KFN overload selection.
+	var detectedVersion kfn.Version
+	if opts.TargetVersion != "" {
+		v, err := parseVersion(opts.TargetVersion)
+		if err == nil {
+			detectedVersion = v
+		}
+	} else {
+		v, exePath, err := autoDetectVersion(srcPath)
+		if err == nil {
+			detectedVersion = v
+			if opts.Verbose > 0 {
+				fmt.Fprintf(os.Stderr, "  Detected interpreter %s version %d.%d.%d.%d\n",
+					filepath.Base(exePath), v[0], v[1], v[2], v[3])
+			}
+		}
+	}
+	if detectedVersion != (kfn.Version{}) && kfnReg != nil {
+		kfnReg.Version = detectedVersion
+	}
+
 	// 3. Read source file
 	srcBytes, err := os.ReadFile(srcPath)
 	if err != nil {
@@ -247,6 +274,32 @@ func compileFile(opts *Options, srcPath string) error {
 	// 5. Compile via compilerframe
 	compiler := compilerframe.New(kfnReg, iniTable)
 	compiler.Verbose = opts.Verbose
+
+	// Wire the directive compiler with information it needs to resolve
+	// `#resource 'foo.sjs'` references relative to the source file, and
+	// to decode the resource file in the right encoding. Without this,
+	// `#res<NNNN>` references in the .org would resolve to nothing and
+	// the bytecode would contain literal "#res<NNNN>" text instead of
+	// the actual caption (288 occurrences in SEEN0414 alone).
+	if compiler.Directive != nil {
+		compiler.Directive.SourceDir = filepath.Dir(srcPath)
+		compiler.Directive.SourceEnc = opts.Encoding
+	}
+
+	// Wire codegen's ResolveRes callback to State.Resources so EmitExpr
+	// can substitute `#res<KEY>` references with the actual string from
+	// the loaded .sjs/.utf file.
+	compiler.Out.ResolveRes = func(key string) (string, bool) {
+		if compiler.State == nil {
+			return "", false
+		}
+		r, err := compiler.State.GetResource(key)
+		if err != nil {
+			return "", false
+		}
+		return r.Text, true
+	}
+
 	compiler.Compile(program.Stmts)
 
 	// Report diagnostics
@@ -267,6 +320,9 @@ func compileFile(opts *Options, srcPath string) error {
 	}
 
 	genOpts := codegen.DefaultOptions()
+	if detectedVersion != (kfn.Version{}) {
+		genOpts.Version = detectedVersion
+	}
 	bytecode, err := compiler.Out.Generate(genOpts)
 	if err != nil {
 		return fmt.Errorf("bytecode generation: %w", err)
@@ -477,4 +533,116 @@ func decodeSource(data []byte, encName string) (string, error) {
 		}
 		return s, nil
 	}
+}
+
+// pe_versionFromExe extracts the FileVersion tuple from a PE executable
+// (typically RealLive.exe). Mirrors OCaml's
+// `rldev_get_interpreter_version` (C binding in get_interpreter_version.c)
+// for non-Windows builds: walks the .rsrc section to find the
+// VS_FIXEDFILEINFO signature 0xFEEF04BD and reads dwFileVersionMS /
+// dwFileVersionLS.
+//
+// The interpreter version drives:
+//   - kidoku marker character: `@` for versions ≤ 1.2.5, `!` after
+//     (bytecodeGen.ml L157). Wrong marker → engine misparses
+//     entrypoint table → crash.
+//   - KFN overload filtering: many opcodes have version-constrained
+//     prototypes (`ver >= 1.3, < 1.6.4.6`).
+//
+// Returns the zero Version and a non-nil error when no version info is
+// found; callers can then fall back to user-supplied --target-version.
+func pe_versionFromExe(path string) (kfn.Version, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return kfn.Version{}, err
+	}
+	if len(data) < 0x40 || data[0] != 'M' || data[1] != 'Z' {
+		return kfn.Version{}, fmt.Errorf("not a PE file")
+	}
+	peOff := int(uint32(data[0x3c]) | uint32(data[0x3d])<<8 | uint32(data[0x3e])<<16 | uint32(data[0x3f])<<24)
+	if peOff+4 > len(data) || string(data[peOff:peOff+4]) != "PE\x00\x00" {
+		return kfn.Version{}, fmt.Errorf("PE header signature not found")
+	}
+
+	// COFF header at peOff+4
+	coffOff := peOff + 4
+	if coffOff+20 > len(data) {
+		return kfn.Version{}, fmt.Errorf("truncated COFF header")
+	}
+	nsec := int(uint16(data[coffOff+2]) | uint16(data[coffOff+3])<<8)
+	optSize := int(uint16(data[coffOff+16]) | uint16(data[coffOff+17])<<8)
+	secStart := coffOff + 20 + optSize
+
+	// Find .rsrc section
+	rsrcOff := 0
+	rsrcSize := 0
+	for i := 0; i < nsec; i++ {
+		s := secStart + i*40
+		if s+40 > len(data) {
+			break
+		}
+		name := strings.TrimRight(string(data[s:s+8]), "\x00")
+		if name == ".rsrc" {
+			rsrcSize = int(uint32(data[s+16]) | uint32(data[s+17])<<8 | uint32(data[s+18])<<16 | uint32(data[s+19])<<24)
+			rsrcOff = int(uint32(data[s+20]) | uint32(data[s+21])<<8 | uint32(data[s+22])<<16 | uint32(data[s+23])<<24)
+			break
+		}
+	}
+	if rsrcOff == 0 {
+		return kfn.Version{}, fmt.Errorf(".rsrc section not found")
+	}
+	end := rsrcOff + rsrcSize
+	if end > len(data) {
+		end = len(data)
+	}
+
+	// Search for VS_FIXEDFILEINFO signature 0xFEEF04BD (little-endian: BD 04 EF FE)
+	sig := []byte{0xbd, 0x04, 0xef, 0xfe}
+	idx := -1
+	for i := rsrcOff; i+16 < end; i++ {
+		if data[i] == sig[0] && data[i+1] == sig[1] && data[i+2] == sig[2] && data[i+3] == sig[3] {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return kfn.Version{}, fmt.Errorf("VS_FIXEDFILEINFO not found")
+	}
+	if idx+16 > len(data) {
+		return kfn.Version{}, fmt.Errorf("truncated VS_FIXEDFILEINFO")
+	}
+	// dwFileVersionMS at offset +8 (4 bytes), dwFileVersionLS at offset +12 (4 bytes)
+	fvms := uint32(data[idx+8]) | uint32(data[idx+9])<<8 | uint32(data[idx+10])<<16 | uint32(data[idx+11])<<24
+	fvls := uint32(data[idx+12]) | uint32(data[idx+13])<<8 | uint32(data[idx+14])<<16 | uint32(data[idx+15])<<24
+	return kfn.Version{
+		int(fvms >> 16),
+		int(fvms & 0xffff),
+		int(fvls >> 16),
+		int(fvls & 0xffff),
+	}, nil
+}
+
+// autoDetectVersion looks for a RealLive.exe / RealLiveEn.exe /
+// kinetic.exe / avg2000.exe / siglusengine.exe next to the source
+// .org file (and one directory up), and extracts the interpreter
+// version via pe_versionFromExe. Mirrors OCaml main.ml L408-428.
+//
+// Returns zero Version when no candidate executable is found —
+// callers should then leave the version at the user-supplied default.
+func autoDetectVersion(srcPath string) (kfn.Version, string, error) {
+	candidates := []string{"RealLive.exe", "RealLiveEn.exe", "Kinetic.exe", "kinetic.exe",
+		"AVG2000.exe", "avg2000.exe", "SiglusEngine.exe", "siglusengine.exe", "reallive.exe"}
+	dirs := []string{filepath.Dir(srcPath), filepath.Join(filepath.Dir(srcPath), "..")}
+	for _, dir := range dirs {
+		for _, name := range candidates {
+			path := filepath.Join(dir, name)
+			if _, err := os.Stat(path); err == nil {
+				v, err := pe_versionFromExe(path)
+				if err == nil && v != (kfn.Version{}) {
+					return v, path, nil
+				}
+			}
+		}
+	}
+	return kfn.Version{}, "", fmt.Errorf("no interpreter executable found")
 }

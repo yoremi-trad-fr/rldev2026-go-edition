@@ -148,6 +148,13 @@ type Output struct {
 	IR      []IR
 	labels  map[string]bool // tracks defined label names (for duplicate detection)
 	lastLine int
+
+	// ResolveRes, when non-nil, is invoked to resolve a `#res<KEY>`
+	// reference to its expanded string. The compiler frame wires this
+	// to State.Resources after parsing the source. Returning ok=false
+	// causes EmitExpr to emit a textual fallback that the engine will
+	// reject but won't desync the reader.
+	ResolveRes func(key string) (string, bool)
 }
 
 // NewOutput creates a fresh IR output buffer.
@@ -257,7 +264,7 @@ func (o *Output) EmitExpr(e ast.Expr) {
 		// Without this case, every `SetLocalName(0, '〔Nom〕')`,
 		// `strcpy(strS[…], 'foo')`, and other string parameter was
 		// silently dropped, leaving the bytecode 30-40 % too short.
-		bytes, err := encodeStrLit(x)
+		bytes, err := o.encodeStrLit(x)
 		if err == nil {
 			o.AddCode(x.Loc, bytes)
 		} else {
@@ -267,11 +274,23 @@ func (o *Output) EmitExpr(e ast.Expr) {
 			o.AddCode(x.Loc, []byte{'"', '"'})
 		}
 	case ast.ResRef:
-		// #res<KEY> reference: textual passthrough. Resources are kept
-		// as escape-style references in the bytecode; the engine reads
-		// the surrounding string context and substitutes the resource
-		// at runtime.
-		o.AddCode(x.Loc, []byte("#res<"+x.Key+">"))
+		// #res<KEY> is a deferred reference to a string defined in the
+		// .sjs / .utf companion file. Resolve via the callback wired by
+		// the compiler frame and emit the bytecode for the underlying
+		// string (same path as ast.StrLit). When the resource is
+		// missing we emit empty quotes — the engine will play an empty
+		// caption rather than crash, and the warning trail makes the
+		// missing entry obvious to the translator.
+		if o.ResolveRes != nil {
+			if t, ok := o.ResolveRes(x.Key); ok {
+				b, err := texttransforms.ToBytecode(text.Text([]rune(t)))
+				if err == nil {
+					o.AddCode(x.Loc, b)
+					break
+				}
+			}
+		}
+		o.AddCode(x.Loc, []byte{'"', '"'})
 	}
 }
 
@@ -281,17 +300,17 @@ func (o *Output) EmitExpr(e ast.Expr) {
 // plain text is encoded via the active TextTransforms pipeline (which
 // resolves to Shift-JIS by default), and a handful of presentation
 // tokens (lenticulars, asterisk, percent, hyphen, right brace, double
-// quote) have fixed SJIS code points. Resource-reference tokens are
-// passed through as textual `#res<…>`. Rich tokens that can't legally
-// appear in a string parameter to an opcode (gloss, code, name) cause
-// the function to fail so the caller can emit a safe fallback.
-func encodeStrLit(s ast.StrLit) ([]byte, error) {
+// quote) have fixed SJIS code points. ResRefToken is resolved via
+// Output.ResolveRes when set so that `#res<…>` references inside
+// string literals are expanded to their backing text. Rich tokens that
+// can't legally appear in a string parameter to an opcode (gloss,
+// code, name) cause the function to fail so the caller can emit a
+// safe fallback.
+func (o *Output) encodeStrLit(s ast.StrLit) ([]byte, error) {
 	var buf []byte
 	for _, tok := range s.Tokens {
 		switch t := tok.(type) {
 		case ast.TextToken:
-			// TextToken.Text is a UTF-8 Go string. Convert to bytecode
-			// via the configured TextTransforms pipeline.
 			b, err := texttransforms.ToBytecode(text.Text([]rune(t.Text)))
 			if err != nil {
 				return nil, err
@@ -302,10 +321,8 @@ func encodeStrLit(s ast.StrLit) ([]byte, error) {
 				buf = append(buf, ' ')
 			}
 		case ast.LLenticToken:
-			// SJIS 'BLACK LENTICULAR BRACKET' 【 - matches OCaml function.ml L433
 			buf = append(buf, 0x81, 0x79)
 		case ast.RLenticToken:
-			// SJIS 'BLACK LENTICULAR BRACKET' 】 - matches OCaml function.ml L434
 			buf = append(buf, 0x81, 0x7a)
 		case ast.AsteriskToken:
 			buf = append(buf, 0x81, 0x96)
@@ -318,7 +335,18 @@ func encodeStrLit(s ast.StrLit) ([]byte, error) {
 		case ast.DQuoteToken:
 			buf = append(buf, '"')
 		case ast.ResRefToken:
-			buf = append(buf, []byte("#res<"+t.Key+">")...)
+			// Resolve and inline the resource text.
+			if o.ResolveRes != nil {
+				if r, ok := o.ResolveRes(t.Key); ok {
+					b, err := texttransforms.ToBytecode(text.Text([]rune(r)))
+					if err == nil {
+						buf = append(buf, b...)
+						continue
+					}
+				}
+			}
+			// Unresolved: emit nothing rather than the textual "#res<…>"
+			// which would inject bogus opcodes into the bytecode.
 		default:
 			return nil, fmt.Errorf("unsupported string token %T", tok)
 		}
@@ -457,7 +485,7 @@ func (o *Output) Generate(opts GenerateOptions) ([]byte, error) {
 		case IRLabel:
 			// zero-width
 		case IRKidoku:
-			buf[pos] = '@'
+			buf[pos] = kidokuChar
 			pos++
 			if spec.kidokuLen == 2 {
 				binary.LittleEndian.PutUint16(buf[pos:], uint16(kidokuIdx))
