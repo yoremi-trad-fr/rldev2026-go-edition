@@ -302,9 +302,11 @@ func encodeStrLit(s ast.StrLit) ([]byte, error) {
 				buf = append(buf, ' ')
 			}
 		case ast.LLenticToken:
-			buf = append(buf, 0x81, 0x6f)
+			// SJIS 'BLACK LENTICULAR BRACKET' 【 - matches OCaml function.ml L433
+			buf = append(buf, 0x81, 0x79)
 		case ast.RLenticToken:
-			buf = append(buf, 0x81, 0x70)
+			// SJIS 'BLACK LENTICULAR BRACKET' 】 - matches OCaml function.ml L434
+			buf = append(buf, 0x81, 0x7a)
 		case ast.AsteriskToken:
 			buf = append(buf, 0x81, 0x96)
 		case ast.PercentToken:

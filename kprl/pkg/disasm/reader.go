@@ -587,44 +587,72 @@ func (r *Reader) GetDataSep(sepStr bool) (string, error) {
 			continue
 
 		case b == 'a':
-			// 0x61 NN  '(' arg, arg, ... ')'  →  __special[NN](args)
+			// 0x61 NN can appear in two contexts:
 			//
-			// OCaml reference: get_data ' a ' branch (disassembler.ml L1377).
-			// 'a' followed by an index byte and a paren block is a
-			// "general-case" complex parameter; the contents are read as
-			// repeated get_data calls until the matching ')'.
+			//  - General `__special[NN](args)` form: a 'a' index byte
+			//    followed by a paren block whose contents are read as
+			//    repeated get_data calls. OCaml: disassembler.ml L1377.
+			//
+			//  - Inline tagged form: 0x61 NN immediately followed by
+			//    one or more parameter values (no parens). This appears
+			//    in `special(0:#{intC}, 1:#{strC})+` prototypes used by
+			//    farcall_with, gosub_with, GOSUBP, etc.
+			//    See OCaml disassembler.ml L2274-2304 (read_soft_function /
+			//    read_complex_param). The tag selects which sub-prototype
+			//    is in play; the parameters that follow are emitted bare.
+			//
+			// Without proto information here we can't tell how many
+			// parameters belong to the tag — for the inline form we read
+			// a single expression after `0x61 NN` and render it as
+			// `special<NN>(expr)`. The outer readFuncArgsWithProto loop
+			// keeps reading more entries until it hits ')'. That mirrors
+			// the layout in the bytecode (each entry self-terminates at
+			// its own expression boundary).
 			r.Next()
 			idx, err := r.Next()
 			if err != nil {
 				return "", err
 			}
-			if err := r.Expect('(', "GetDataSep/special"); err != nil {
-				return "", err
+			// Peek next byte to decide form.
+			nb, perr := r.Peek()
+			if perr != nil {
+				return fmt.Sprintf("special<%d>", idx), nil
 			}
-			var sb strings.Builder
-			fmt.Fprintf(&sb, "__special[%d](", idx)
-			first := true
-			for !r.AtEnd() {
-				bb, err := r.Peek()
-				if err != nil {
-					break
+			if nb == '(' {
+				// Parenthesised form.
+				r.Next() // consume '('
+				var sb strings.Builder
+				fmt.Fprintf(&sb, "__special[%d](", idx)
+				first := true
+				for !r.AtEnd() {
+					bb, err := r.Peek()
+					if err != nil {
+						break
+					}
+					if bb == ')' {
+						r.Next()
+						break
+					}
+					if !first {
+						sb.WriteString(", ")
+					}
+					inner, err := r.GetData()
+					if err != nil {
+						return "", err
+					}
+					sb.WriteString(inner)
+					first = false
 				}
-				if bb == ')' {
-					r.Next()
-					break
-				}
-				if !first {
-					sb.WriteString(", ")
-				}
-				inner, err := r.GetData()
-				if err != nil {
-					return "", err
-				}
-				sb.WriteString(inner)
-				first = false
+				sb.WriteByte(')')
+				return sb.String(), nil
 			}
-			sb.WriteByte(')')
-			return sb.String(), nil
+			// Inline form: read a single expression / string argument.
+			// The outer arg loop continues to read further entries.
+			inner, err := r.GetDataSep(sepStr)
+			if err != nil {
+				return fmt.Sprintf("special<%d>", idx), nil
+			}
+			return fmt.Sprintf("special<%d>(%s)", idx, inner), nil
 
 		case b == '"' || isAsciiStringStart(b) || isShiftJISLead(b):
 			// Roll back nothing — readStringUnquot starts at this byte.
