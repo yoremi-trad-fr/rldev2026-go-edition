@@ -60,6 +60,7 @@ type Options struct {
 	Target        string // --target RealLive|AVG2000|Kinetic
 	TargetForced  bool   // true if target was specified on command line
 	TargetVersion string // --target-version
+	Interpreter   string // -I explicit RealLive.exe path (PE version source)
 
 	// Compilation
 	StartLine   int  // --start-line
@@ -148,6 +149,8 @@ func parseFlags(args []string) (*Options, error) {
 	// Target
 	fs.StringVar(&opts.Target, "target", "", "target engine: RealLive|AVG2000|Kinetic")
 	fs.StringVar(&opts.TargetVersion, "target-version", "", "target version (e.g. 1.2.7.0)")
+	fs.StringVar(&opts.Interpreter, "I", "", "path to RealLive.exe (extract PE interpreter version)")
+	fs.StringVar(&opts.Interpreter, "interpreter", "", "path to RealLive.exe (alias for -I)")
 
 	// Compilation
 	fs.IntVar(&opts.StartLine, "start-line", opts.StartLine, "start line for partial compilation")
@@ -226,6 +229,18 @@ func compileFile(opts *Options, srcPath string) error {
 		v, err := parseVersion(opts.TargetVersion)
 		if err == nil {
 			detectedVersion = v
+		}
+	} else if opts.Interpreter != "" {
+		v, err := pe_versionFromExe(opts.Interpreter)
+		if err == nil && v != (kfn.Version{}) {
+			detectedVersion = v
+			if opts.Verbose > 0 {
+				fmt.Fprintf(os.Stderr, "  Interpreter %s version %d.%d.%d.%d\n",
+					filepath.Base(opts.Interpreter), v[0], v[1], v[2], v[3])
+			}
+		} else if opts.Verbose > 0 {
+			fmt.Fprintf(os.Stderr, "  Warning: cannot read version from %s: %v\n",
+				opts.Interpreter, err)
 		}
 	} else {
 		v, exePath, err := autoDetectVersion(srcPath)
