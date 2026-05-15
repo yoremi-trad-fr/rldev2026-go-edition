@@ -23,6 +23,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/yoremi/rldev-go/pkg/diag"
 	"github.com/yoremi/rldev-go/pkg/text"
 	"github.com/yoremi/rldev-go/pkg/texttransforms"
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
@@ -220,6 +221,32 @@ func (o *Output) maybeLine(loc ast.Loc) {
 // --- Expression emission helpers ---
 
 // EmitExpr encodes an expression into bytecode and appends it to the output.
+// encodeText wraps texttransforms.ToBytecode so unmappable code
+// points become visible diagnostics. The first Go port treated the
+// underlying encoder's silent space substitution as success, so a
+// translator's character that didn't exist in CP932 was lost without
+// warning — the kind of silent corruption that produces a SEEN.TXT
+// the engine refuses to boot. This wrapper:
+//
+//  1. Resets bad-rune tracking (per call, per Loc).
+//  2. Runs the encoder.
+//  3. Emits one diag.Warning per distinct offending rune with the
+//     OCaml wording "cannot represent U+%04X in RealLive bytecode".
+//
+// The encoder's bytes are returned unchanged so the bytecode stream
+// stays balanced; with ForceEncode (the default in compile mode)
+// the substituted spaces are kept, with the warnings making the
+// loss explicit.
+func (o *Output) encodeText(loc ast.Loc, s string) ([]byte, error) {
+	texttransforms.ResetBadChars()
+	b, err := texttransforms.ToBytecode(text.Text([]rune(s)))
+	for _, r := range texttransforms.BadRunes() {
+		diag.Warning(diag.Loc{File: loc.File, Line: loc.Line},
+			"cannot represent U+%04X %q in RealLive bytecode", r, string(r))
+	}
+	return b, err
+}
+
 func (o *Output) EmitExpr(e ast.Expr) {
 	switch x := e.(type) {
 	case ast.IntLit:
@@ -283,7 +310,7 @@ func (o *Output) EmitExpr(e ast.Expr) {
 		// missing entry obvious to the translator.
 		if o.ResolveRes != nil {
 			if t, ok := o.ResolveRes(x.Key); ok {
-				b, err := texttransforms.ToBytecode(text.Text([]rune(t)))
+				b, err := o.encodeText(x.Loc, t)
 				if err == nil {
 					o.AddCode(x.Loc, b)
 					break
@@ -311,7 +338,7 @@ func (o *Output) encodeStrLit(s ast.StrLit) ([]byte, error) {
 	for _, tok := range s.Tokens {
 		switch t := tok.(type) {
 		case ast.TextToken:
-			b, err := texttransforms.ToBytecode(text.Text([]rune(t.Text)))
+			b, err := o.encodeText(s.Loc, t.Text)
 			if err != nil {
 				return nil, err
 			}
@@ -338,7 +365,7 @@ func (o *Output) encodeStrLit(s ast.StrLit) ([]byte, error) {
 			// Resolve and inline the resource text.
 			if o.ResolveRes != nil {
 				if r, ok := o.ResolveRes(t.Key); ok {
-					b, err := texttransforms.ToBytecode(text.Text([]rune(r)))
+					b, err := o.encodeText(s.Loc, r)
 					if err == nil {
 						buf = append(buf, b...)
 						continue

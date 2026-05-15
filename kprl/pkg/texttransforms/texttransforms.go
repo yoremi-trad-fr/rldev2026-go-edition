@@ -115,33 +115,83 @@ func SetEncoding(name string) error {
 // Bad character tracking
 // ============================================================
 
-var badChars sync.Map // rune → count
-var complained bool
+// ============================================================
+// Bad-character tracking
+//
+// Every rune that cannot be represented in the active output
+// encoding is recorded here. The compiler driver reads the list
+// after each ToBytecode() call and emits one diag.Warning per
+// distinct rune with the proper source Loc. This is the Go
+// counterpart of OCaml function.ml `cannot represent U+%04x in
+// RealLive bytecode` — the original Go port silently substituted
+// spaces, producing a SEEN.TXT that compiled but missed every
+// out-of-charset character.
+// ============================================================
 
-// Complain generates a warning message for an unmappable character.
+var (
+	badMu       sync.Mutex
+	badSet      = map[rune]bool{} // dedupe across the same compile unit
+	badOrder    []rune            // insertion-ordered list returned by BadRunes
+	complained  bool
+)
+
+// noteBadRune records r as unmappable. Safe to call from any
+// encode* path. Deduplicates so a long string of the same offender
+// produces a single warning at the caller.
+func noteBadRune(r rune) {
+	badMu.Lock()
+	defer badMu.Unlock()
+	if badSet[r] {
+		return
+	}
+	badSet[r] = true
+	badOrder = append(badOrder, r)
+}
+
+// Complain is kept for backward compatibility with callers that
+// expected a textual message. New code should rely on BadRunes()
+// + diag.Warning instead.
 func Complain(ch rune, kind string) string {
-	// Increment counter
-	countI, _ := badChars.LoadOrStore(ch, 0)
-	badChars.Store(ch, countI.(int)+1)
-
-	if complained {
+	noteBadRune(ch)
+	badMu.Lock()
+	first := !complained
+	complained = true
+	badMu.Unlock()
+	if !first {
 		return fmt.Sprintf("%s: U+%04X", kind, ch)
 	}
-	complained = true
 	return fmt.Sprintf("cannot represent U+%04X in RealLive bytecode [%s] with %s",
 		ch, kind, Describe())
 }
 
-// BadCharCount returns the number of distinct bad characters encountered.
-func BadCharCount() int {
-	count := 0
-	badChars.Range(func(_, _ interface{}) bool { count++; return true })
-	return count
+// BadRunes returns the distinct unmappable runes recorded since
+// the last ResetBadChars(), in the order they were first seen.
+// The compiler driver iterates this slice to emit one diagnostic
+// per offender at the call site's source position.
+func BadRunes() []rune {
+	badMu.Lock()
+	defer badMu.Unlock()
+	out := make([]rune, len(badOrder))
+	copy(out, badOrder)
+	return out
 }
 
-// ResetBadChars clears the bad character tracking state.
+// BadCharCount returns the number of distinct bad characters
+// encountered since the last ResetBadChars().
+func BadCharCount() int {
+	badMu.Lock()
+	defer badMu.Unlock()
+	return len(badOrder)
+}
+
+// ResetBadChars clears the bad-character tracking state. Call
+// once per ToBytecode() invocation in the compiler driver so
+// each diagnostic is attributed to the right source range.
 func ResetBadChars() {
-	badChars = sync.Map{}
+	badMu.Lock()
+	defer badMu.Unlock()
+	badSet = map[rune]bool{}
+	badOrder = nil
 	complained = false
 }
 
@@ -197,25 +247,39 @@ func toSJSBytecode(t text.Text) ([]byte, error) {
 	utf8 := text.ToUTF8(t)
 	b, err := encoding.UTF8ToSJS(utf8)
 	if err != nil {
-		if ForceEncode {
-			// Replace unmappable chars with spaces
-			var result []byte
-			for _, r := range t {
-				if r <= 0x7f {
-					result = append(result, byte(r))
-				} else {
-					s := string([]rune{r})
-					sb, err := encoding.UTF8ToSJS(s)
-					if err != nil {
-						result = append(result, ' ')
-					} else {
-						result = append(result, sb...)
-					}
-				}
+		// Batch encode failed. Walk rune-by-rune to (a) attribute
+		// the failure to specific code points so the caller can
+		// emit one diag.Warning per offender, and (b) honour
+		// ForceEncode by substituting spaces. Without this scan
+		// the first port returned an opaque error that hid the
+		// actual problematic character from the translator.
+		var result []byte
+		for _, r := range t {
+			if r <= 0x7f {
+				result = append(result, byte(r))
+				continue
 			}
+			s := string([]rune{r})
+			sb, e := encoding.UTF8ToSJS(s)
+			if e != nil {
+				noteBadRune(r)
+				if ForceEncode {
+					result = append(result, ' ')
+					continue
+				}
+				// Best-effort even without ForceEncode: we keep
+				// going so that BadRunes() captures EVERY
+				// offending rune in one pass, not just the first.
+				result = append(result, ' ')
+				continue
+			}
+			result = append(result, sb...)
+		}
+		if ForceEncode {
 			return result, nil
 		}
-		return nil, err
+		// Caller will see the error AND the populated BadRunes().
+		return result, err
 	}
 	return b, nil
 }
@@ -272,6 +336,7 @@ func encodeWestern(t text.Text) ([]byte, error) {
 		}
 
 		if wc < 0 || wc > 0xFF {
+			noteBadRune(ch)
 			if ForceEncode {
 				wc = 0x20
 			} else {
@@ -356,6 +421,7 @@ func encodeChinese(t text.Text) ([]byte, error) {
 		// Convert to GBK via encoding package
 		gbk, err := encoding.FromUTF8(string([]rune{ch}), encoding.GBK)
 		if err != nil || len(gbk) < 2 {
+			noteBadRune(ch)
 			if ForceEncode {
 				b = append(b, ' ')
 				continue
@@ -378,6 +444,7 @@ func encodeChinese(t text.Text) ([]byte, error) {
 			c1 := (gbCode>>8)&0xFF - 0xA1
 			c2 := gbCode&0xFF - 0xA1
 			if c1 < 0 || c2 < 0 {
+				noteBadRune(ch)
 				if ForceEncode {
 					b = append(b, ' ')
 					continue
@@ -473,6 +540,7 @@ func encodeKorean(t text.Text) ([]byte, error) {
 		// Convert to CP949 via encoding package
 		kr, err := encoding.FromUTF8(string([]rune{ch}), encoding.EUC_KR)
 		if err != nil || len(kr) < 2 {
+			noteBadRune(ch)
 			if ForceEncode {
 				b = append(b, ' ')
 				continue
@@ -520,6 +588,7 @@ func encodeKorean(t text.Text) ([]byte, error) {
 				nc2 = 0x01 + idx%255
 			} else {
 				// Remainder → simplified fallback
+				noteBadRune(ch)
 				if ForceEncode {
 					b = append(b, ' ')
 					continue
