@@ -668,13 +668,12 @@ func (r *Reader) GetDataSep(sepStr bool) (string, error) {
 			// `###PRINT(<expr>)` form to `\s{<expr>}` or `\i{<expr>}`
 			// depending on the expression type.
 			//
-			// The Go port previously had no `'#'` case here: any
-			// `0x23` byte fell through to GetExpression, which then
-			// misread `###PRINT(` as a 7-byte opcode header, causing
-			// the ubiquitous `op<35:035:21072, 84>` warning on
-			// SEEN1002-1009 and SEEN9999 (Clannad `select_s` blocks).
-			// readStringUnquot already implements the same matcher
-			// for the inner case; we just need to dispatch.
+			// Defensive guard: the typical Clannad case where this
+			// marker appears (the body of `select_s` blocks) is now
+			// handled by readSelect, which consumes the surrounding
+			// `{...}` and dispatches each item through get_string
+			// directly. But the marker can in principle appear as
+			// a top-level arg too, so keep the dispatch here.
 			if r.LookAhead("###PRINT(") {
 				return r.readStringUnquot(sepStr)
 			}
@@ -1209,6 +1208,38 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 		//     <10:2,0> (a, b) → "a += b" (strcat short form)
 		//   overload 1: full form "strcpy(a, b, n)" / "strcat(a, b, n)"
 		return readStrAssign(r, result, &cmd, op, opts)
+
+	case op.Type == 0 && op.Module == 2:
+		// Select-family opcodes (module 2 = Sel in reallive.kfn).
+		// Function table: 0=select_w, 1=select, 2=select_s2, 3=select_s,
+		// 10=select_cancel, 11=select_msgcancel, 12=select_btncancel,
+		// 13=select_btnwkcancel (others rare).
+		//
+		// These have a unique grammar: an optional `(expr)` (the
+		// window number for select_w / select_cancel etc.) followed
+		// by a `{` block containing `argc` items separated by debug
+		// info (newline + 16-bit line). Each item is itself read as
+		// a string — typically containing the `###PRINT(<expr>)`
+		// inline marker that the Clannad scripts use for dynamic
+		// option labels.
+		//
+		// The original Go port had no handler for module 2 at all,
+		// so select_s fell through to the generic readFuncArgs path
+		// which only knows '('. Encountering '{' it bailed out
+		// returning no args, and the main loop then restarted
+		// disassembly at the '{' byte — reading the bytes ###PRINT(
+		// that followed as a (bogus) opcode header `op<35:035:21072, 84>`,
+		// the ubiquitous Clannad warning. This handler consumes the
+		// `{...}` block properly, dispatching each item through
+		// GetDataSep so the `###PRINT(` marker is recognised inside.
+		//
+		// OCaml reference: read_select (disassembler.ml L1870). This
+		// is a pragmatic subset: it skips the per-item condition
+		// parser (colour/title/hide/blank/cursor) and just reads
+		// each item as a plain string. Conditions aren't used by
+		// Clannad and the rare cases that need them will simply
+		// produce a slightly degraded but still recompilable .org.
+		return readSelect(r, result, &cmd, op, argc, opts)
 	}
 
 	// Generic path: KFN-or-fallback.
@@ -1472,6 +1503,160 @@ func readGotoCaseLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opc
 //
 //	if List.mem IsGoto fndef.fn_flags
 //	  then [pointer (get_int lexbuf)]
+// readSelect handles the select-family opcodes: select_w, select, select_s2,
+// select_s, select_cancel, select_msgcancel, select_btncancel, select_btnwkcancel.
+//
+// Grammar (OCaml read_select, disassembler.ml L1870):
+//
+//	select_name [( expr )] { item_1 item_2 ... item_argc }
+//
+// where each item is preceded by debug info (newline + line number) and
+// is itself the textual result of get_data (which handles the bare
+// strings, ###PRINT(...) inline markers, and quoted strings produced by
+// the original compiler).
+//
+// This implementation is pragmatic — it skips OCaml's per-item condition
+// parser (the `(colour/title/hide/blank/cursor)` block before some items).
+// Those conditions are not used by Clannad and producing a degraded but
+// recompilable .org for rarer files is acceptable for now.
+func readSelect(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, argc int, opts Options) error {
+	name := selectName(op.Function)
+
+	var sb strings.Builder
+	sb.WriteString(name)
+
+	// Optional leading `(expr)` — only present for window-numbered
+	// variants (select_w, select_cancel, select_msgcancel).
+	if b, err := r.Peek(); err == nil && b == '(' {
+		r.Next() // consume '('
+		expr, err := r.GetExpression()
+		if err != nil {
+			return fmt.Errorf("readSelect/expr: %w", err)
+		}
+		if err := r.Expect(')', "readSelect/expr-close"); err != nil {
+			return err
+		}
+		fmt.Fprintf(&sb, "[%s]", expr)
+	}
+
+	// Expect '{' to start the item block. If absent, this is a
+	// no-arg variant (e.g. select_btnobjinitall) — emit name alone.
+	if b, err := r.Peek(); err != nil || b != '{' {
+		cmd.Kepago = []CommandElem{ElemString{Value: sb.String()}}
+		result.Commands = append(result.Commands, cmd_unhide(*cmd))
+		return nil
+	}
+	r.Next() // consume '{'
+
+	// Make sure each item's enclosed strings get routed to the .utf
+	// resource file as #res<NNNN> entries, matching OCaml's
+	// `get_data ~sep_str:options.separate_strings`. Setting r.result
+	// also enables that routing inside readStringUnquot.
+	r.result = result
+	r.opts = &opts
+
+	items := make([]string, 0, argc)
+	for i := 0; i < argc; i++ {
+		skipDebugInfo(r)
+
+		// OCaml allows an empty item shown as `''`. Detect by peeking
+		// at the next byte: a debug-info newline marker (0x0a) at
+		// item position means "blank option".
+		if b, err := r.Peek(); err == nil && b == 0x0a {
+			items = append(items, "''")
+			continue
+		}
+
+		// Read the item — get_data dispatches to readStringUnquot
+		// for bare strings and the ###PRINT( marker.
+		s, err := r.GetDataSep(opts.SeparateStrings)
+		if err != nil {
+			// Best-effort: stop on error, let main loop continue.
+			items = append(items, fmt.Sprintf("/* read error: %v */", err))
+			break
+		}
+		items = append(items, s)
+	}
+
+	skipDebugInfo(r)
+	if err := r.Expect('}', "readSelect/close"); err != nil {
+		return err
+	}
+
+	sb.WriteString("(")
+	for i, it := range items {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(it)
+	}
+	sb.WriteString(")")
+
+	cmd.Kepago = []CommandElem{ElemString{Value: sb.String()}}
+	result.Commands = append(result.Commands, cmd_unhide(*cmd))
+	return nil
+}
+
+// selectName returns the textual name for a Select-family op.Function.
+// Mirrors OCaml read_select (disassembler.ml L1878-L1908). Unknown
+// values produce `select_NNNNN` so the disassembler still produces a
+// usable token without aborting.
+func selectName(fn int) string {
+	switch fn {
+	case 0:
+		return "select_w"
+	case 1:
+		return "select"
+	case 2:
+		return "select_s2"
+	case 3:
+		return "select_s"
+	case 10:
+		return "select_cancel"
+	case 11:
+		return "select_msgcancel"
+	case 12:
+		return "select_btncancel"
+	case 13:
+		return "select_btnwkcancel"
+	default:
+		return fmt.Sprintf("select_%05d", fn)
+	}
+}
+
+// skipDebugInfo consumes the bytes that delimit items inside a select
+// block: '\n' followed by a 16-bit line number, optionally repeated,
+// plus stray ','. Mirrors OCaml read_select.skip_debug_info.
+func skipDebugInfo(r *Reader) {
+	for !r.AtEnd() {
+		b, err := r.Peek()
+		if err != nil {
+			return
+		}
+		switch b {
+		case '\n':
+			r.Next()
+			// 16-bit line number for RealLive, 32-bit for AVG2000.
+			if r.mode == ModeAvg2000 {
+				_, _ = r.ReadInt32()
+			} else {
+				_, _ = r.ReadUint16()
+			}
+		case ',':
+			r.Next()
+		default:
+			return
+		}
+	}
+}
+
+// cmd_unhide ensures a select command isn't accidentally hidden by
+// inherited kidoku flags. Selects always render to the .org.
+func cmd_unhide(c Command) Command {
+	c.Hidden = false
+	return c
+}
+
 func readGotoLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, opts Options) error {
 	name := "goto"
 	cmd.IsJmp = true
