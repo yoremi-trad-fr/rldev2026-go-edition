@@ -848,6 +848,38 @@ func (r *Reader) matchLiteral(s string) bool {
 
 // --- Main disassembly loop ---
 
+// contextDump renders a "8 bytes before | <offset bracket> 8 bytes
+// after" hex view used by the main-loop diagnostic. Keeps the
+// terminal-friendly format diag uses elsewhere (a single line,
+// ASCII-only).
+func contextDump(data []byte, offset int) string {
+	if offset < 0 || offset >= len(data) {
+		return ""
+	}
+	start := offset - 8
+	if start < 0 {
+		start = 0
+	}
+	end := offset + 8
+	if end > len(data) {
+		end = len(data)
+	}
+	var b strings.Builder
+	for i := start; i < end; i++ {
+		if i == offset {
+			b.WriteString("[")
+		}
+		fmt.Fprintf(&b, "%02x", data[i])
+		if i == offset {
+			b.WriteString("]")
+		}
+		if i < end-1 {
+			b.WriteByte(' ')
+		}
+	}
+	return b.String()
+}
+
 // DisassemblyResult holds the output of disassembly.
 type DisassemblyResult struct {
 	Commands  []Command
@@ -929,13 +961,23 @@ func Disassemble(arr *binarray.Buffer, opts Options) (*DisassemblyResult, error)
 			// and routed through diag like every other compiler
 			// diagnostic, with the offset embedded in the message
 			// since the disassembler has no "source line" concept.
-			result.Error = fmt.Sprintf("disassembly error at offset 0x%06x: %v", cmdOffset+startAddr, err)
+			// We also dump the 16 bytes around the failure point —
+			// the most common cause is a desync several opcodes
+			// earlier, so showing context lets the translator
+			// recognise a familiar header (kidoku marker `@`/`!`,
+			// `\` operator, opcode `op#`, etc.).
+			absOffset := cmdOffset + startAddr
+			result.Error = fmt.Sprintf("disassembly error at offset 0x%06x: %v", absOffset, err)
 			src := opts.SourceFile
 			if src == "" {
 				src = "<bytecode>"
 			}
 			diag.SysWarning("%s: disassembly aborted at offset 0x%06x: %v",
-				src, cmdOffset+startAddr, err)
+				src, absOffset, err)
+			if ctx := contextDump(arr.Data, absOffset); ctx != "" {
+				diag.SysWarning("%s: context @0x%06x: %s",
+					src, absOffset, ctx)
+			}
 			break
 		}
 	}
@@ -1145,7 +1187,7 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 	r.result = result
 	r.opts = &opts
 
-	args, err := readFuncArgsWithProto(r, argc, proto)
+	args, err := readFuncArgsCtx(r, argc, proto, &op)
 	if err != nil {
 		// Best-effort: emit with name if known.
 		funcName := opcodeDisplay(op, opts.FuncReg)
@@ -1489,6 +1531,14 @@ func readFuncArgs(r *Reader, argc int) ([]string, error) {
 // L2314). This routes resource-typed string arguments to the .utf
 // resource file regardless of SeparateAll or the leading byte.
 func readFuncArgsWithProto(r *Reader, argc int, proto []ParamType) ([]string, error) {
+	return readFuncArgsCtx(r, argc, proto, nil)
+}
+
+// readFuncArgsCtx is the fully-contextualised variant: when `op` is
+// non-nil, an arg-count mismatch warning names the offending opcode
+// in op<TYPE:MODULE:FUNCTION, OVERLOAD> form. The first two variants
+// are kept for legacy callers that don't have the opcode in scope.
+func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]string, error) {
 	var args []string
 
 	b, err := r.Peek()
@@ -1522,15 +1572,24 @@ func readFuncArgsWithProto(r *Reader, argc int, proto []ParamType) ([]string, er
 					// argument count is wrong so every following
 					// parameter / opcode is read from the wrong
 					// offset. We now report each mismatch with the
-					// SEEN name (if known) and the byte offset; the
-					// translator can grep the .org for the matching
-					// op<…> token.
+					// SEEN name, byte offset AND the offending opcode
+					// (op<T:M:F, O> + KFN-resolved name when known)
+					// so the translator can grep the .org for the
+					// matching token.
 					src := "<bytecode>"
-					if r.opts != nil && r.opts.SourceFile != "" {
-						src = r.opts.SourceFile
+					var reg *FuncRegistry
+					if r.opts != nil {
+						if r.opts.SourceFile != "" {
+							src = r.opts.SourceFile
+						}
+						reg = r.opts.FuncReg
 					}
-					diag.SysWarning("%s: opcode arg count mismatch at offset 0x%06x: KFN expects %d, got %d",
-						src, r.Pos(), argc, len(args))
+					opStr := "op<?>"
+					if op != nil {
+						opStr = opcodeDisplay(*op, reg)
+					}
+					diag.SysWarning("%s: %s: arg count mismatch at offset 0x%06x: KFN expects %d, got %d",
+						src, opStr, r.Pos(), argc, len(args))
 				}
 				return args, nil
 			}
