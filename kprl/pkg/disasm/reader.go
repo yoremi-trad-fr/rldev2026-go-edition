@@ -7,6 +7,7 @@ import (
 
 	"github.com/yoremi/rldev-go/pkg/binarray"
 	"github.com/yoremi/rldev-go/pkg/bytecode"
+	"github.com/yoremi/rldev-go/pkg/diag"
 )
 
 // Reader reads bytecodes sequentially from a buffer.
@@ -920,10 +921,21 @@ func Disassemble(arr *binarray.Buffer, opts Options) (*DisassemblyResult, error)
 
 		err := readCommand(reader, &hdr, result, opts)
 		if err != nil {
+			// OCaml disassembler.ml reported this on stderr with the
+			// SEEN name and the absolute offset. The Go port emitted
+			// it via fmt.Printf (stdout!) only when -v was given, so
+			// a stream desync silently truncated the .org and the
+			// translator had no way to know. Now it's always reported
+			// and routed through diag like every other compiler
+			// diagnostic, with the offset embedded in the message
+			// since the disassembler has no "source line" concept.
 			result.Error = fmt.Sprintf("disassembly error at offset 0x%06x: %v", cmdOffset+startAddr, err)
-			if opts.Verbose > 0 {
-				fmt.Printf("Warning: %s\n", result.Error)
+			src := opts.SourceFile
+			if src == "" {
+				src = "<bytecode>"
 			}
+			diag.SysWarning("%s: disassembly aborted at offset 0x%06x: %v",
+				src, cmdOffset+startAddr, err)
 			break
 		}
 	}
@@ -1502,7 +1514,23 @@ func readFuncArgsWithProto(r *Reader, argc int, proto []ParamType) ([]string, er
 			depth--
 			if depth == 0 {
 				if argc > 0 && len(args) != argc {
-					// Soft warning only — readers tolerate mismatch.
+					// Previously commented as "Soft warning only —
+					// readers tolerate mismatch" but emitted nothing.
+					// That silent mismatch is the prime cause of a
+					// .org that disassembles cleanly yet recompiles
+					// to bytecode the engine refuses to boot: the
+					// argument count is wrong so every following
+					// parameter / opcode is read from the wrong
+					// offset. We now report each mismatch with the
+					// SEEN name (if known) and the byte offset; the
+					// translator can grep the .org for the matching
+					// op<…> token.
+					src := "<bytecode>"
+					if r.opts != nil && r.opts.SourceFile != "" {
+						src = r.opts.SourceFile
+					}
+					diag.SysWarning("%s: opcode arg count mismatch at offset 0x%06x: KFN expects %d, got %d",
+						src, r.Pos(), argc, len(args))
 				}
 				return args, nil
 			}

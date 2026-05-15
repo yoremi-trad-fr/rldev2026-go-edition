@@ -172,6 +172,7 @@ type Options struct {
 	Encoding         string // Output encoding (default "CP932")
 	BOM              bool   // Write UTF-8 BOM
 	Verbose          int
+	SourceFile       string // Name of SEEN being disassembled (for diag messages)
 }
 
 // DefaultOptions returns the default disassembler options.

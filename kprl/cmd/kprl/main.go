@@ -25,6 +25,7 @@ import (
 
 	"github.com/yoremi/rldev-go/pkg/binarray"
 	"github.com/yoremi/rldev-go/pkg/bytecode"
+	"github.com/yoremi/rldev-go/pkg/diag"
 	"github.com/yoremi/rldev-go/pkg/disasm"
 	"github.com/yoremi/rldev-go/pkg/gamedef"
 	"github.com/yoremi/rldev-go/pkg/kprl"
@@ -97,6 +98,13 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
+
+	// Wire the diag reporter to kprl's verbosity flag. kprl doesn't
+	// expose -q / -Wfatal yet — the disassembler's diagnostics are
+	// always informational, not "fail this run", so quiet/fatal
+	// don't carry the same meaning as for rlc. Verbose level >0
+	// turns on Phase logging exactly like in rlc.
+	diag.SetVerbose(*verbose > 0)
 
 	// Resolve game keys
 	opts := kprl.Options{
@@ -294,14 +302,13 @@ func doDisassemble(args []string, opts kprl.Options) error {
 	if kfnPath != "" {
 		reg, err := disasm.LoadKFN(kfnPath)
 		if err != nil {
-			if *verbose > 0 {
-				fmt.Fprintf(os.Stderr, "warning: cannot load KFN %s: %v\n", kfnPath, err)
-			}
+			// Always reported: a KFN load failure changes every
+			// opcode in the output (raw op<…> form, no overload
+			// filtering). Was silenced without -v.
+			diag.SysWarning("cannot load KFN %s: %v", kfnPath, err)
 		} else {
 			disOpts.FuncReg = reg
-			if *verbose > 0 {
-				fmt.Fprintf(os.Stderr, "Loaded KFN: %s (%d functions)\n", kfnPath, len(reg.AllNames()))
-			}
+			diag.Phase("loaded KFN: %s (%d functions)", kfnPath, len(reg.AllNames()))
 		}
 	}
 
@@ -316,7 +323,7 @@ func doDisassemble(args []string, opts kprl.Options) error {
 	// Process individual files
 	for _, fname := range args {
 		if err := disassembleFile(fname, opts, disOpts, writer); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+			diag.SysWarning("%s: %v", fname, err)
 		}
 	}
 	return nil
@@ -352,16 +359,18 @@ func disassembleArchive(arcName string, rangeArgs []string, opts kprl.Options, d
 		}
 
 		seenName := fmt.Sprintf("SEEN%04d.TXT", i)
-		if *verbose > 0 {
-			fmt.Printf("Disassembling %s\n", seenName)
-		}
+		diag.Phase("disassembling %s", seenName)
+		// Propagate the SEEN name into the disassembler so the
+		// reader's diagnostics (arg-count mismatches, stream
+		// desyncs) can name the offending file in their message.
+		disOpts.SourceFile = seenName
 
 		// Decompress if needed
 		data := binarray.Copy(sub)
 		if data.Len() >= 4 && !bytecode.UncompressedHeader(data.Read(0, 4)) {
 			decompressed, err := rlcmp.Decompress(data, opts.Keys, true)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to decompress %s: %v\n", seenName, err)
+				diag.SysWarning("%s: failed to decompress: %v", seenName, err)
 				continue
 			}
 			data = decompressed
@@ -369,16 +378,21 @@ func disassembleArchive(arcName string, rangeArgs []string, opts kprl.Options, d
 
 		result, err := disasm.Disassemble(data, disOpts)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to disassemble %s: %v\n", seenName, err)
+			diag.SysWarning("%s: failed to disassemble: %v", seenName, err)
 			continue
 		}
 
-		if result.Error != "" && *verbose > 0 {
-			fmt.Fprintf(os.Stderr, "Warning: %s: %s\n", seenName, result.Error)
+		if result.Error != "" {
+			// result.Error is set by the disassembly main loop on
+			// stream desync. The diag.SysWarning was already emitted
+			// from inside Disassemble with the precise offset, so
+			// here we only need to bubble up a per-file marker if
+			// the verbose user wanted a follow-up trace.
+			diag.Phase("%s: %s", seenName, result.Error)
 		}
 
 		if err := writer.WriteSource(seenName, result); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to write %s: %v\n", seenName, err)
+			diag.SysWarning("%s: failed to write: %v", seenName, err)
 		}
 	}
 
@@ -399,6 +413,11 @@ func disassembleFile(fname string, opts kprl.Options, disOpts disasm.Options, wr
 		}
 		arr = decompressed
 	}
+
+	// Propagate the file name into the disassembler so the reader's
+	// offset-based diagnostics can identify the source. Mutate a
+	// local copy so the caller's struct stays clean across files.
+	disOpts.SourceFile = filepath.Base(fname)
 
 	result, err := disasm.Disassemble(arr, disOpts)
 	if err != nil {

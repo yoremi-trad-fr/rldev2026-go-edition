@@ -22,6 +22,7 @@ import (
 
 	"github.com/yoremi/rldev-go/pkg/binarray"
 	"github.com/yoremi/rldev-go/pkg/bytecode"
+	"github.com/yoremi/rldev-go/pkg/diag"
 	"github.com/yoremi/rldev-go/pkg/gamedef"
 	"github.com/yoremi/rldev-go/pkg/rlcmp"
 )
@@ -173,7 +174,10 @@ func List(fname string, ranges []int, opts Options) error {
 
 		hdr, err := bytecode.ReadFullHeader(sub, true)
 		if err != nil {
-			fmt.Printf("SEEN%04d.TXT: [error reading header: %v]\n", i, err)
+			// Was printed on stdout, mixing data with the archive
+			// listing. Route via diag so it lands on stderr like
+			// every other diagnostic and counts towards the summary.
+			diag.SysWarning("SEEN%04d.TXT: cannot read header: %v", i, err)
 			continue
 		}
 
