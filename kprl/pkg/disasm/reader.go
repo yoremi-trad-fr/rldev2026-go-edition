@@ -659,6 +659,30 @@ func (r *Reader) GetDataSep(sepStr bool) (string, error) {
 			// Roll back nothing — readStringUnquot starts at this byte.
 			return r.readStringUnquot(sepStr)
 
+		case b == '#':
+			// Inline interpolation marker. OCaml `get_data`
+			// (disassembler.ml L1641) recognises the literal byte
+			// sequence "###PRINT(" as the start of an inline string
+			// containing an interpolated expression — it rolls back
+			// and dispatches to get_string, which converts the
+			// `###PRINT(<expr>)` form to `\s{<expr>}` or `\i{<expr>}`
+			// depending on the expression type.
+			//
+			// The Go port previously had no `'#'` case here: any
+			// `0x23` byte fell through to GetExpression, which then
+			// misread `###PRINT(` as a 7-byte opcode header, causing
+			// the ubiquitous `op<35:035:21072, 84>` warning on
+			// SEEN1002-1009 and SEEN9999 (Clannad `select_s` blocks).
+			// readStringUnquot already implements the same matcher
+			// for the inner case; we just need to dispatch.
+			if r.LookAhead("###PRINT(") {
+				return r.readStringUnquot(sepStr)
+			}
+			// Other '#'-led byte (likely a control / boundary):
+			// fall through to expression so existing behaviour for
+			// non-PRINT cases is preserved.
+			return r.GetExpression()
+
 		default:
 			// Expression
 			return r.GetExpression()
@@ -829,6 +853,22 @@ func (r *Reader) readStringQuot(b *strings.Builder, sepStr bool) bool {
 			}
 		}
 	}
+}
+
+// LookAhead reports whether the next len(s) bytes match s without
+// consuming them. Symmetric with matchLiteral which consumes on
+// success. Used by GetDataSep to dispatch to readStringUnquot at
+// the marker byte so the inner lexer sees the full "###PRINT(".
+func (r *Reader) LookAhead(s string) bool {
+	if r.pos+len(s) > r.limit {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if r.data[r.pos+i] != s[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // matchLiteral checks if the next bytes match the given literal string.
