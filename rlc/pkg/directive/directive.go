@@ -30,6 +30,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/yoremi/rldev-go/pkg/diag"
 	"github.com/yoremi/rldev-go/pkg/encoding"
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
 	"github.com/yoremi/rldev-go/rlc/pkg/codegen"
@@ -61,12 +62,18 @@ type Compiler struct {
 	Warnings []string
 }
 
+// error / warning push into the package's Errors/Warnings slices
+// (kept for backwards compatibility with the merge in
+// compilerframe.go) and ALSO emit a diag line on stderr with the
+// OCaml wording. See compilerframe.go for the rationale.
 func (c *Compiler) error(loc ast.Loc, msg string) {
 	c.Errors = append(c.Errors, fmt.Errorf("%s: %s", loc, msg))
+	diag.Errorf(diag.Loc{File: loc.File, Line: loc.Line}, "%s", msg)
 }
 
 func (c *Compiler) warning(loc ast.Loc, msg string) {
 	c.Warnings = append(c.Warnings, fmt.Sprintf("%s: %s", loc, msg))
+	diag.Warning(diag.Loc{File: loc.File, Line: loc.Line}, "%s", msg)
 }
 
 // ============================================================
@@ -185,6 +192,10 @@ func (c *Compiler) compileGeneric(loc ast.Loc, name string, value ast.Expr) {
 	case "print":
 		s := c.exprToString(value)
 		c.Warnings = append(c.Warnings, fmt.Sprintf("%s line %d: %s", loc.File, loc.Line, s))
+		// #print is the source-level info hook — OCaml directive.ml
+		// routes it to cliWarning so it always reaches the user.
+		// Mirror that here via diag.Info (no warning counter bump).
+		diag.Info(diag.Loc{File: loc.File, Line: loc.Line}, "%s", s)
 
 	case "resource":
 		// Load resource strings from the named file (typically a .sjs

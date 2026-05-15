@@ -205,17 +205,15 @@ func compileFile(opts *Options, srcPath string) error {
 	// configuration (quiet, verbose, Wfatal) is preserved.
 	diag.Reset()
 
-	if opts.Verbose > 0 {
-		fmt.Fprintf(os.Stderr, "Compiling: %s\n", srcPath)
-	}
+	diag.Phase("compiling %s", srcPath)
 
 	// 1. Load GAMEEXE.INI if available
 	iniTable, err := loadGameexe(opts, srcPath)
 	if err != nil {
 		return fmt.Errorf("loading GAMEEXE: %w", err)
 	}
-	if opts.Verbose > 1 {
-		fmt.Fprintf(os.Stderr, "  GAMEEXE entries: %d\n", iniTable.Count())
+	if iniTable != nil {
+		diag.Phase("GAMEEXE entries: %d", iniTable.Count())
 	}
 
 	// 2. Load KFN file if available
@@ -223,8 +221,8 @@ func compileFile(opts *Options, srcPath string) error {
 	if err != nil {
 		return fmt.Errorf("loading KFN: %w", err)
 	}
-	if opts.Verbose > 1 && kfnReg != nil {
-		fmt.Fprintf(os.Stderr, "  KFN functions: %d\n", len(kfnReg.Functions))
+	if kfnReg != nil {
+		diag.Phase("KFN functions: %d", len(kfnReg.Functions))
 	}
 
 	// 2a. Resolve interpreter version. Priority:
@@ -256,10 +254,8 @@ func compileFile(opts *Options, srcPath string) error {
 		v, exePath, err := autoDetectVersion(srcPath)
 		if err == nil {
 			detectedVersion = v
-			if opts.Verbose > 0 {
-				fmt.Fprintf(os.Stderr, "  Detected interpreter %s version %d.%d.%d.%d\n",
-					filepath.Base(exePath), v[0], v[1], v[2], v[3])
-			}
+			diag.Phase("detected interpreter %s version %d.%d.%d.%d",
+				filepath.Base(exePath), v[0], v[1], v[2], v[3])
 		}
 	}
 	if detectedVersion != (kfn.Version{}) && kfnReg != nil {
@@ -323,22 +319,16 @@ func compileFile(opts *Options, srcPath string) error {
 
 	compiler.Compile(program.Stmts)
 
-	// Report diagnostics
-	for _, w := range compiler.Warnings {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
-	}
+	// Diagnostics already streamed via the diag reporter as
+	// c.warning / c.error were called; the slices are kept on the
+	// compiler for tests and HasErrors(). No flush here.
 	if compiler.HasErrors() {
-		for _, e := range compiler.Errors {
-			fmt.Fprintf(os.Stderr, "error: %v\n", e)
-		}
 		return fmt.Errorf("%d compilation errors", len(compiler.Errors))
 	}
 
 	// 6. Generate bytecode
-	if opts.Verbose > 0 {
-		fmt.Fprintf(os.Stderr, "  Compiled %d statements, IR length: %d\n",
-			len(program.Stmts), compiler.Out.Length())
-	}
+	diag.Phase("compiled %d statement(s), IR length %d",
+		len(program.Stmts), compiler.Out.Length())
 
 	genOpts := codegen.DefaultOptions()
 	if detectedVersion != (kfn.Version{}) {
@@ -367,9 +357,7 @@ func compileFile(opts *Options, srcPath string) error {
 		return fmt.Errorf("writing output: %w", err)
 	}
 
-	if opts.Verbose > 0 {
-		fmt.Fprintf(os.Stderr, "  Output: %s (%d bytes)\n", outName, len(bytecode))
-	}
+	diag.Phase("output: %s (%d bytes)", outName, len(bytecode))
 
 	// End-of-file diag summary. With -Wfatal active, every warning
 	// has already bumped the error counter, so a non-zero Errors()
@@ -419,15 +407,15 @@ func loadGameexe(opts *Options, srcPath string) (*ini.Table, error) {
 	}
 
 	if path == "" {
-		if opts.Verbose > 0 {
-			fmt.Fprintln(os.Stderr, "warning: unable to locate gameexe.ini, using defaults")
-		}
+		// Mirrors OCaml ini.ml: gameexe.ini is optional but the
+		// absence is reported so the translator notices that
+		// compilation is running with defaults — which can change
+		// the bytecode (Gameexe entries drive overload selection).
+		diag.SysWarning("unable to locate gameexe.ini, using defaults")
 		return ini.NewTable(), nil
 	}
 
-	if opts.Verbose > 0 {
-		fmt.Fprintf(os.Stderr, "Reading INI: %s\n", path)
-	}
+	diag.Phase("reading INI: %s", path)
 	return ini.ParseFile(path)
 }
 
@@ -437,15 +425,15 @@ func loadKfn(opts *Options) (*kfn.Registry, error) {
 		return kfn.NewRegistry(), nil
 	}
 	if _, err := os.Stat(opts.KfnFile); err != nil {
-		// KFN not found → empty registry (acceptable during porting)
-		if opts.Verbose > 0 {
-			fmt.Fprintf(os.Stderr, "warning: %s not found, using empty registry\n", opts.KfnFile)
-		}
+		// KFN absent — every opcode falls back to its op<TYPE:MOD:FN, OVL>
+		// raw form. Bytecode still compiles but with massively reduced
+		// safety: no overload version filtering, no argument-type
+		// checking. Always reported so the translator knows what's
+		// happening; it's far more important than a verbose-only hint.
+		diag.SysWarning("KFN file %q not found — opcodes will use raw op<…> form, no overload filtering", opts.KfnFile)
 		return kfn.NewRegistry(), nil
 	}
-	if opts.Verbose > 0 {
-		fmt.Fprintf(os.Stderr, "Reading KFN: %s\n", opts.KfnFile)
-	}
+	diag.Phase("reading KFN: %s", opts.KfnFile)
 	return kfn.ParseFile(opts.KfnFile)
 }
 

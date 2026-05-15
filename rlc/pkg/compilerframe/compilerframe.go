@@ -19,6 +19,7 @@ import (
 	"golang.org/x/text/encoding/japanese"
 	"golang.org/x/text/transform"
 
+	"github.com/yoremi/rldev-go/pkg/diag"
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
 	"github.com/yoremi/rldev-go/rlc/pkg/codegen"
 	"github.com/yoremi/rldev-go/rlc/pkg/directive"
@@ -1202,12 +1203,26 @@ func (c *Compiler) popLoop() {
 	c.continueStack = c.continueStack[:len(c.continueStack)-1]
 }
 
+// error records a fatal compiler diagnostic at loc. The message is
+// pushed into c.Errors (consumed by tests and the driver's
+// HasErrors() check) AND emitted on stderr via diag.Errorf with
+// the OCaml wording "Error (file line N): msg" — the driver
+// formerly flushed the slice in its own format ("error: <loc>:
+// <msg>"), but unifying through diag gives the translator a single,
+// well-localised diagnostic per problem and lets -Wfatal / -q
+// behave consistently.
 func (c *Compiler) error(loc ast.Loc, msg string) {
 	c.Errors = append(c.Errors, fmt.Errorf("%s: %s", loc, msg))
+	diag.Errorf(diag.Loc{File: loc.File, Line: loc.Line}, "%s", msg)
 }
 
+// warning is the non-fatal twin of error. Same dual emission: the
+// slice keeps the existing programmatic interface intact, diag.Warning
+// gives the user the OCaml-formatted line on stderr and bumps the
+// warning counter that drives Summary() and -Wfatal.
 func (c *Compiler) warning(loc ast.Loc, msg string) {
 	c.Warnings = append(c.Warnings, fmt.Sprintf("%s: %s", loc, msg))
+	diag.Warning(diag.Loc{File: loc.File, Line: loc.Line}, "%s", msg)
 }
 
 
