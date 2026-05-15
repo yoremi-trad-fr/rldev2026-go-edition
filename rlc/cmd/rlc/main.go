@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yoremi/rldev-go/pkg/diag"
 	"github.com/yoremi/rldev-go/pkg/encoding"
 	"github.com/yoremi/rldev-go/rlc/pkg/codegen"
 	"github.com/yoremi/rldev-go/rlc/pkg/compilerframe"
@@ -79,8 +80,9 @@ type Options struct {
 	RuntimeTrace int // --runtime-trace
 
 	// Verbosity
-	Verbose int  // -v (can be repeated)
-	Quiet   bool // -q
+	Verbose       int  // -v (can be repeated)
+	Quiet         bool // -q
+	WarningsFatal bool // -Wfatal: treat warnings as errors
 
 	// Remaining args
 	InputFiles []string
@@ -170,6 +172,8 @@ func parseFlags(args []string) (*Options, error) {
 	vc := (*verboseCounter)(&opts.Verbose)
 	fs.Var(vc, "v", "verbose (repeat for more)")
 	fs.BoolVar(&opts.Quiet, "q", opts.Quiet, "quiet mode")
+	fs.BoolVar(&opts.WarningsFatal, "Wfatal", opts.WarningsFatal, "treat warnings as errors (abort file on any warning)")
+	fs.BoolVar(&opts.WarningsFatal, "warnings-fatal", opts.WarningsFatal, "alias for -Wfatal")
 
 	// Usage
 	fs.Usage = func() {
@@ -195,6 +199,11 @@ func parseFlags(args []string) (*Options, error) {
 
 // compileFile runs the full compilation pipeline on one source file.
 func compileFile(opts *Options, srcPath string) error {
+	// Per-file diagnostic state: zero the warning/error counters so
+	// Summary() at the end reflects only this file. The global Set*
+	// configuration (quiet, verbose, Wfatal) is preserved.
+	diag.Reset()
+
 	if opts.Verbose > 0 {
 		fmt.Fprintf(os.Stderr, "Compiling: %s\n", srcPath)
 	}
@@ -234,12 +243,12 @@ func compileFile(opts *Options, srcPath string) error {
 		v, err := pe_versionFromExe(opts.Interpreter)
 		if err == nil && v != (kfn.Version{}) {
 			detectedVersion = v
-			if opts.Verbose > 0 {
-				fmt.Fprintf(os.Stderr, "  Interpreter %s version %d.%d.%d.%d\n",
-					filepath.Base(opts.Interpreter), v[0], v[1], v[2], v[3])
-			}
-		} else if opts.Verbose > 0 {
-			fmt.Fprintf(os.Stderr, "  Warning: cannot read version from %s: %v\n",
+			diag.Phase("interpreter %s version %d.%d.%d.%d",
+				filepath.Base(opts.Interpreter), v[0], v[1], v[2], v[3])
+		} else {
+			// Reported even without -v: a user who specified -I
+			// explicitly wants to know if it was ignored.
+			diag.SysWarning("cannot read interpreter version from %s: %v",
 				opts.Interpreter, err)
 		}
 	} else {
@@ -360,6 +369,17 @@ func compileFile(opts *Options, srcPath string) error {
 
 	if opts.Verbose > 0 {
 		fmt.Fprintf(os.Stderr, "  Output: %s (%d bytes)\n", outName, len(bytecode))
+	}
+
+	// End-of-file diag summary. With -Wfatal active, every warning
+	// has already bumped the error counter, so a non-zero Errors()
+	// here means the file must be reported as failed even though
+	// the pipeline ran to completion. This is the OCaml behaviour
+	// of `cliError` raising at end-of-compile when warnings were
+	// promoted: the caller sees a clear "this file failed".
+	diag.Summary(srcPath)
+	if diag.Errors() > 0 {
+		return fmt.Errorf("%d diagnostic error(s)", diag.Errors())
 	}
 
 	return nil
@@ -509,6 +529,14 @@ func main() {
 			os.Exit(1)
 		}
 	}
+
+	// Configure the diag reporter once, process-wide. compileFile()
+	// calls diag.Reset() per file so counters and Summary() are
+	// accurate per-source; the three Set* flags here apply to every
+	// file in the run.
+	diag.SetQuiet(opts.Quiet)
+	diag.SetVerbose(opts.Verbose > 0)
+	diag.SetWarningsFatal(opts.WarningsFatal)
 
 	// Compile each input file
 	errors := 0
