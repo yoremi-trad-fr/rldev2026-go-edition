@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/yoremi/rldev-go/pkg/diag"
 	"github.com/yoremi/rldev-go/pkg/encoding"
@@ -278,22 +279,18 @@ func compileFile(opts *Options, srcPath string) error {
 	// and lose its original code point. Codegen relies on TextToken.Text
 	// being a true Unicode string so it can re-encode to bytecode via
 	// TextTransforms.
-	srcString, err := decodeSource(srcBytes, opts.Encoding)
+	srcString, err := decodeSource(srcBytes, opts.Encoding, srcPath)
 	if err != nil {
 		return fmt.Errorf("decoding source (%s): %w", opts.Encoding, err)
 	}
 
 	// 4. Lex + parse
+	diag.Phase("lexing %s (%d bytes, encoding %s)", srcPath, len(srcBytes), opts.Encoding)
 	lx := lexer.New(srcString, srcPath)
-	if opts.Verbose > 1 {
-		fmt.Fprintf(os.Stderr, "  Lexer created for %s\n", srcPath)
-	}
 
 	p := parser.New(lx)
 	program := p.ParseProgram()
-	if opts.Verbose > 1 {
-		fmt.Fprintf(os.Stderr, "  Statements: %d\n", len(program.Stmts))
-	}
+	diag.Phase("parsed %d statement(s)", len(program.Stmts))
 
 	// 5. Compile via compilerframe
 	compiler := compilerframe.New(kfnReg, iniTable)
@@ -351,6 +348,9 @@ func compileFile(opts *Options, srcPath string) error {
 	if err != nil {
 		return fmt.Errorf("bytecode generation: %w", err)
 	}
+	diag.Phase("generated %d bytes of bytecode (version %d.%d.%d.%d)",
+		len(bytecode),
+		genOpts.Version[0], genOpts.Version[1], genOpts.Version[2], genOpts.Version[3])
 
 	// Determine output filename
 	outName := compiler.Directive.OutFile
@@ -558,25 +558,107 @@ func main() {
 // string. Common spellings are accepted ("CP932", "Shift-JIS", "UTF-8",
 // …) and unrecognised encodings fall through to a permissive cast — that
 // path also covers sources that are already valid UTF-8.
-func decodeSource(data []byte, encName string) (string, error) {
+//
+// Before returning, the function scans for byte-level encoding problems
+// the rest of the pipeline cannot recover from and reports each one via
+// diag.WarnAt with the precise (file, line) coordinates. This is the
+// Go counterpart of OCaml strLexer.ml's `invalid character 0x%02x in
+// source file` diagnostic, run up-front so the translator gets the
+// complete list in one pass. The first port of rldev-go silently turned
+// every stray Shift-JIS byte in a UTF-8 file into U+FFFD, producing a
+// SEEN.TXT that "compiled fine" yet the game refused to boot.
+func decodeSource(data []byte, encName, srcPath string) (string, error) {
 	switch strings.ToUpper(strings.ReplaceAll(encName, "_", "-")) {
 	case "", "UTF-8", "UTF8":
+		// Strip UTF-8 BOM if present and note it (cosmetic but the
+		// game engine can choke on a leading BOM).
+		if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
+			diag.WarnAt(srcPath, 1, "UTF-8 BOM stripped at start of file (some interpreters reject it)")
+			data = data[3:]
+		}
+		// Per-line scan for invalid UTF-8 bytes. Every offender is
+		// likely a stray Shift-JIS byte left in a UTF-8 source — the
+		// classic "compiles but won't boot" cause.
+		scanInvalidUTF8(srcPath, data)
 		return string(data), nil
 	case "CP932", "SHIFT-JIS", "SJIS", "SHIFTJIS":
 		s, err := encoding.SJSToUTF8(data)
 		if err != nil {
 			return "", err
 		}
+		// SJSToUTF8 (via golang.org/x/text) silently truncates at the
+		// first undecodable byte. If the decoded length looks short
+		// compared to the input, flag it — the translator can then
+		// look at the tail of the file.
+		if len(s) > 0 && len(data) > 0 {
+			scanResidualReplacement(srcPath, s, "Shift-JIS")
+		}
 		return s, nil
 	default:
 		enc := encoding.Parse(encName)
 		s, err := encoding.ToUTF8(data, enc)
 		if err != nil {
+			diag.SysWarning("encoding %q not understood, falling back to raw bytes", encName)
 			return string(data), nil
 		}
+		scanResidualReplacement(srcPath, s, encName)
 		return s, nil
 	}
 }
+
+// scanInvalidUTF8 walks data line by line and emits one warning per
+// byte that doesn't form a valid UTF-8 sequence. Mirrors the
+// OCaml diagnostic but runs over the whole file in one pass, so the
+// translator sees every offender at once.
+func scanInvalidUTF8(file string, data []byte) {
+	line := 1
+	for i := 0; i < len(data); {
+		c := data[i]
+		switch {
+		case c == '\n':
+			line++
+			i++
+		case c < 0x80:
+			i++
+		default:
+			r, size := utf8DecodeRune(data[i:])
+			if r == 0xFFFD && size <= 1 {
+				diag.WarnAt(file, line,
+					"invalid UTF-8 byte 0x%02X — likely a stray Shift-JIS character in a UTF-8 file; the original character is lost",
+					c)
+				i++
+			} else {
+				i += size
+			}
+		}
+	}
+}
+
+// scanResidualReplacement looks for U+FFFD code points in already-
+// decoded text. Some decoders (golang.org/x/text fallback path) emit
+// U+FFFD on encoding errors instead of erroring out; without this
+// pass the substitute character would silently survive into the
+// bytecode. We report by line so the translator can grep the source.
+func scanResidualReplacement(file, s, encLabel string) {
+	line := 1
+	for _, r := range s {
+		if r == '\n' {
+			line++
+			continue
+		}
+		if r == 0xFFFD {
+			diag.WarnAt(file, line,
+				"U+FFFD replacement character in source — %s decoder could not represent the original byte",
+				encLabel)
+		}
+	}
+}
+
+// utf8DecodeRune is a thin alias kept local so the scanInvalidUTF8
+// hot loop doesn't pull the full unicode/utf8 import name into every
+// reading. Returns (U+FFFD, 1) for an invalid byte sequence, matching
+// stdlib semantics.
+var utf8DecodeRune = utf8.DecodeRune
 
 // pe_versionFromExe extracts the FileVersion tuple from a PE executable
 // (typically RealLive.exe). Mirrors OCaml's

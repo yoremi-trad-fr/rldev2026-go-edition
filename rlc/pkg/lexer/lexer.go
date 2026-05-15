@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yoremi/rldev-go/pkg/diag"
 	"github.com/yoremi/rldev-go/rlc/pkg/token"
 )
 
@@ -193,7 +194,21 @@ func (l *Lexer) scan() {
 			continue
 		}
 
-		// Skip unknown
+		// Skip unknown. OCaml's keULexer.ml raised `Invalid_token`
+		// here, aborting the lex; the Go port silenced it. We log a
+		// warning so the translator sees the lost character and can
+		// fix the source — U+FFFD is the classic symptom of a
+		// Shift-JIS byte left in a UTF-8 file (decodeSource flagged
+		// the byte; the lexer flags the resulting hole in the token
+		// stream).
+		c0 := l.ch()
+		if c0 == 0xFFFD {
+			diag.WarnAt(l.file, l.line,
+				"skipping U+FFFD replacement character — a Shift-JIS byte likely slipped into a UTF-8 source; the original character is lost")
+		} else {
+			diag.WarnAt(l.file, l.line,
+				"skipping unrecognised character U+%04X %q", c0, string(c0))
+		}
 		l.advance()
 	}
 
