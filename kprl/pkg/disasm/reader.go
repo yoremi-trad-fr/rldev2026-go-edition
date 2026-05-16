@@ -1602,6 +1602,19 @@ func readSelect(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, a
 // Mirrors OCaml read_select (disassembler.ml L1878-L1908). Unknown
 // values produce `select_NNNNN` so the disassembler still produces a
 // usable token without aborting.
+// selectName returns the textual name for a Select-family op.Function.
+// Mirrors OCaml read_select (disassembler.ml L1878-L1908) plus the
+// commented-out btnobj* names that the OCaml file lists as "(special
+// case)" definitions. These additional Sel functions don't take a
+// `{...}` block — only an optional `(grpNo)` argument or nothing — and
+// are heavily used by Clannad Side Stories (Steam) for its picture-
+// based selection screens.
+//
+// Missing names previously fell through to the `select_NNNNN` fallback,
+// which still produced a syntactically valid token but didn't match
+// the OCaml output and made round-trip diffs noisier than necessary.
+// SEEN3000.org of CSD goes from `select_00020` / `select_00022` to
+// `select_btnobjinit` / `select_btnobjstart`, identical to OCaml.
 func selectName(fn int) string {
 	switch fn {
 	case 0:
@@ -1612,6 +1625,8 @@ func selectName(fn int) string {
 		return "select_s2"
 	case 3:
 		return "select_s"
+	case 4:
+		return "select_btnobj"
 	case 10:
 		return "select_cancel"
 	case 11:
@@ -1620,11 +1635,36 @@ func selectName(fn int) string {
 		return "select_btncancel"
 	case 13:
 		return "select_btnwkcancel"
+	case 14:
+		return "select_btnobjcancel"
+	case 20:
+		return "select_btnobjinit"
+	case 21:
+		return "select_btnobjinitall"
+	case 22:
+		return "select_btnobjstart"
+	case 23:
+		return "select_btnobjend"
+	case 30:
+		return "select_btnobjnow_hit"
+	case 31:
+		return "select_btnobjnow_push"
+	case 32:
+		return "select_btnobjnow_decide"
+	case 33:
+		return "select_btnobjnow_push_left"
+	case 34:
+		return "select_btnobjnow_decide_left"
+	case 35:
+		return "select_btnobjnow_push_right"
+	case 36:
+		return "select_btnobjnow_decide_right"
+	case 122:
+		return "select_btnobjstart_with_right_click"
 	default:
 		return fmt.Sprintf("select_%05d", fn)
 	}
 }
-
 // skipDebugInfo consumes the bytes that delimit items inside a select
 // block: '\n' followed by a 16-bit line number, optionally repeated,
 // plus stray ','. Mirrors OCaml read_select.skip_debug_info.
@@ -2258,6 +2298,28 @@ textoutLoop:
 		return nil
 	}
 
+	// Broader stub filter: a textout that's *dominated* by escape
+	// sequences and replacement characters (U+FFFD, lone DEL 0x7f,
+	// \x{NN} hex escapes) is almost certainly bytecode bytes the
+	// main loop misread as text after a previous command ended.
+	// OCaml folds these into the previous command via
+	// add_textout_fails; we don't fully replicate that logic but we
+	// can avoid emitting bogus `.utf` entries for them.
+	//
+	// Examples this filter catches (all from CSD SEEN2000 / Tomoyo
+	// SEEN72xx where OCaml produces no .utf at all):
+	//   "4\x{06}"        — 1 readable char + 1 escape
+	//   "\ufffd\x7f"     — replacement + DEL
+	//   "\x{ad}\ufffd\x00" — pure noise
+	//
+	// Heuristic: count the "real readable" characters — anything
+	// that's not whitespace, not U+FFFD, not 0x7f, not part of a
+	// `\x{NN}` escape sequence. If fewer than 3 real chars and at
+	// least one escape/replacement sign, treat it as stub.
+	if isLikelyStubTextout(textStr) {
+		return nil
+	}
+
 	if opts.SeparateStrings {
 		resIdx := len(result.ResStrs)
 		result.ResStrs = append(result.ResStrs, textStr)
@@ -2290,6 +2352,115 @@ var seenEndPrefix = []byte{
 	0x82, 0x64, // Ｅ
 	0x82, 0x8e, // ｎ
 	0x82, 0x84, // ｄ
+}
+
+// isLikelyStubTextout reports whether the given textout buffer is a
+// "stub" — i.e. a few stray bytes the main disassembly loop misread
+// as text after a previous command ended, with no real content. The
+// canonical case is CSD SEEN2000 producing "4\x{06}" or Tomoyo SEEN72xx
+// producing "\ufffd\x7f" repeatedly; OCaml folds these into the
+// previous command via add_textout_fails and never emits a .utf entry
+// for them.
+//
+// We don't replicate the full fold logic — too entangled with the
+// command DAG — but a coarse heuristic on the rendered text catches
+// the common patterns without false positives on real dialogue:
+//   - Count "real readable" runes (not U+FFFD, not 0x7f, not part of
+//     a `\x{NN}` escape sequence, not lone backslash decoration).
+//   - If at least one stub-indicator (escape sequence or replacement)
+//     is present AND the readable-rune count is < 3, drop.
+//
+// Threshold of 3 was chosen to keep short legitimate textouts like
+// "yes" / "no" / "OK" that may appear in resource strings, while
+// dropping "4", "n", "X" stubs that follow control-byte preambles.
+func isLikelyStubTextout(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	hasStubIndicator := false
+	readable := 0
+	total := 0
+	i := 0
+	for i < len(s) {
+		c := s[i]
+		// `\x{HEX}` escape sequence: skip whole token, count as stub.
+		if c == '\\' && i+2 < len(s) && s[i+1] == 'x' && s[i+2] == '{' {
+			j := i + 3
+			for j < len(s) && s[j] != '}' {
+				j++
+			}
+			if j < len(s) {
+				hasStubIndicator = true
+				total++
+				i = j + 1
+				continue
+			}
+		}
+		// Lone DEL (0x7f) — never legitimate in displayable text.
+		if c == 0x7f {
+			hasStubIndicator = true
+			total++
+			i++
+			continue
+		}
+		// NUL byte (0x00) embedded in textout — almost always bytecode.
+		if c == 0x00 {
+			hasStubIndicator = true
+			total++
+			i++
+			continue
+		}
+		// U+FFFD encoded as UTF-8 (ef bf bd) — replacement character.
+		if c == 0xef && i+2 < len(s) && s[i+1] == 0xbf && s[i+2] == 0xbd {
+			hasStubIndicator = true
+			total++
+			i += 3
+			continue
+		}
+		// Whitespace and lone backslash decoration: ignored.
+		if c == ' ' || c == '\t' || c == '\\' || c == '\n' || c == '\r' {
+			i++
+			continue
+		}
+		// Anything else counts as a readable rune. For UTF-8
+		// multi-byte sequences we count once and advance past the
+		// continuation bytes.
+		readable++
+		total++
+		if c < 0x80 {
+			i++
+		} else if c < 0xc0 {
+			// Stray continuation byte — count and move on.
+			i++
+		} else if c < 0xe0 {
+			i += 2
+		} else if c < 0xf0 {
+			i += 3
+		} else {
+			i += 4
+		}
+	}
+	// Drop if dominated by stub indicators: either short with at
+	// least one indicator, or any length where stubs outnumber
+	// readable runes by ≥ 2:1.
+	if !hasStubIndicator {
+		return false
+	}
+	if readable < 3 {
+		return true
+	}
+	stubs := total - readable
+	if stubs > 0 && readable < stubs/2 {
+		return true
+	}
+	// Even for long textouts: a high proportion of NUL bytes is
+	// a near-certain marker of misread bytecode (legitimate text
+	// never contains NUL). Threshold: ≥ 10% NUL by stub count out
+	// of total counted runes.
+	if total > 0 && stubs*10 >= total {
+		return true
+	}
+	return false
 }
 
 // isSeenEndMarker reports whether the given textout buffer is the
