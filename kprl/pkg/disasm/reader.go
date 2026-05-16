@@ -1788,7 +1788,15 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 			r.Next()
 			depth--
 			if depth == 0 {
-				if argc > 0 && len(args) != argc {
+				// argc in the bytecode header is the nominal arg
+				// count compiled at build time. For variadic
+				// opcodes (those declared with `+` in the KFN, e.g.
+				// grpMulti, setarray, InitExFrames), the actual
+				// number of args present at runtime is greater than
+				// argc — the extras are the variadic tail. OCaml
+				// tolerates this silently. Only the opposite case —
+				// fewer args than argc — is a real stream desync.
+				if argc > 0 && len(args) < argc {
 					// Previously commented as "Soft warning only —
 					// readers tolerate mismatch" but emitted nothing.
 					// That silent mismatch is the prime cause of a
@@ -1822,26 +1830,98 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 			// or skip silently. Here we just continue.
 
 		case '(':
-			// Nested paren group — consume balanced. The contents are read
-			// as raw bytes captured into the current arg.
+			// Nested paren group — complex parameter, e.g. the
+			// `((counter, limit, limit2, time)+)` shape used by
+			// InitExFrames or other variadic-tuple opcodes.
+			//
+			// The previous Go implementation counted '(' and ')'
+			// bytes naively to find the closing paren, but bytes
+			// 0x28/0x29 appear inside int32 immediates ($ ff XX XX
+			// XX XX) where XX can be any value: e.g. the literal
+			// 40 is encoded with a 0x28 byte that the naive counter
+			// reads as an opening paren, pushing localDepth out of
+			// balance and silently consuming an entire trailing
+			// assignment as bogus extra arg bytes. This is the bug
+			// behind SEEN9079.TXT aborting at 0x000fba.
+			//
+			// The correct strategy mirrors OCaml read_complex_param
+			// (disassembler.ml L2244): consume the leading '(' and
+			// then read each contained datum via get_data — which
+			// itself knows how to skip expressions, strings and
+			// inner parens without confusing data bytes for paren
+			// structure. Commas and debug newlines between data are
+			// silently consumed. We stop at the matching ')' that
+			// closes the group at this depth.
 			start := r.Pos()
-			r.Next()
-			depth++
-			// Capture bytes until the matching close at this depth.
+			r.Next() // consume '('
+			// Capture the textual representation of the nested
+			// contents — useful for round-trip and for the inline
+			// /* nested */ marker the .org expects.
+			var inner strings.Builder
+			inner.WriteByte('(')
 			localDepth := 1
+		nestedLoop:
 			for !r.AtEnd() && localDepth > 0 {
-				bb, _ := r.Next()
-				switch bb {
-				case '(':
-					localDepth++
+				nb, perr := r.Peek()
+				if perr != nil {
+					break
+				}
+				switch nb {
 				case ')':
+					r.Next()
 					localDepth--
+					if localDepth > 0 {
+						inner.WriteByte(')')
+					}
+				case '(':
+					// True paren-open at this level (after a comma
+					// or at the start of an inner group). Recurse
+					// by consuming and bumping depth — but only when
+					// we're at a position where a paren is *syntactic*.
+					// We approximate that by checking that the last
+					// emitted token wasn't an in-progress expression;
+					// the safe and conservative choice that matches
+					// OCaml is: open paren → just consume and bump.
+					r.Next()
+					localDepth++
+					inner.WriteByte('(')
+				case ',':
+					r.Next()
+					inner.WriteString(", ")
+				case '\n':
+					// Debug info: '\n' then 16-bit line. Skip cleanly.
+					r.Next()
+					if r.mode == ModeAvg2000 {
+						_, _ = r.ReadInt32()
+					} else {
+						_, _ = r.ReadUint16()
+					}
+				default:
+					// Read one datum via the standard dispatcher.
+					// This handles expressions, strings, special<N>
+					// tags, etc. without confusing data-byte values
+					// for paren structure.
+					d, err := r.GetDataSep(false)
+					if err != nil {
+						// Best-effort: bail and let the outer loop
+						// recover. We do NOT advance the reader past
+						// the failure point so the main disassembly
+						// loop can resume at a sensible offset.
+						break nestedLoop
+					}
+					if inner.Len() > 1 {
+						inner.WriteString(", ")
+					}
+					inner.WriteString(d)
 				}
 			}
-			depth--
-			// Append captured raw bytes as a hex/text snippet for visibility.
 			end := r.Pos()
-			args = append(args, fmt.Sprintf("/* nested:%d bytes */", end-start))
+			// Emit the captured content. We keep the "nested:N bytes"
+			// label as a comment alongside the parsed form for
+			// debugging — once the rendering is verified, the byte
+			// count comment can be dropped.
+			args = append(args, fmt.Sprintf("%s) /* nested:%d bytes */",
+				inner.String(), end-start))
 
 		case ',':
 			// Argument separator — silently consumed in OCaml unquot.
