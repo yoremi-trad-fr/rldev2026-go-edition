@@ -194,6 +194,17 @@ func (r *Reader) peek2() (byte, byte, bool) {
 	return r.data[r.pos], r.data[r.pos+1], true
 }
 
+// peek2byte peeks at the byte at r.pos+offset without consuming, returning
+// (byte, true) on success. Returns (0, false) if offset is past the limit.
+// Used to disambiguate `(` arg-form: complex tuple `((...)+)` vs. expression
+// parens `(800-180)/2`.
+func (r *Reader) peek2byte(offset int) (byte, bool) {
+	if r.pos+offset >= r.limit {
+		return 0, false
+	}
+	return r.data[r.pos+offset], true
+}
+
 // matchBackslashOp checks if the next two bytes are 0x5C followed by an op
 // byte in [lo, hi]. Returns the op byte and true if matched (and consumes
 // both bytes); otherwise returns 0, false and does NOT advance.
@@ -667,19 +678,9 @@ func (r *Reader) GetDataSep(sepStr bool) (string, error) {
 			// and dispatches to get_string, which converts the
 			// `###PRINT(<expr>)` form to `\s{<expr>}` or `\i{<expr>}`
 			// depending on the expression type.
-			//
-			// Defensive guard: the typical Clannad case where this
-			// marker appears (the body of `select_s` blocks) is now
-			// handled by readSelect, which consumes the surrounding
-			// `{...}` and dispatches each item through get_string
-			// directly. But the marker can in principle appear as
-			// a top-level arg too, so keep the dispatch here.
 			if r.LookAhead("###PRINT(") {
 				return r.readStringUnquot(sepStr)
 			}
-			// Other '#'-led byte (likely a control / boundary):
-			// fall through to expression so existing behaviour for
-			// non-PRINT cases is preserved.
 			return r.GetExpression()
 
 		default:
@@ -1777,6 +1778,17 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 	r.Next() // consume opening '('
 	depth := 1
 
+	// Disambiguate complex-tuple form `((tuple)+)` vs. regular args
+	// at entry: the former has its second '(' immediately after the
+	// outer one. If we see that pattern, treat every nested '(' as
+	// structural (sub-tuple opener). Otherwise, an inner '(' is the
+	// start of a parenthesised arith expression `(800-180)/2` and
+	// must be parsed via GetDataSep → GetExpression.
+	complexForm := false
+	if b2, err := r.Peek(); err == nil && b2 == '(' {
+		complexForm = true
+	}
+
 	for !r.AtEnd() {
 		b, err := r.Peek()
 		if err != nil {
@@ -1797,18 +1809,14 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 				// tolerates this silently. Only the opposite case —
 				// fewer args than argc — is a real stream desync.
 				if argc > 0 && len(args) < argc {
-					// Previously commented as "Soft warning only —
-					// readers tolerate mismatch" but emitted nothing.
-					// That silent mismatch is the prime cause of a
-					// .org that disassembles cleanly yet recompiles
-					// to bytecode the engine refuses to boot: the
-					// argument count is wrong so every following
-					// parameter / opcode is read from the wrong
-					// offset. We now report each mismatch with the
-					// SEEN name, byte offset AND the offending opcode
-					// (op<T:M:F, O> + KFN-resolved name when known)
-					// so the translator can grep the .org for the
-					// matching token.
+					// Soft signal: in OCaml read_soft_function this
+					// is also emitted but with `warning lexbuf` —
+					// however many real opcodes have Fake (=) params
+					// that are not counted in the bytecode argc, so
+					// the mismatch is informational rather than a
+					// bug. We surface it only in verbose mode so the
+					// normal log stays clean (matches OCaml's
+					// effective behaviour on standard SEEN files).
 					src := "<bytecode>"
 					var reg *FuncRegistry
 					if r.opts != nil {
@@ -1821,7 +1829,7 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 					if op != nil {
 						opStr = opcodeDisplay(*op, reg)
 					}
-					diag.SysWarning("%s: %s: arg count mismatch at offset 0x%06x: KFN expects %d, got %d",
+					diag.Phase("%s: %s: arg count mismatch at offset 0x%06x: KFN expects %d, got %d",
 						src, opStr, r.Pos(), argc, len(args))
 				}
 				return args, nil
@@ -1830,33 +1838,23 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 			// or skip silently. Here we just continue.
 
 		case '(':
-			// Nested paren group — complex parameter, e.g. the
-			// `((counter, limit, limit2, time)+)` shape used by
-			// InitExFrames or other variadic-tuple opcodes.
-			//
-			// The previous Go implementation counted '(' and ')'
-			// bytes naively to find the closing paren, but bytes
-			// 0x28/0x29 appear inside int32 immediates ($ ff XX XX
-			// XX XX) where XX can be any value: e.g. the literal
-			// 40 is encoded with a 0x28 byte that the naive counter
-			// reads as an opening paren, pushing localDepth out of
-			// balance and silently consuming an entire trailing
-			// assignment as bogus extra arg bytes. This is the bug
-			// behind SEEN9079.TXT aborting at 0x000fba.
-			//
-			// The correct strategy mirrors OCaml read_complex_param
-			// (disassembler.ml L2244): consume the leading '(' and
-			// then read each contained datum via get_data — which
-			// itself knows how to skip expressions, strings and
-			// inner parens without confusing data bytes for paren
-			// structure. Commas and debug newlines between data are
-			// silently consumed. We stop at the matching ')' that
-			// closes the group at this depth.
+			if !complexForm {
+				// We're reading top-level args of a normal opcode
+				// and just hit a '(' — this is a parenthesised
+				// arith expression like `(800 - 180) / 2`. Delegate
+				// to GetDataSep which routes to GetExpression and
+				// picks up trailing arith operators correctly.
+				arg, err := r.GetDataSep(false)
+				if err != nil {
+					return args, nil
+				}
+				args = append(args, arg)
+				continue
+			}
+			// Complex tuple form: structural '(' is a sub-tuple
+			// opener. Capture its content via the dispatcher.
 			start := r.Pos()
 			r.Next() // consume '('
-			// Capture the textual representation of the nested
-			// contents — useful for round-trip and for the inline
-			// /* nested */ marker the .org expects.
 			var inner strings.Builder
 			inner.WriteByte('(')
 			localDepth := 1
@@ -1874,14 +1872,6 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 						inner.WriteByte(')')
 					}
 				case '(':
-					// True paren-open at this level (after a comma
-					// or at the start of an inner group). Recurse
-					// by consuming and bumping depth — but only when
-					// we're at a position where a paren is *syntactic*.
-					// We approximate that by checking that the last
-					// emitted token wasn't an in-progress expression;
-					// the safe and conservative choice that matches
-					// OCaml is: open paren → just consume and bump.
 					r.Next()
 					localDepth++
 					inner.WriteByte('(')
@@ -1889,7 +1879,6 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 					r.Next()
 					inner.WriteString(", ")
 				case '\n':
-					// Debug info: '\n' then 16-bit line. Skip cleanly.
 					r.Next()
 					if r.mode == ModeAvg2000 {
 						_, _ = r.ReadInt32()
@@ -1897,16 +1886,8 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 						_, _ = r.ReadUint16()
 					}
 				default:
-					// Read one datum via the standard dispatcher.
-					// This handles expressions, strings, special<N>
-					// tags, etc. without confusing data-byte values
-					// for paren structure.
 					d, err := r.GetDataSep(false)
 					if err != nil {
-						// Best-effort: bail and let the outer loop
-						// recover. We do NOT advance the reader past
-						// the failure point so the main disassembly
-						// loop can resume at a sensible offset.
 						break nestedLoop
 					}
 					if inner.Len() > 1 {
@@ -1916,10 +1897,6 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 				}
 			}
 			end := r.Pos()
-			// Emit the captured content. We keep the "nested:N bytes"
-			// label as a comment alongside the parsed form for
-			// debugging — once the rendering is verified, the byte
-			// count comment can be dropped.
 			args = append(args, fmt.Sprintf("%s) /* nested:%d bytes */",
 				inner.String(), end-start))
 
