@@ -303,15 +303,20 @@ func (o *Output) EmitExpr(e ast.Expr) {
 		}
 	case ast.ResRef:
 		// #res<KEY> is a deferred reference to a string defined in the
-		// .sjs / .utf companion file. Resolve via the callback wired by
-		// the compiler frame and emit the bytecode for the underlying
-		// string (same path as ast.StrLit). When the resource is
-		// missing we emit empty quotes — the engine will play an empty
-		// caption rather than crash, and the warning trail makes the
-		// missing entry obvious to the translator.
+		// .sjs / .utf companion file. The resource text contains rich
+		// markers — \{Name}, \m{B}, \l{A}, 【 】, ＊, ％, \e{N}, etc. —
+		// that the RealLive engine expects to see encoded as specific
+		// SJIS byte sequences (lenticulars 0x81 0x79 / 0x81 0x7a, etc.)
+		// surrounded by quote-mode transitions (0x22). Naively
+		// concatenating the .utf text and transcoding to SJIS produces
+		// literal `\{` ASCII bytes (0x5c 0x7b) that the engine doesn't
+		// recognise, causing it to crash on launch (0xC0000005). We
+		// therefore tokenise the resource text and run the same quote
+		// state machine OCaml's textout.ml `compile_stub` uses
+		// (textout.ml L334-347).
 		if o.ResolveRes != nil {
 			if t, ok := o.ResolveRes(x.Key); ok {
-				b, err := o.encodeText(x.Loc, t)
+				b, err := o.encodeResourceText(x.Loc, t)
 				if err == nil {
 					o.AddCode(x.Loc, b)
 					break
@@ -320,6 +325,303 @@ func (o *Output) EmitExpr(e ast.Expr) {
 		}
 		o.AddCode(x.Loc, []byte{'"', '"'})
 	}
+}
+
+// encodeResourceText tokenises a resolved resource string and emits the
+// SJIS bytecode the engine expects, matching OCaml textout.ml L334-347:
+//
+//	\{ (Speaker)   → 0x81 0x79  (set_quotes false)
+//	}  (RCur)      → 0x81 0x7a  (set_quotes false)
+//	【 (LLentic)    → 0x81 0x79  (set_quotes true)
+//	】 (RLentic)    → 0x81 0x7a  (no state change)
+//	＊ (Asterisk)   → 0x81 0x96  (set_quotes true)
+//	％ (Percent)    → 0x81 0x93  (set_quotes true)
+//	\l{X} (Name)   → 0x81 0x93 0x82 (X+0x1f)        (local)
+//	\m{X} (Name)   → 0x81 0x96 0x82 (X+0x1f)        (global)
+//	\l{X, N}       → 0x81 0x93 0x82 (X+0x1f) 0x82 (N+0x4f)
+//	\m{X, N}       → 0x81 0x96 0x82 (X+0x1f) 0x82 (N+0x4f)
+//	-  (Hyphen)    → '-'  (set_quotes true)
+//	"  (DQuote)    → \" inside quoted run
+//	text           → plain SJIS, set_quotes true
+//
+// State machine: track whether we are currently inside a quoted run.
+// Each transition emits a single 0x22 (") byte. Initial state is
+// "unquoted" so the very first text token forces an opening quote;
+// trailing closing quote is emitted before returning when still quoted.
+func (o *Output) encodeResourceText(loc ast.Loc, text string) ([]byte, error) {
+	tokens, err := lexResourceText(text)
+	if err != nil {
+		return nil, err
+	}
+
+	var buf []byte
+	// OCaml textout.ml compile_stub initial state: `set_quotes true`
+	// which immediately emits an opening 0x22. Replicate that — the
+	// engine looks for the leading quote to mark the start of the
+	// textout payload, and a Speaker token right after the kidoku
+	// would otherwise produce `81 79` without the framing `22` byte
+	// the engine expects.
+	quoted := false
+	setQuotes := func(q bool) {
+		if quoted != q {
+			quoted = q
+			buf = append(buf, '"')
+		}
+	}
+	setQuotes(true)
+
+	for _, tk := range tokens {
+		switch tk.kind {
+		case rtText:
+			setQuotes(true)
+			b, err := o.encodeText(loc, tk.text)
+			if err != nil {
+				return nil, err
+			}
+			buf = append(buf, b...)
+		case rtSpace:
+			// Plain ASCII space — inside quoted run.
+			setQuotes(true)
+			for i := 0; i < tk.count; i++ {
+				buf = append(buf, ' ')
+			}
+		case rtDQuote:
+			setQuotes(true)
+			buf = append(buf, '\\', '"')
+		case rtSpeaker:
+			setQuotes(false)
+			buf = append(buf, 0x81, 0x79)
+		case rtRCur:
+			setQuotes(false)
+			buf = append(buf, 0x81, 0x7a)
+		case rtLLentic:
+			setQuotes(true)
+			buf = append(buf, 0x81, 0x79)
+		case rtRLentic:
+			buf = append(buf, 0x81, 0x7a)
+		case rtAsterisk:
+			setQuotes(true)
+			buf = append(buf, 0x81, 0x96)
+		case rtPercent:
+			setQuotes(true)
+			buf = append(buf, 0x81, 0x93)
+		case rtHyphen:
+			setQuotes(true)
+			buf = append(buf, '-')
+		case rtName:
+			// Name marker. \l → local prefix 0x81 0x93, \m → global 0x81 0x96.
+			// Letter X (A..Z) is encoded as 0x82 (X + 0x1f) i.e. fullwidth A-Z.
+			// Optional second letter (AA, AB, …) and optional digit suffix
+			// (0..9) follow as additional 0x82 XX bytes.
+			setQuotes(false)
+			if tk.isLocal {
+				buf = append(buf, 0x81, 0x93)
+			} else {
+				buf = append(buf, 0x81, 0x96)
+			}
+			for _, c := range tk.letters {
+				buf = append(buf, 0x82, byte(c-'A')+0x60)
+			}
+			if tk.hasIndex {
+				buf = append(buf, 0x82, byte(tk.index)+0x4f)
+			}
+		}
+	}
+
+	if quoted {
+		buf = append(buf, '"')
+	}
+	return buf, nil
+}
+
+// rtKind / rtToken are a minimal token representation used by
+// encodeResourceText. We can't reuse ast.StrToken here because nothing
+// in the production pipeline currently materialises SpeakerToken /
+// NameToken / lenticular tokens — see compileTextStub in compilerframe
+// which is set up for them but never sees them. Going through a small
+// internal token type avoids a dependency on the upstream string
+// lexer's full token model.
+type rtKind int
+
+const (
+	rtText rtKind = iota
+	rtSpace
+	rtDQuote
+	rtSpeaker
+	rtRCur
+	rtLLentic
+	rtRLentic
+	rtAsterisk
+	rtPercent
+	rtHyphen
+	rtName
+)
+
+type rtToken struct {
+	kind     rtKind
+	text     string // for rtText
+	count    int    // for rtSpace
+	isLocal  bool   // for rtName: true = \l, false = \m
+	letters  string // for rtName: 1-2 uppercase letters A..Z
+	hasIndex bool   // for rtName
+	index    int    // for rtName: 0..9
+}
+
+// lexResourceText breaks a resource string into tokens consumable by
+// encodeResourceText. The grammar mirrors what the disassembler emits
+// into .utf files (textout.ml `unquot` rules):
+//
+//	\{                          → Speaker
+//	\l{X}, \l{XX}, \l{X, N}…    → Name (local)
+//	\m{X}, \m{XX}, \m{X, N}…    → Name (global)
+//	【                          → LLentic   (UTF-8: e3 80 90)
+//	】                          → RLentic   (UTF-8: e3 80 91)
+//	＊                          → Asterisk  (UTF-8: ef bc 8a)
+//	％                          → Percent   (UTF-8: ef bc 85)
+//	}                           → RCur
+//	-                           → Hyphen    (kept as plain char; OCaml only
+//	                              re-emits as raw '-' so we let it fall
+//	                              through to TextToken — recompile sees a
+//	                              regular dash, identical bytecode)
+//	"                           → DQuote
+//	otherwise                   → Text (chunk until next marker)
+func lexResourceText(s string) ([]rtToken, error) {
+	var out []rtToken
+	var buf []rune
+	flush := func() {
+		if len(buf) == 0 {
+			return
+		}
+		out = append(out, rtToken{kind: rtText, text: string(buf)})
+		buf = buf[:0]
+	}
+	r := []rune(s)
+	i := 0
+	for i < len(r) {
+		c := r[i]
+
+		// Backslash escapes: \{ \l \m
+		if c == '\\' && i+1 < len(r) {
+			next := r[i+1]
+			switch next {
+			case '{':
+				flush()
+				out = append(out, rtToken{kind: rtSpeaker})
+				i += 2
+				continue
+			case 'l', 'm':
+				// Expect \l{X} or \l{XX} or \l{X, N} (and same for \m)
+				if i+2 < len(r) && r[i+2] == '{' {
+					tok, consumed, ok := parseNameToken(r, i)
+					if ok {
+						flush()
+						out = append(out, tok)
+						i += consumed
+						continue
+					}
+				}
+			}
+			// Unknown backslash escape: emit literal '\' as text. The
+			// disassembler shouldn't produce these, but tolerate
+			// gracefully.
+			buf = append(buf, c)
+			i++
+			continue
+		}
+
+		switch c {
+		case '"':
+			flush()
+			out = append(out, rtToken{kind: rtDQuote})
+			i++
+			continue
+		case '}':
+			flush()
+			out = append(out, rtToken{kind: rtRCur})
+			i++
+			continue
+		case 0x3010: // 【
+			flush()
+			out = append(out, rtToken{kind: rtLLentic})
+			i++
+			continue
+		case 0x3011: // 】
+			flush()
+			out = append(out, rtToken{kind: rtRLentic})
+			i++
+			continue
+		case 0xff0a: // ＊ fullwidth asterisk
+			flush()
+			out = append(out, rtToken{kind: rtAsterisk})
+			i++
+			continue
+		case 0xff05: // ％ fullwidth percent
+			flush()
+			out = append(out, rtToken{kind: rtPercent})
+			i++
+			continue
+		}
+
+		buf = append(buf, c)
+		i++
+	}
+	flush()
+	return out, nil
+}
+
+// parseNameToken parses `\l{X}`, `\l{XX}`, `\l{X, N}`, `\l{XX, N}` and
+// the same for `\m`. Starts at the backslash. Returns the token, the
+// number of runes consumed and true on success.
+func parseNameToken(r []rune, start int) (rtToken, int, bool) {
+	if start+2 >= len(r) {
+		return rtToken{}, 0, false
+	}
+	if r[start] != '\\' {
+		return rtToken{}, 0, false
+	}
+	isLocal := r[start+1] == 'l'
+	if r[start+2] != '{' {
+		return rtToken{}, 0, false
+	}
+	i := start + 3
+	// First letter — required, uppercase A..Z.
+	if i >= len(r) || r[i] < 'A' || r[i] > 'Z' {
+		return rtToken{}, 0, false
+	}
+	letters := []rune{r[i]}
+	i++
+	// Optional second letter.
+	if i < len(r) && r[i] >= 'A' && r[i] <= 'Z' {
+		letters = append(letters, r[i])
+		i++
+	}
+	// Optional index `, N` (single digit 0..9).
+	hasIndex := false
+	index := 0
+	if i < len(r) && r[i] == ',' {
+		i++
+		// Skip spaces.
+		for i < len(r) && r[i] == ' ' {
+			i++
+		}
+		if i >= len(r) || r[i] < '0' || r[i] > '9' {
+			return rtToken{}, 0, false
+		}
+		index = int(r[i] - '0')
+		hasIndex = true
+		i++
+	}
+	if i >= len(r) || r[i] != '}' {
+		return rtToken{}, 0, false
+	}
+	i++ // consume '}'
+	return rtToken{
+		kind:     rtName,
+		isLocal:  isLocal,
+		letters:  string(letters),
+		hasIndex: hasIndex,
+		index:    index,
+	}, i - start, true
 }
 
 // encodeStrLit serialises a string literal to bytecode bytes.
@@ -363,10 +665,13 @@ func (o *Output) encodeStrLit(s ast.StrLit) ([]byte, error) {
 		case ast.DQuoteToken:
 			buf = append(buf, '"')
 		case ast.ResRefToken:
-			// Resolve and inline the resource text.
+			// Resolve and inline the resource text with full marker
+			// re-encoding — see encodeResourceText above for why.
+			// Falling back to plain encodeText would emit `\{` as
+			// 0x5c 0x7b and break name markers in the engine.
 			if o.ResolveRes != nil {
 				if r, ok := o.ResolveRes(t.Key); ok {
-					b, err := o.encodeText(s.Loc, r)
+					b, err := o.encodeResourceText(s.Loc, r)
 					if err == nil {
 						buf = append(buf, b...)
 						continue
