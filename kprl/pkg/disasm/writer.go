@@ -325,7 +325,20 @@ func formatCommand(cmd Command, labels map[int]int, opts Options, result *Disass
 			if !opts.ReadDebugSymbols && strings.HasPrefix(v.Value, "#line ") {
 				continue
 			}
-			sb.WriteString(resolvePointers(v.Value, labels))
+			// ElemString may carry raw SJIS bytes inside ASCII-quoted
+			// literals (e.g. strcmp(strS[0], 'XXX')) or other inline
+			// arguments. When writing UTF-8 output we must transcode
+			// these the same way ElemText is converted below, otherwise
+			// stray SJIS bytes leak into the .org file and break the
+			// downstream lexer.
+			s := resolvePointers(v.Value, labels)
+			enc := strings.ToUpper(opts.Encoding)
+			if enc != "" && enc != "CP932" && enc != "SHIFT-JIS" && enc != "SJIS" && enc != "SHIFT_JIS" && enc != "SHIFTJIS" {
+				if utf8Str, err := encoding.SJSToUTF8([]byte(s)); err == nil {
+					s = utf8Str
+				}
+			}
+			sb.WriteString(s)
 		case ElemStore:
 			sb.WriteString(v.Value)
 		case ElemPointer:

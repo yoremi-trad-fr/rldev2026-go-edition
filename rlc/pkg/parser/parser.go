@@ -685,6 +685,136 @@ func (p *Parser) parseAssignOp() ast.AssignOp {
 
 func (p *Parser) parseExpr() ast.Expr { return p.parseExprOr() }
 
+// continueExprFrom restarts the precedence-climbing chain at the
+// primary level using the given expression as the initial LHS. This
+// is needed when parseParam has already pulled a `(expr)` out of the
+// token stream (to disambiguate it from a complex tuple `(a, b, c)`)
+// and the surrounding context might still extend that expression with
+// binary or comparison operators — e.g.
+//   goto_unless ((cond1) || (cond2)) @label
+// where the outer `||` must attach to the freshly built ParenExpr.
+func (p *Parser) continueExprFrom(atom ast.Expr) ast.Expr {
+	return p.contOr(p.contAnd(p.contEq(p.contCmp(p.contAdd(p.contMul(p.contShift(atom)))))))
+}
+
+func (p *Parser) contShift(lhs ast.Expr) ast.Expr {
+	for {
+		loc := p.loc()
+		switch p.cur.Type {
+		case token.SHL:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpShl, RHS: p.parseUnary()}
+		case token.SHR:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpShr, RHS: p.parseUnary()}
+		default:
+			return lhs
+		}
+	}
+}
+
+func (p *Parser) contMul(lhs ast.Expr) ast.Expr {
+	for {
+		loc := p.loc()
+		switch p.cur.Type {
+		case token.MUL:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpMul, RHS: p.parseExprShift()}
+		case token.DIV:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpDiv, RHS: p.parseExprShift()}
+		case token.MOD:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpMod, RHS: p.parseExprShift()}
+		case token.AND:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpAnd, RHS: p.parseExprShift()}
+		default:
+			return lhs
+		}
+	}
+}
+
+func (p *Parser) contAdd(lhs ast.Expr) ast.Expr {
+	for {
+		loc := p.loc()
+		switch p.cur.Type {
+		case token.ADD:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpAdd, RHS: p.parseExprMul()}
+		case token.SUB:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpSub, RHS: p.parseExprMul()}
+		case token.OR:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpOr, RHS: p.parseExprMul()}
+		case token.XOR:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpXor, RHS: p.parseExprMul()}
+		default:
+			return lhs
+		}
+	}
+}
+
+func (p *Parser) contCmp(lhs ast.Expr) ast.Expr {
+	for {
+		loc := p.loc()
+		switch p.cur.Type {
+		case token.LTN:
+			p.advance()
+			lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpLtn, RHS: p.parseExprAdd()}
+		case token.LTE:
+			p.advance()
+			lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpLte, RHS: p.parseExprAdd()}
+		case token.GTN:
+			p.advance()
+			lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpGtn, RHS: p.parseExprAdd()}
+		case token.GTE:
+			p.advance()
+			lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpGte, RHS: p.parseExprAdd()}
+		default:
+			return lhs
+		}
+	}
+}
+
+func (p *Parser) contEq(lhs ast.Expr) ast.Expr {
+	for {
+		loc := p.loc()
+		switch p.cur.Type {
+		case token.EQU:
+			p.advance()
+			lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpEqu, RHS: p.parseExprCmp()}
+		case token.NEQ:
+			p.advance()
+			lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpNeq, RHS: p.parseExprCmp()}
+		default:
+			return lhs
+		}
+	}
+}
+
+func (p *Parser) contAnd(lhs ast.Expr) ast.Expr {
+	for p.cur.Type == token.LAND {
+		loc := p.loc()
+		p.advance()
+		rhs := p.parseExprEq()
+		lhs = ast.ChainExpr{Loc: loc, LHS: lhs, Op: ast.ChainAnd, RHS: rhs}
+	}
+	return lhs
+}
+
+func (p *Parser) contOr(lhs ast.Expr) ast.Expr {
+	for p.cur.Type == token.LOR {
+		loc := p.loc()
+		p.advance()
+		rhs := p.parseExprAnd()
+		lhs = ast.ChainExpr{Loc: loc, LHS: lhs, Op: ast.ChainOr, RHS: rhs}
+	}
+	return lhs
+}
+
 // expr1: || (lowest)
 func (p *Parser) parseExprOr() ast.Expr {
 	lhs := p.parseExprAnd()
@@ -944,6 +1074,37 @@ func (p *Parser) parseParam() ast.Param {
 		}
 		p.match(token.RCUR)
 		return ast.ComplexParam{Loc: loc, Exprs: exprs}
+	}
+	// Tuple-form complex parameter: `(a, b, c, ...)`.
+	// The OCaml disassembler emits complex(...)+ args as parenthesized
+	// tuples, e.g. `InitExFrames ((0, 0, 255, intC[0]) /* nested:30 */)`.
+	// We detect them by parsing `( expr` and looking at what follows:
+	//   - COMMA → it's a tuple, accumulate the rest as a ComplexParam.
+	//   - RPAR  → it was just `(expr)`, wrap it in a ParenExpr and
+	//             continue the precedence-climbing chain so that
+	//             trailing operators (e.g. `(a) || (b)` inside a
+	//             goto_unless condition) still bind correctly.
+	if p.cur.Type == token.LPAR {
+		openLoc := p.loc()
+		p.advance() // consume `(`
+		first := p.parseExpr()
+		if p.cur.Type == token.COMMA {
+			exprs := []ast.Expr{first}
+			for p.match(token.COMMA) {
+				if p.cur.Type == token.RPAR || p.cur.Type == token.COMMA {
+					// Tolerate empty slots, same convention as
+					// parseParamList above.
+					exprs = append(exprs, ast.IntLit{Loc: p.loc(), Val: 0})
+					continue
+				}
+				exprs = append(exprs, p.parseExpr())
+			}
+			p.expect(token.RPAR)
+			return ast.ComplexParam{Loc: loc, Exprs: exprs}
+		}
+		p.expect(token.RPAR)
+		paren := ast.ParenExpr{Loc: openLoc, Expr: first}
+		return ast.SimpleParam{Loc: loc, Expr: p.continueExprFrom(paren)}
 	}
 	return ast.SimpleParam{Loc: loc, Expr: p.parseExpr()}
 }
