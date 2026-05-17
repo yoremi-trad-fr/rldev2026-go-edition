@@ -20,6 +20,7 @@
 package codegen
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 
@@ -406,6 +407,14 @@ type GenerateOptions struct {
 	Metadata        []byte // optional metadata bytes
 	Version         kfn.Version
 	KidokuType      int    // 0=auto, 1=@, 2=!
+
+	// DramatisPersonae is the list of #character names collected during
+	// directive processing. When DebugInfo is true and Target is
+	// RealLive, the header dramatis table is emitted with these names.
+	// Names must already be in the target bytecode encoding (Shift-JIS
+	// / CP932) — the caller is responsible for any transcoding from
+	// the source file encoding (UTF-8 etc).
+	DramatisPersonae []string
 }
 
 // DefaultOptions returns sensible defaults.
@@ -565,8 +574,35 @@ func (o *Output) Generate(opts GenerateOptions) ([]byte, error) {
 func buildRealLive(bytecode []byte, bytecodeLen, compressedLen int, entrypoints []int, kidokuTable []int, opts GenerateOptions) ([]byte, error) {
 	metadataLen := len(opts.Metadata)
 	kidokuBytes := len(kidokuTable) * 4
+
+	// Build the dramatis personae table. Format per OCaml bytecodeGen.ml
+	// L27-31: for each name, emit
+	//   u32 LE (length+1)   bytes (name)   0x00 (NUL terminator)
+	// The table is only present when debug info is on; otherwise an
+	// empty table is written and the count/size fields at 0x18/0x1c
+	// stay at zero.
+	//
+	// Name bytes are expected to be in the target bytecode encoding
+	// (Shift-JIS / CP932) — see GenerateOptions.DramatisPersonae.
+	var dramatisTable []byte
+	dramatisCount := 0
+	if opts.DebugInfo && opts.Target == kfn.TargetRealLive && len(opts.DramatisPersonae) > 0 {
+		var buf bytes.Buffer
+		for _, name := range opts.DramatisPersonae {
+			nb := []byte(name)
+			lenField := make([]byte, 4)
+			binary.LittleEndian.PutUint32(lenField, uint32(len(nb)+1))
+			buf.Write(lenField)
+			buf.Write(nb)
+			buf.WriteByte(0)
+		}
+		dramatisTable = buf.Bytes()
+		dramatisCount = len(opts.DramatisPersonae)
+	}
+	dramatisSize := len(dramatisTable)
+
 	dramOff := 0x1d0 + kidokuBytes
-	bcOff := dramOff + metadataLen
+	bcOff := dramOff + dramatisSize + metadataLen
 	fileLen := bcOff + compressedLen
 
 	file := make([]byte, fileLen)
@@ -583,15 +619,15 @@ func buildRealLive(bytecode []byte, bytecodeLen, compressedLen int, entrypoints 
 	// a bloated and broken SEEN.TXT that the engine refuses to load.
 	copy(file[0x00:], []byte("KPRL"))
 	putInt32(file, 0x04, opts.CompilerVersion)
-	putInt32(file, 0x08, 0x1d0)                // kidoku table offset
-	putInt32(file, 0x0c, len(kidokuTable))       // kidoku count
-	putInt32(file, 0x10, kidokuBytes)            // kidoku table size
-	putInt32(file, 0x14, dramOff)                // dramatis offset
-	putInt32(file, 0x18, 0)                      // dramatis count
-	putInt32(file, 0x1c, 0)                      // dramatis size
-	putInt32(file, 0x20, bcOff)                  // bytecode offset
-	putInt32(file, 0x24, bytecodeLen)            // bytecode length
-	putInt32(file, 0x28, compressedLen)          // compressed length
+	putInt32(file, 0x08, 0x1d0)         // kidoku table offset
+	putInt32(file, 0x0c, len(kidokuTable)) // kidoku count
+	putInt32(file, 0x10, kidokuBytes)     // kidoku table size
+	putInt32(file, 0x14, dramOff)         // dramatis offset
+	putInt32(file, 0x18, dramatisCount)   // dramatis count (0 if !debug_info)
+	putInt32(file, 0x1c, dramatisSize)    // dramatis table size in bytes
+	putInt32(file, 0x20, bcOff)           // bytecode offset
+	putInt32(file, 0x24, bytecodeLen)     // bytecode length
+	putInt32(file, 0x28, compressedLen)   // compressed length
 	// val_0x2c (#Z-1) defaults to 0; 0x30 (#Z-2) = val_0x2c + 3.
 	// OCaml bytecodeGen.ml L54-55. Although the engine itself doesn't
 	// check these fields, OCaml output sets them and certain tools may.
@@ -608,9 +644,12 @@ func buildRealLive(bytecode []byte, bytecodeLen, compressedLen int, entrypoints 
 		putInt32(file, 0x1d0+i*4, v)
 	}
 
-	// Metadata
+	// Dramatis table (if any) then metadata
+	if dramatisSize > 0 {
+		copy(file[dramOff:], dramatisTable)
+	}
 	if metadataLen > 0 {
-		copy(file[dramOff:], opts.Metadata)
+		copy(file[dramOff+dramatisSize:], opts.Metadata)
 	}
 
 	// Bytecode

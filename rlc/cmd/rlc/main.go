@@ -20,6 +20,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"os"
@@ -334,6 +335,50 @@ func compileFile(opts *Options, srcPath string) error {
 	if detectedVersion != (kfn.Version{}) {
 		genOpts.Version = detectedVersion
 	}
+	genOpts.DebugInfo = opts.DebugInfo
+	// Collect the dramatis personae names gathered during directive
+	// processing (#character 'name'). They must be written into the
+	// bytecode header in the target encoding (Shift-JIS / CP932): the
+	// engine reads names as raw SJIS bytes. If the source file is in a
+	// non-SJIS encoding (UTF-8, EUC-JP…), transcode each name now.
+	if compiler.State != nil && len(compiler.State.DramatisPersonae) > 0 {
+		names := make([]string, 0, len(compiler.State.DramatisPersonae))
+		needTrans := false
+		srcEnc := strings.ToUpper(strings.ReplaceAll(opts.Encoding, "-", ""))
+		if srcEnc != "" && srcEnc != "CP932" && srcEnc != "SHIFTJIS" && srcEnc != "SJIS" && srcEnc != "SHIFT_JIS" {
+			needTrans = true
+		}
+		for _, n := range compiler.State.DramatisPersonae {
+			if needTrans {
+				sjis, err := encoding.UTF8ToSJS(n)
+				if err != nil {
+					diag.Warning(diag.Loc{}, "could not transcode #character '%s' to Shift-JIS: %v — using raw bytes", n, err)
+					names = append(names, n)
+					continue
+				}
+				names = append(names, string(sjis))
+			} else {
+				names = append(names, n)
+			}
+		}
+		genOpts.DramatisPersonae = names
+	}
+
+	// Build the RLdev metadata segment when --metadata is on. Format
+	// (common/metadata.ml):
+	//   u32 LE  total length (excluding this 4-byte prefix)
+	//   u32 LE  id length (= 5 for "RLdev")
+	//   bytes   identifier
+	//   u8      0x00 (NUL terminator)
+	//   u32 LE  compiler_version * 100  (RLdev 1.39 → 139)
+	//   u8 ×4   target version (a, b, c, d)
+	//   u8      text-transform: 0=None, 1=Chinese, 2=Western, 3=Korean
+	// Total for "RLdev" = 23 bytes, matching what the engine and tools
+	// expect.
+	if opts.Metadata {
+		genOpts.Metadata = buildRLdevMetadata(genOpts.Version, opts.Encoding)
+	}
+
 	bytecode, err := compiler.Out.Generate(genOpts)
 	if err != nil {
 		return fmt.Errorf("bytecode generation: %w", err)
@@ -758,4 +803,69 @@ func autoDetectVersion(srcPath string) (kfn.Version, string, error) {
 		}
 	}
 	return kfn.Version{}, "", fmt.Errorf("no interpreter executable found")
+}
+
+// buildRLdevMetadata serialises the RLdev compiler-identification block
+// that goes after the dramatis personae table in the bytecode header.
+// Layout per common/metadata.ml `to_string`:
+//
+//	u32 LE  total length (= len(rest))
+//	u32 LE  id length (= 5 for "RLdev")
+//	bytes   "RLdev"
+//	u8      0x00 NUL terminator
+//	u32 LE  compiler_version * 100 (RLdev 1.39 → 139)
+//	u8 ×4   target version (a, b, c, d)
+//	u8      text-transform: 0 None | 1 Chinese | 2 Western | 3 Korean
+//
+// For "RLdev" the total payload is 23 bytes — matching what RealLive and
+// the OCaml toolchain produce. We pin the compiler version to 139 so the
+// output stays byte-compatible with the canonical RLdev 1.39 / OCaml
+// 2026 metadata; tools that read this field never gate behaviour on it,
+// and any change here would make Go-produced bytecode diff every byte
+// against the OCaml reference for no functional benefit.
+func buildRLdevMetadata(ver kfn.Version, sourceEnc string) []byte {
+	const compilerVersionTimes100 = 139 // RLdev 1.39
+	id := []byte("RLdev")
+
+	// Detect translation transform from the source encoding. The
+	// translator typically writes its scripts in CP1252 (Western) for
+	// French / English patches, EUC-KR (Korean) or GBK (Chinese); the
+	// default Japanese pipeline uses Shift-JIS / UTF-8 with no
+	// transform.
+	tt := byte(0)
+	switch strings.ToUpper(strings.ReplaceAll(sourceEnc, "-", "")) {
+	case "CP1252", "WINDOWS1252", "LATIN1", "ISO88591":
+		tt = 2
+	case "GBK", "CP936", "GB2312":
+		tt = 1
+	case "EUCKR", "CP949":
+		tt = 3
+	}
+
+	body := make([]byte, 0, 32)
+
+	// u32 id_len
+	tmp4 := make([]byte, 4)
+	binary.LittleEndian.PutUint32(tmp4, uint32(len(id)))
+	body = append(body, tmp4...)
+	// "RLdev"
+	body = append(body, id...)
+	// NUL
+	body = append(body, 0)
+	// u32 compiler_version
+	binary.LittleEndian.PutUint32(tmp4, compilerVersionTimes100)
+	body = append(body, tmp4...)
+	// 4 target version bytes
+	body = append(body, byte(ver[0]), byte(ver[1]), byte(ver[2]), byte(ver[3]))
+	// text-transform
+	body = append(body, tt)
+
+	// Prefix length: per common/metadata.ml `to_string` this is
+	// `String.length s + 4` — i.e. the total segment length including
+	// the prefix itself. For "RLdev" that's len(body) + 4 = 23.
+	out := make([]byte, 0, 4+len(body))
+	binary.LittleEndian.PutUint32(tmp4, uint32(len(body)+4))
+	out = append(out, tmp4...)
+	out = append(out, body...)
+	return out
 }

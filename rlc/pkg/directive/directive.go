@@ -332,7 +332,19 @@ func (c *Compiler) loadResourceFile(loc ast.Loc, path string) error {
 		if strings.HasPrefix(trimmed, "//") {
 			continue
 		}
-		if strings.HasPrefix(trimmed, "#character") || strings.HasPrefix(trimmed, "#resource") {
+		if strings.HasPrefix(trimmed, "#character") {
+			// `#character 'name'` in a resource file contributes to the
+			// dramatis personae table written into the bytecode header
+			// (OCaml strLexer.ml lex_resfile_header). Mirror that here:
+			// extract the quoted name and add it to State.
+			rest := strings.TrimSpace(trimmed[len("#character"):])
+			name, ok := unquoteResName(rest)
+			if ok && c.State != nil {
+				c.State.AddCharacter(name)
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#resource") {
 			// We don't follow chained #resource references in resource
 			// files yet — the typical layout is one .sjs/.utf per .org.
 			continue
@@ -368,4 +380,25 @@ func decodeBytes(data []byte, encName string) (string, error) {
 		}
 		return s, nil
 	}
+}
+
+// unquoteResName extracts the string content of a `#character 'name'`
+// directive in a resource file. Accepts single or double quotes;
+// trailing whitespace and a stray closing comment are tolerated. Returns
+// the inner text and true on success; false when the rest of the line
+// doesn't look like a quoted string.
+func unquoteResName(rest string) (string, bool) {
+	rest = strings.TrimSpace(rest)
+	if len(rest) < 2 {
+		return "", false
+	}
+	q := rest[0]
+	if q != '\'' && q != '"' {
+		return "", false
+	}
+	end := strings.IndexByte(rest[1:], q)
+	if end < 0 {
+		return "", false
+	}
+	return rest[1 : 1+end], true
 }
