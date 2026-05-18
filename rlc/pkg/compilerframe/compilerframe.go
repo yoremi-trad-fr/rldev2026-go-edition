@@ -728,12 +728,46 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 	// Emit opcode header
 	c.Out.EmitOpcode(s.Loc, fd.OpType, fd.OpModule, fd.OpCode, argc, overload)
 
-	// Emit params wrapped in parens
+	// Emit params wrapped in parens. The OCaml emitter (codegen.ml
+	// `compile_arglist`) handles three Param shapes:
+	//
+	//   SimpleParam   — emit the expression as-is.
+	//   ComplexParam  — emit `( v1 v2 v3 … )` (one level of nested
+	//                   parens); the engine sees the outer `(` (opened
+	//                   below), then this inner `(...)`, then the
+	//                   outer `)`. This is how complex(...)+ tuples
+	//                   like `ReadExFrames((0, intC[1]))` are encoded.
+	//   SpecialParam  — emit `<0x61 tag> ( v1 v2 … )`: the special
+	//                   marker byte (0x61, ASCII 'a'), the discriminant
+	//                   byte, then a parenthesised parameter list. This
+	//                   matches OCaml's `__special[N](args)+` shape used
+	//                   by opcodes like `gosub_with`.
+	//
+	// Skipping non-SimpleParam values — as the previous implementation
+	// did — strips the entire argument from the bytecode, producing
+	// `(  )` instead of `( ( v1 v2 ) )`. The engine then reads garbage
+	// off the stack for that opcode (e.g. ReadExFrames in SEEN9031),
+	// leaves the window in an undefined state and ends up on a black
+	// screen.
 	if len(emitParams) > 0 {
 		c.Out.AddCode(s.Loc, []byte{'('})
 		for _, p := range emitParams {
-			if sp, ok := p.(ast.SimpleParam); ok {
-				c.Out.EmitExpr(sp.Expr)
+			switch pp := p.(type) {
+			case ast.SimpleParam:
+				c.Out.EmitExpr(pp.Expr)
+			case ast.ComplexParam:
+				c.Out.AddCode(s.Loc, []byte{'('})
+				for _, e := range pp.Exprs {
+					c.Out.EmitExpr(e)
+				}
+				c.Out.AddCode(s.Loc, []byte{')'})
+			case ast.SpecialParam:
+				// 0x61 tag ( exprs ) — OCaml special_arg / __special.
+				c.Out.AddCode(s.Loc, []byte{0x61, byte(pp.Tag), '('})
+				for _, e := range pp.Exprs {
+					c.Out.EmitExpr(e)
+				}
+				c.Out.AddCode(s.Loc, []byte{')'})
 			}
 		}
 		c.Out.AddCode(s.Loc, []byte{')'})
