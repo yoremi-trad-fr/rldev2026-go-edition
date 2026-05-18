@@ -328,26 +328,41 @@ func (o *Output) EmitExpr(e ast.Expr) {
 }
 
 // encodeResourceText tokenises a resolved resource string and emits the
-// SJIS bytecode the engine expects, matching OCaml textout.ml L334-347:
+// SJIS bytecode the engine expects, matching OCaml strTokens.ml `to_string`
+// (the function used when a #res<> resolves into an argument-list slot).
+//
+// Critical difference vs compile_stub (textout.ml): to_string does NOT
+// emit a leading quote, and it does NOT wrap the whole sequence in
+// quotes. It only inserts `"` around \{Speaker} / } RCur transitions,
+// because those need to switch the engine's quote state. Plain text and
+// lenticulars are emitted as raw SJIS bytes — no surrounding quotes.
+//
+// Examples (Clannad bytecode):
+//
+//   `title (#res<0000>)`  where res = "渚・後日"
+//     →  ( SJIS-bytes )      no quotes
+//
+//   `SetLocalName(0, #res<0001>)` where res = "\{美佐枝}「お…」"
+//     →  ( "" 81 79 " SJIS " 81 7a " 81 75 SJIS 81 76 " )
+//
+// The previous implementation called setQuotes(true) at the start,
+// producing `( "SJIS" )` for the simple case — the engine sees an
+// unexpected `"` byte and reads garbage past the closing `)`, leading to
+// gradual desync and crashes / black screen.
+//
+// Marker → byte table (textout.ml L334-347 / strTokens.ml L157-171):
 //
 //	\{ (Speaker)   → 0x81 0x79  (set_quotes false)
 //	}  (RCur)      → 0x81 0x7a  (set_quotes false)
-//	【 (LLentic)    → 0x81 0x79  (set_quotes true)
-//	】 (RLentic)    → 0x81 0x7a  (no state change)
-//	＊ (Asterisk)   → 0x81 0x96  (set_quotes true)
-//	％ (Percent)    → 0x81 0x93  (set_quotes true)
+//	【 (LLentic)    → 0x81 0x79  (plain SJIS char in to_string)
+//	】 (RLentic)    → 0x81 0x7a
+//	＊ (Asterisk)   → 0x81 0x96
+//	％ (Percent)    → 0x81 0x93
 //	\l{X} (Name)   → 0x81 0x93 0x82 (X+0x1f)        (local)
 //	\m{X} (Name)   → 0x81 0x96 0x82 (X+0x1f)        (global)
-//	\l{X, N}       → 0x81 0x93 0x82 (X+0x1f) 0x82 (N+0x4f)
-//	\m{X, N}       → 0x81 0x96 0x82 (X+0x1f) 0x82 (N+0x4f)
-//	-  (Hyphen)    → '-'  (set_quotes true)
-//	"  (DQuote)    → \" inside quoted run
-//	text           → plain SJIS, set_quotes true
-//
-// State machine: track whether we are currently inside a quoted run.
-// Each transition emits a single 0x22 (") byte. Initial state is
-// "unquoted" so the very first text token forces an opening quote;
-// trailing closing quote is emitted before returning when still quoted.
+//	-  (Hyphen)    → '-'
+//	"  (DQuote)    → '"' raw
+//	text           → plain SJIS
 func (o *Output) encodeResourceText(loc ast.Loc, text string) ([]byte, error) {
 	tokens, err := lexResourceText(text)
 	if err != nil {
@@ -355,12 +370,6 @@ func (o *Output) encodeResourceText(loc ast.Loc, text string) ([]byte, error) {
 	}
 
 	var buf []byte
-	// OCaml textout.ml compile_stub initial state: `set_quotes true`
-	// which immediately emits an opening 0x22. Replicate that — the
-	// engine looks for the leading quote to mark the start of the
-	// textout payload, and a Speaker token right after the kidoku
-	// would otherwise produce `81 79` without the framing `22` byte
-	// the engine expects.
 	quoted := false
 	setQuotes := func(q bool) {
 		if quoted != q {
@@ -368,51 +377,42 @@ func (o *Output) encodeResourceText(loc ast.Loc, text string) ([]byte, error) {
 			buf = append(buf, '"')
 		}
 	}
-	setQuotes(true)
 
 	for _, tk := range tokens {
 		switch tk.kind {
 		case rtText:
-			setQuotes(true)
 			b, err := o.encodeText(loc, tk.text)
 			if err != nil {
 				return nil, err
 			}
 			buf = append(buf, b...)
 		case rtSpace:
-			// Plain ASCII space — inside quoted run.
-			setQuotes(true)
 			for i := 0; i < tk.count; i++ {
 				buf = append(buf, ' ')
 			}
 		case rtDQuote:
-			setQuotes(true)
-			buf = append(buf, '\\', '"')
+			buf = append(buf, '"')
 		case rtSpeaker:
+			// \{Name} opens a speaker block. OCaml emits a 0x22
+			// transition byte before the lenticular bytes so the engine
+			// switches out of any text-quoting state it was in.
 			setQuotes(false)
 			buf = append(buf, 0x81, 0x79)
 		case rtRCur:
+			// } closes the speaker block. Same quote-state transition.
 			setQuotes(false)
 			buf = append(buf, 0x81, 0x7a)
 		case rtLLentic:
-			setQuotes(true)
 			buf = append(buf, 0x81, 0x79)
 		case rtRLentic:
 			buf = append(buf, 0x81, 0x7a)
 		case rtAsterisk:
-			setQuotes(true)
 			buf = append(buf, 0x81, 0x96)
 		case rtPercent:
-			setQuotes(true)
 			buf = append(buf, 0x81, 0x93)
 		case rtHyphen:
-			setQuotes(true)
 			buf = append(buf, '-')
 		case rtName:
-			// Name marker. \l → local prefix 0x81 0x93, \m → global 0x81 0x96.
-			// Letter X (A..Z) is encoded as 0x82 (X + 0x1f) i.e. fullwidth A-Z.
-			// Optional second letter (AA, AB, …) and optional digit suffix
-			// (0..9) follow as additional 0x82 XX bytes.
 			setQuotes(false)
 			if tk.isLocal {
 				buf = append(buf, 0x81, 0x93)
@@ -428,6 +428,8 @@ func (o *Output) encodeResourceText(loc ast.Loc, text string) ([]byte, error) {
 		}
 	}
 
+	// Close any pending quoted run — if we ended inside quote mode,
+	// emit the matching closing 0x22.
 	if quoted {
 		buf = append(buf, '"')
 	}

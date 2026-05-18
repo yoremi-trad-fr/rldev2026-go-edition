@@ -175,10 +175,29 @@ func (c *Compiler) compileTextStub(ret ast.ReturnStmt) {
 	}
 	slit, ok := ret.Expr.(ast.StrLit)
 	if !ok {
-		// Non-string expression → just emit as-is
-		c.Out.AddKidoku(ret.Loc, ret.Loc.Line)
-		c.Out.EmitExpr(ret.Expr)
-		return
+		// A textout statement can also be a bare `#res<KEY>` directly
+		// (the disassembler emits these for every resource entry it
+		// pulled out — the .org for SEEN0001 has lines like:
+		//   `#res<0000>`
+		// standalone, meaning "play this resource text as a textout").
+		// Wrap them in a synthetic StrLit so the textCompiler runs the
+		// full quoted/unquoted state machine that the engine expects
+		// around `\{Name}「…」`-style content. Skipping this and going
+		// through plain EmitExpr emitted the SJIS bytes with no framing
+		// quotes (no `22 22 81 79 22 …`), so the engine read the next
+		// opcode's bytes as text and gradually desynced — manifested as
+		// the menu freezing on "Aw" with the title bar missing.
+		if rr, isRes := ret.Expr.(ast.ResRef); isRes {
+			slit = ast.StrLit{
+				Loc:    rr.Loc,
+				Tokens: []ast.StrToken{ast.ResRefToken{Loc: rr.Loc, Key: rr.Key}},
+			}
+		} else {
+			// Non-string non-res expression → just emit as-is
+			c.Out.AddKidoku(ret.Loc, ret.Loc.Line)
+			c.Out.EmitExpr(ret.Expr)
+			return
+		}
 	}
 
 	c.Out.AddKidoku(ret.Loc, ret.Loc.Line)
@@ -331,7 +350,19 @@ func (tc *textCompiler) compileToken(tok ast.StrToken) {
 		// \f{} → rewrite transformation (handled by do_compile wrapper)
 
 	case ast.ResRefToken:
-		// Resource reference — should have been resolved earlier
+		// Resolve the resource text from the .utf companion and replay
+		// it through this textCompiler so all markers (\{Name}, \m{X},
+		// \l{X}, 【 】, ＊, ％) and plain text go through the same
+		// quoted/unquoted state machine the engine expects. Without
+		// this, a standalone `#res<0000>` line in a .org came out as
+		// just the raw SJIS bytes with no framing quotes — the engine
+		// read the following opcode as text and the menu froze on the
+		// first speaker line (Clannad "Aw" / missing window title).
+		if tc.c.Out.ResolveRes != nil {
+			if raw, ok := tc.c.Out.ResolveRes(t.Key); ok {
+				tc.compileResText(raw)
+			}
+		}
 
 	default:
 		tc.c.warning(tc.loc, fmt.Sprintf("unknown text token type: %T", tok))
@@ -1354,4 +1385,121 @@ func isStringExpr(e ast.Expr) bool {
 		return isStringExpr(ex.Expr)
 	}
 	return false
+}
+
+// compileResText lexes a `.utf` resource string (the raw text the
+// disassembler wrote for a given <NNNN> entry) and replays its markers
+// and text through this textCompiler's state machine.
+//
+// We can't reuse the lexResourceText helper in codegen because that
+// returns its own internal token type. We re-tokenise here so each
+// marker is dispatched to the appropriate compileToken case, ensuring
+// every `\{Name}「…」` block produced by the disassembler ends up with
+// the same bytecode pattern OCaml emits: `22 22 81 79 22 SJIS 22 81 7a
+// 22 SJIS 22`. Anything Go-specific that compileTextStub already does
+// (kidoku, ignoreOneSpace tracking, etc.) is preserved because we go
+// through the same compileToken dispatcher.
+func (tc *textCompiler) compileResText(s string) {
+	r := []rune(s)
+	i := 0
+	var textBuf []rune
+	flushText := func() {
+		if len(textBuf) > 0 {
+			tc.compileToken(ast.TextToken{Loc: tc.loc, Text: string(textBuf)})
+			textBuf = textBuf[:0]
+		}
+	}
+	for i < len(r) {
+		c := r[i]
+		// Backslash escapes
+		if c == '\\' && i+1 < len(r) {
+			next := r[i+1]
+			if next == '{' {
+				flushText()
+				tc.compileToken(ast.SpeakerToken{Loc: tc.loc})
+				i += 2
+				continue
+			}
+			if (next == 'l' || next == 'm') && i+2 < len(r) && r[i+2] == '{' {
+				// \l{X} / \m{X} / \l{XX} / \l{X,N}
+				end := i + 3
+				for end < len(r) && r[end] != '}' {
+					end++
+				}
+				if end < len(r) {
+					inside := string(r[i+3 : end])
+					// Parse letters (1-2 uppercase A-Z) and optional ", N"
+					p := 0
+					letterCount := 0
+					letterIdx := 0
+					for p < len(inside) && inside[p] >= 'A' && inside[p] <= 'Z' && letterCount < 2 {
+						letterIdx = letterIdx*26 + int(inside[p]-'A')
+						p++
+						letterCount++
+					}
+					hasCharID := false
+					charID := 0
+					if p < len(inside) && inside[p] == ',' {
+						p++
+						for p < len(inside) && inside[p] == ' ' {
+							p++
+						}
+						if p < len(inside) && inside[p] >= '0' && inside[p] <= '9' {
+							charID = int(inside[p] - '0')
+							hasCharID = true
+							p++
+						}
+					}
+					if letterCount > 0 && p == len(inside) {
+						flushText()
+						nt := ast.NameToken{
+							Loc:    tc.loc,
+							Global: next == 'm',
+							Index:  ast.IntLit{Loc: tc.loc, Val: int32(letterIdx)},
+						}
+						if hasCharID {
+							nt.CharID = ast.IntLit{Loc: tc.loc, Val: int32(charID)}
+						}
+						tc.compileToken(nt)
+						i = end + 1
+						continue
+					}
+				}
+			}
+			// Unknown escape — emit literal '\'
+			textBuf = append(textBuf, c)
+			i++
+			continue
+		}
+		switch c {
+		case '"':
+			flushText()
+			tc.compileToken(ast.DQuoteToken{Loc: tc.loc})
+			i++
+		case '}':
+			flushText()
+			tc.compileToken(ast.RCurToken{Loc: tc.loc})
+			i++
+		case 0x3010: // 【
+			flushText()
+			tc.compileToken(ast.LLenticToken{Loc: tc.loc})
+			i++
+		case 0x3011: // 】
+			flushText()
+			tc.compileToken(ast.RLenticToken{Loc: tc.loc})
+			i++
+		case 0xff0a: // ＊
+			flushText()
+			tc.compileToken(ast.AsteriskToken{Loc: tc.loc})
+			i++
+		case 0xff05: // ％
+			flushText()
+			tc.compileToken(ast.PercentToken{Loc: tc.loc})
+			i++
+		default:
+			textBuf = append(textBuf, c)
+			i++
+		}
+	}
+	flushText()
 }
