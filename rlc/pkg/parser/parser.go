@@ -970,6 +970,20 @@ func (p *Parser) parsePrimary() ast.Expr {
 			}
 			return ast.Deref{Loc: loc, Ident: name, Index: idx}
 		}
+		// Bare `goto @label` / `gosub @label` and other goto-like
+		// keywords with no parameter list. The Go lexer doesn't emit a
+		// dedicated GOTO token (unlike OCaml), so the trailing `@N`
+		// after a paren-less goto would otherwise be left in the stream
+		// and parsed as a standalone label declaration — silently
+		// stripping the jump target and emitting `# 00 01 0000 0000 00`
+		// with no pointer, which makes the engine fault on launch
+		// (0xC0000005). Consume the label here so the FuncCall carries
+		// the jump target through to codegen.AddLabelRef.
+		if p.cur.Type == token.LABEL && isGotoLike(name) {
+			lbl := ast.Label{Loc: p.loc(), Ident: p.cur.StrVal}
+			p.advance()
+			return ast.FuncCall{Loc: loc, Ident: name, Label: &lbl}
+		}
 		return ast.VarOrFunc{Loc: loc, Ident: name}
 	case token.GOTO:
 		name := p.cur.StrVal; p.advance()
