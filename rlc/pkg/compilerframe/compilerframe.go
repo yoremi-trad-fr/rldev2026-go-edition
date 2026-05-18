@@ -751,16 +751,32 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 	// screen.
 	if len(emitParams) > 0 {
 		c.Out.AddCode(s.Loc, []byte{'('})
+		// Track whether the previous emitted parameter was a string
+		// literal. OCaml funcAsm.ml L82-89 (`Literal`) inserts an ASCII
+		// `,` between two consecutive string args, because string args
+		// in the bytecode have no explicit delimiter: they are just a
+		// run of ASCII / SJIS bytes terminated by the next non-string
+		// byte. Without the separator, `(50, '???', 'STT_LUM00')` is
+		// emitted as `(50 ???STT_LUM00)` and the engine reads it as a
+		// single concatenated filename `???STT_LUM00.g00`, producing a
+		// "file not found" popup on launch (Clannad SEEN9032 objOfFileAnm).
+		prevWasString := false
 		for _, p := range emitParams {
 			switch pp := p.(type) {
 			case ast.SimpleParam:
+				isString := isStringExpr(pp.Expr)
+				if prevWasString && isString {
+					c.Out.AddCode(s.Loc, []byte{','})
+				}
 				c.Out.EmitExpr(pp.Expr)
+				prevWasString = isString
 			case ast.ComplexParam:
 				c.Out.AddCode(s.Loc, []byte{'('})
 				for _, e := range pp.Exprs {
 					c.Out.EmitExpr(e)
 				}
 				c.Out.AddCode(s.Loc, []byte{')'})
+				prevWasString = false
 			case ast.SpecialParam:
 				// 0x61 tag ( exprs ) — OCaml special_arg / __special.
 				c.Out.AddCode(s.Loc, []byte{0x61, byte(pp.Tag), '('})
@@ -768,6 +784,7 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 					c.Out.EmitExpr(e)
 				}
 				c.Out.AddCode(s.Loc, []byte{')'})
+				prevWasString = false
 			}
 		}
 		c.Out.AddCode(s.Loc, []byte{')'})
@@ -1320,4 +1337,21 @@ func liftNot(e ast.Expr) ast.Expr {
 		return ast.ParenExpr{Loc: x.Loc, Expr: liftNot(x.Expr)}
 	}
 	return e
+}
+
+// isStringExpr reports whether the given expression compiles to a
+// "string-shaped" run of bytes in the bytecode (i.e. ASCII / SJIS text
+// rather than an integer-mode `$type[idx]` form). Used by
+// compileFuncCall to decide when to insert an ASCII `,` separator
+// between consecutive string args — see OCaml funcAsm.ml L82-89.
+func isStringExpr(e ast.Expr) bool {
+	switch ex := e.(type) {
+	case ast.StrLit:
+		return true
+	case ast.ResRef:
+		return true
+	case ast.ParenExpr:
+		return isStringExpr(ex.Expr)
+	}
+	return false
 }
