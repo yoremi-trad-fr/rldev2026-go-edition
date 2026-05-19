@@ -1,0 +1,529 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+
+	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+)
+
+type App struct {
+	ctx        context.Context
+	mu         sync.Mutex
+	cancelFunc context.CancelFunc
+}
+
+func NewApp() *App {
+	return &App{}
+}
+
+func (a *App) startup(ctx context.Context) {
+	a.ctx = ctx
+}
+
+func (a *App) log(msg string) {
+	if a.ctx != nil {
+		wailsRuntime.EventsEmit(a.ctx, "log", msg)
+	}
+}
+
+func (a *App) logError(msg string) {
+	a.log("[ERROR] " + msg)
+}
+
+func (a *App) logOK(msg string) {
+	a.log("[OK] " + msg)
+}
+
+func (a *App) executableDir() (string, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("impossible de localiser l'executable: %w", err)
+	}
+	return filepath.Dir(exePath), nil
+}
+
+func (a *App) binDir() (string, error) {
+	exeDir, err := a.executableDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(exeDir, "bin"), nil
+}
+
+func (a *App) toolPath(toolName string) (string, error) {
+	allowed := map[string]string{
+		"kprl":   "kprl16.exe",
+		"rlc":    "rlc2026.exe",
+		"vaconv": "vaconv.exe",
+		"rlxml":  "rlxml.exe",
+	}
+
+	exeName, ok := allowed[toolName]
+	if !ok {
+		return "", fmt.Errorf("outil non pris en charge: %s", toolName)
+	}
+
+	binDir, err := a.binDir()
+	if err != nil {
+		return "", err
+	}
+
+	path := filepath.Join(binDir, exeName)
+	if info, err := os.Stat(path); err != nil || info.IsDir() {
+		return "", fmt.Errorf("binaire manquant: %s", path)
+	}
+	return path, nil
+}
+
+func (a *App) findKFN() string {
+	binDir, err := a.binDir()
+	if err != nil {
+		return ""
+	}
+
+	candidates := []string{
+		filepath.Join(binDir, "lib", "reallive.kfn"),
+		filepath.Join(binDir, "reallive.kfn"),
+	}
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func (a *App) runTool(toolName string, args ...string) error {
+	toolPath, err := a.toolPath(toolName)
+	if err != nil {
+		a.logError(err.Error())
+		return err
+	}
+
+	a.log(fmt.Sprintf("> %s %s", filepath.Base(toolPath), strings.Join(args, " ")))
+
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.mu.Lock()
+	a.cancelFunc = cancel
+	a.mu.Unlock()
+	defer func() {
+		cancel()
+		a.mu.Lock()
+		a.cancelFunc = nil
+		a.mu.Unlock()
+	}()
+
+	cmd := exec.CommandContext(ctx, toolPath, args...)
+	cmd.Dir = filepath.Dir(toolPath)
+	hideWindow(cmd)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		a.logError(fmt.Sprintf("stdout: %v", err))
+		return err
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		a.logError(fmt.Sprintf("stderr: %v", err))
+		return err
+	}
+
+	if err := cmd.Start(); err != nil {
+		a.logError(fmt.Sprintf("demarrage impossible: %v", err))
+		return err
+	}
+
+	done := make(chan struct{}, 2)
+	streamLines := func(reader io.Reader) {
+		scanner := bufio.NewScanner(reader)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			a.log(scanner.Text())
+		}
+		if err := scanner.Err(); err != nil {
+			a.logError(fmt.Sprintf("lecture console: %v", err))
+		}
+		done <- struct{}{}
+	}
+
+	go streamLines(stdout)
+	go streamLines(stderr)
+
+	<-done
+	<-done
+
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() != nil {
+			a.log("[STOPPED] Operation arretee par l'utilisateur.")
+			return fmt.Errorf("operation arretee")
+		}
+		a.logError(fmt.Sprintf("processus termine en erreur: %v", err))
+		return err
+	}
+
+	return nil
+}
+
+func (a *App) StopProcess() {
+	a.mu.Lock()
+	cancel := a.cancelFunc
+	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (a *App) SelectFile(title string, pattern string, desc string) string {
+	file, _ := wailsRuntime.OpenFileDialog(a.ctx, wailsRuntime.OpenDialogOptions{
+		Title: title,
+		Filters: []wailsRuntime.FileFilter{
+			{DisplayName: desc, Pattern: pattern},
+			{DisplayName: "Tous les fichiers", Pattern: "*.*"},
+		},
+	})
+	return file
+}
+
+func (a *App) SelectDirectory(title string) string {
+	dir, _ := wailsRuntime.OpenDirectoryDialog(a.ctx, wailsRuntime.OpenDialogOptions{
+		Title: title,
+	})
+	return dir
+}
+
+func (a *App) SelectSaveFile(title string, defaultName string, pattern string, desc string) string {
+	file, _ := wailsRuntime.SaveFileDialog(a.ctx, wailsRuntime.SaveDialogOptions{
+		Title:           title,
+		DefaultFilename: defaultName,
+		Filters: []wailsRuntime.FileFilter{
+			{DisplayName: desc, Pattern: pattern},
+			{DisplayName: "Tous les fichiers", Pattern: "*.*"},
+		},
+	})
+	return file
+}
+
+func required(label string, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s est requis", label)
+	}
+	return nil
+}
+
+func (a *App) failIf(err error) string {
+	if err != nil {
+		a.logError(err.Error())
+		return err.Error()
+	}
+	return ""
+}
+
+func (a *App) RldevList(seenFile string) string {
+	a.log("========================================")
+	a.log("  RLdev - Liste SEEN.txt")
+	a.log("========================================")
+
+	if err := required("SEEN.txt", seenFile); err != nil {
+		return a.failIf(err)
+	}
+	if err := a.runTool("kprl", "-l", seenFile); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+func (a *App) RldevDisassemble(seenFile, kfnFile, encoding, gameID, outputDir string) string {
+	a.log("========================================")
+	a.log("  RLdev - Desassemblage SEEN.txt")
+	a.log("========================================")
+
+	if err := required("SEEN.txt", seenFile); err != nil {
+		return a.failIf(err)
+	}
+	if err := required("dossier de sortie", outputDir); err != nil {
+		return a.failIf(err)
+	}
+	if encoding == "" {
+		encoding = "UTF-8"
+	}
+	if kfnFile == "" {
+		kfnFile = a.findKFN()
+	}
+
+	args := []string{"-d", "-e", encoding, "-o", outputDir}
+	if kfnFile != "" {
+		a.log("KFN: " + kfnFile)
+		args = append(args, "-kfn", kfnFile)
+	} else {
+		a.log("KFN: non trouve, les opcodes resteront bruts si necessaire.")
+	}
+	if gameID != "" {
+		args = append(args, "-G", gameID)
+	}
+	args = append(args, seenFile)
+
+	if err := a.runTool("kprl", args...); err != nil {
+		return err.Error()
+	}
+	a.logOK("Desassemblage termine.")
+	return ""
+}
+
+func (a *App) RldevExtract(seenFile, outputDir string) string {
+	a.log("========================================")
+	a.log("  RLdev - Extraction brute SEEN.txt")
+	a.log("========================================")
+
+	if err := required("SEEN.txt", seenFile); err != nil {
+		return a.failIf(err)
+	}
+	if err := required("dossier de sortie", outputDir); err != nil {
+		return a.failIf(err)
+	}
+
+	if err := a.runTool("kprl", "-x", "-o", outputDir, seenFile); err != nil {
+		return err.Error()
+	}
+	a.logOK("Extraction terminee.")
+	return ""
+}
+
+func (a *App) RldevArchive(outputSeen, inputDir string) string {
+	a.log("========================================")
+	a.log("  RLdev - Reconstruction SEEN.txt")
+	a.log("========================================")
+
+	if err := required("SEEN.txt de sortie", outputSeen); err != nil {
+		return a.failIf(err)
+	}
+	if err := required("dossier d'entree", inputDir); err != nil {
+		return a.failIf(err)
+	}
+
+	filesUpper, _ := filepath.Glob(filepath.Join(inputDir, "*.TXT"))
+	filesLower, _ := filepath.Glob(filepath.Join(inputDir, "*.txt"))
+	seen := map[string]bool{}
+	files := make([]string, 0, len(filesUpper)+len(filesLower))
+	for _, file := range append(filesUpper, filesLower...) {
+		key := strings.ToLower(file)
+		if !seen[key] {
+			seen[key] = true
+			files = append(files, file)
+		}
+	}
+	sort.Strings(files)
+	if len(files) == 0 {
+		return a.failIf(fmt.Errorf("aucun fichier .TXT trouve dans %s", inputDir))
+	}
+
+	args := []string{"-a", outputSeen}
+	args = append(args, files...)
+	if err := a.runTool("kprl", args...); err != nil {
+		return err.Error()
+	}
+	a.logOK(fmt.Sprintf("Archive reconstruite avec %d fichier(s).", len(files)))
+	return ""
+}
+
+func (a *App) RldevCompile(orgFile, kfnFile, gameexe, interpreter, encoding, outputDir string) string {
+	a.log("========================================")
+	a.log("  RLdev - Compilation Kepago")
+	a.log("========================================")
+
+	if err := required("script .org/.ke", orgFile); err != nil {
+		return a.failIf(err)
+	}
+	if err := required("dossier de sortie", outputDir); err != nil {
+		return a.failIf(err)
+	}
+	if encoding == "" {
+		encoding = "UTF-8"
+	}
+	if kfnFile == "" {
+		kfnFile = a.findKFN()
+	}
+
+	args := []string{"-v", "-e", encoding, "-d", outputDir}
+	if kfnFile != "" {
+		args = append(args, "-K", kfnFile)
+	}
+	if gameexe != "" {
+		args = append(args, "-i", gameexe)
+	}
+	if interpreter != "" {
+		args = append(args, "-I", interpreter)
+	}
+	args = append(args, orgFile)
+
+	if err := a.runTool("rlc", args...); err != nil {
+		return err.Error()
+	}
+	a.logOK("Compilation terminee.")
+	return ""
+}
+
+func (a *App) RldevCompileBatch(inputDir, kfnFile, gameexe, interpreter, encoding, outputDir string) string {
+	a.log("========================================")
+	a.log("  RLdev - Compilation batch Kepago")
+	a.log("========================================")
+
+	if err := required("dossier d'entree", inputDir); err != nil {
+		return a.failIf(err)
+	}
+	if err := required("dossier de sortie", outputDir); err != nil {
+		return a.failIf(err)
+	}
+	if encoding == "" {
+		encoding = "UTF-8"
+	}
+	if kfnFile == "" {
+		kfnFile = a.findKFN()
+	}
+
+	entries, err := os.ReadDir(inputDir)
+	if err != nil {
+		return a.failIf(fmt.Errorf("lecture du dossier impossible: %w", err))
+	}
+
+	var sources []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		if ext == ".org" || ext == ".ke" {
+			sources = append(sources, entry.Name())
+		}
+	}
+	sort.Strings(sources)
+	if len(sources) == 0 {
+		return a.failIf(fmt.Errorf("aucun fichier .org ou .ke trouve dans %s", inputDir))
+	}
+
+	okCount := 0
+	errCount := 0
+	for i, name := range sources {
+		base := strings.TrimSuffix(name, filepath.Ext(name))
+		inputFile := filepath.Join(inputDir, name)
+		a.log(fmt.Sprintf("[%d/%d] %s", i+1, len(sources), name))
+
+		args := []string{"-v", "-e", encoding, "-d", outputDir, "-o", base}
+		if kfnFile != "" {
+			args = append(args, "-K", kfnFile)
+		}
+		if gameexe != "" {
+			args = append(args, "-i", gameexe)
+		}
+		if interpreter != "" {
+			args = append(args, "-I", interpreter)
+		}
+		args = append(args, inputFile)
+
+		if err := a.runTool("rlc", args...); err != nil {
+			errCount++
+			a.logError(fmt.Sprintf("%s: %v", name, err))
+			continue
+		}
+		okCount++
+	}
+
+	result := fmt.Sprintf("%d fichier(s) compile(s), %d erreur(s)", okCount, errCount)
+	if errCount > 0 {
+		a.logError(result)
+		return result
+	}
+	a.logOK(result)
+	return ""
+}
+
+func (a *App) RldevG00ToPng(g00File, outputDir string) string {
+	a.log("========================================")
+	a.log("  RLdev - G00 vers PNG")
+	a.log("========================================")
+
+	if err := required("fichier G00", g00File); err != nil {
+		return a.failIf(err)
+	}
+	if err := required("dossier de sortie", outputDir); err != nil {
+		return a.failIf(err)
+	}
+
+	if err := a.runTool("vaconv", "-v", "-d", outputDir, g00File); err != nil {
+		return err.Error()
+	}
+	a.logOK("Conversion terminee.")
+	return ""
+}
+
+func (a *App) RldevPngToG00(pngFile, outputDir string) string {
+	a.log("========================================")
+	a.log("  RLdev - PNG vers G00")
+	a.log("========================================")
+
+	if err := required("fichier PNG", pngFile); err != nil {
+		return a.failIf(err)
+	}
+	if err := required("dossier de sortie", outputDir); err != nil {
+		return a.failIf(err)
+	}
+
+	base := strings.TrimSuffix(filepath.Base(pngFile), filepath.Ext(pngFile))
+	outputFile := filepath.Join(outputDir, base+".g00")
+	if err := a.runTool("vaconv", "-v", "-o", outputFile, "-i", "png", pngFile); err != nil {
+		return err.Error()
+	}
+	a.logOK("Conversion terminee: " + outputFile)
+	return ""
+}
+
+func (a *App) RldevGanToXml(ganFile, outputDir string) string {
+	a.log("========================================")
+	a.log("  RLdev - GAN vers XML")
+	a.log("========================================")
+
+	if err := required("fichier GAN", ganFile); err != nil {
+		return a.failIf(err)
+	}
+	if err := required("dossier de sortie", outputDir); err != nil {
+		return a.failIf(err)
+	}
+
+	base := strings.TrimSuffix(filepath.Base(ganFile), filepath.Ext(ganFile))
+	outputFile := filepath.Join(outputDir, base+".ganxml")
+	if err := a.runTool("rlxml", "-v", "-o", outputFile, ganFile); err != nil {
+		return err.Error()
+	}
+	a.logOK("Conversion terminee: " + outputFile)
+	return ""
+}
+
+func (a *App) RldevXmlToGan(xmlFile, outputDir string) string {
+	a.log("========================================")
+	a.log("  RLdev - XML vers GAN")
+	a.log("========================================")
+
+	if err := required("fichier GANXML", xmlFile); err != nil {
+		return a.failIf(err)
+	}
+	if err := required("dossier de sortie", outputDir); err != nil {
+		return a.failIf(err)
+	}
+
+	base := strings.TrimSuffix(filepath.Base(xmlFile), filepath.Ext(xmlFile))
+	outputFile := filepath.Join(outputDir, base+".gan")
+	if err := a.runTool("rlxml", "-v", "-o", outputFile, xmlFile); err != nil {
+		return err.Error()
+	}
+	a.logOK("Conversion terminee: " + outputFile)
+	return ""
+}

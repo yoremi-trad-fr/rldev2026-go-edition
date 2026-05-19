@@ -1,31 +1,149 @@
-Here is the Rldev2026 project ported to the Go language
-This allows compilation and decompilation on modern operating systems, without the need for VMs and Cygwin (which are cumbersome and obsolete)
-Phase 1 of the project: port the rldev2026 fork to Go and be able to do everything the OCaml fork does
+# Rldev2026-Go Port Status
 
-Phase 2: add implementation of new titles released after the OCaml rldev
--Kud Wafter
--Rewrite
--Rewrite Harvest Festa
--Planetarian (to be checked)
--Little Buster (to be checked)
--Little Buster Ex
+**Status update:** `18/05/2026`
 
-Phase 2 is a continuation of my rldev2026 fork; the OCaml version will be discontinued and only the Go version will be updated
+---
 
+# Supported Titles
 
+## Kanon (1999 AVG)
 
+* Decompilation UTF8/SJIS: Not implemented
+* Intermediate compilation (`.org / .ke`): Not implemented
+* Final compilation: Not implemented
 
+---
 
-Voici le projet Rldev2026 transposé en langage GO
-Cela permet de compiler/décompiler sur des OS modernes, sans passer par des VM et cygwin (lourds et obsolète)
-La phase 1 du projet : transposer le fork rldev2026 en langage go et pouvoir faire tout ce que le fork ocaml fait
+## Kanon (1999 18+ AVG)
 
-Phase 2 : ajouter l’implémentation de nouveau titres postérieurs à rldev ocaml
--Kud wafter
--Rewrite
--Rewrite harvest festa
--Planetarian (a vérifier)
--Little buster (a vérifier)
--Little buster Ex
+* Decompilation UTF8/SJIS: Not implemented
+* Intermediate compilation (`.org / .ke`): Not implemented
+* Final compilation: Not implemented
 
-La phase 2 est la continuation de mon fork rldev2026, la version ocaml sera abandonnée et seul la version Go sera mise à jour
+---
+
+## Clannad (2004)
+
+* Decompilation UTF8/SJIS: Passed
+* Intermediate compilation (`.org / .ke`):  Passed
+* Final compilation: Failed
+
+---
+
+## Clannad Full Voice (2007)
+
+* Decompilation UTF8/SJIS: Passed
+* Intermediate compilation (`.org / .ke`):  Passed
+* Final compilation: Failed
+
+---
+
+## AIR First Press Edition (2000 18+)
+
+* Status: Not tested
+
+* Decompilation UTF8/SJIS:
+* Intermediate compilation (`.org / .ke`):
+* Final compilation:
+
+---
+
+## AIR 1.02 (2005 18+)
+
+* Decompilation UTF8/SJIS: Passed
+* Intermediate compilation (`.org / .ke`): Passed
+* Final compilation: Not tested
+
+---
+
+## Little Busters! (2007)
+
+* Status: Not tested
+
+* Decompilation UTF8/SJIS:
+* Intermediate compilation (`.org / .ke`):
+* Final compilation:
+
+---
+
+## Tomoyo After Memorial Edition (2010)
+
+* Decompilation UTF8/SJIS: Passed
+* Intermediate compilation (`.org / .ke`):  Passed
+* Final compilation:  Failed
+
+---
+
+## Tomoyo After Steam Edition (2011)
+
+* Decompilation UTF8/SJIS:  Passed
+* Intermediate compilation (`.org / .ke`):Passed
+* Final compilation:  Failed
+
+---
+
+## Clannad Side Stories Steam Edition (2011)
+
+* Decompilation UTF8/SJIS: Passed
+* Intermediate compilation (`.org / .ke`):  Passed
+* Final compilation:  Failed
+
+---
+
+## Kud Wafter (2010 18+)
+
+* Status: Not tested
+
+* Decompilation UTF8/SJIS:
+* Intermediate compilation (`.org / .ke`):
+* Final compilation:
+
+---
+## Harmonia 2016
+
+* Status: Not tested
+
+* Decompilation UTF8/SJIS:
+* Intermediate compilation (`.org / .ke`):
+* Final compilation:
+---
+
+## Planetarian (2006)
+
+* Status: Not tested
+
+* Decompilation UTF8/SJIS:
+* Intermediate compilation (`.org / .ke`):
+* Final compilation:
+
+---
+
+# Project Overview
+
+This project is a full port of the **Rldev2026** toolchain to the **Go language**.
+
+The goal is to provide a modern and portable implementation capable of running natively on current operating systems without relying on outdated environments such as Cygwin or virtual machines.
+
+---
+
+# Development Roadmap
+
+## Phase 1
+
+* Port the `rldev2026` OCaml fork to Go
+* Reach feature parity with the OCaml implementation
+* Preserve compatibility with existing workflows
+
+## Phase 2
+
+* Add support for titles released after the original OCaml Rldev implementation
+* Improve engine compatibility and tooling
+* Expand modern platform support
+
+---
+
+# Future Direction
+
+The Go implementation is intended to become the main actively maintained version of the project.
+
+The legacy OCaml version will eventually be discontinued, and future updates will focus exclusively on the Go codebase.
