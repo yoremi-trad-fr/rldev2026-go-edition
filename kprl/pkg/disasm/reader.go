@@ -1275,12 +1275,37 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 
 	funcName := ""
 	var hasPushStore bool
+	var ccode string
+	var ccodeFlags []FuncFlag
 	if opts.FuncReg != nil {
 		if def, ok := opts.FuncReg.LookupOpcode(op); ok {
 			funcName = def.Name
 			hasPushStore = def.HasFlag(FlagPushStore)
+			ccode = def.Ccode
+			ccodeFlags = def.Flags
 		}
 	}
+
+	// Ccode-form opcodes (FontSize → \size, shake → \shake, …):
+	// render as "\<ccode>{args}" and try to fold into the previous
+	// resource via addTextoutFails. If the merge succeeds the
+	// command vanishes — its content lives inside the previous
+	// resource string. Matches OCaml disassembler.ml L2340-L2353.
+	if ccode != "" {
+		def := FuncDef{Name: funcName, Ccode: ccode, Flags: ccodeFlags}
+		form := formatCcodeForm(def, args)
+		if !addTextoutFails(result, form) {
+			return nil
+		}
+		// Merge failed: emit standalone using the ccode form
+		// (preserves the OCaml fallback) and keep args around so a
+		// future textout could back-merge through us (TODO cases 1-2).
+		cmd.Kepago = []CommandElem{ElemString{Value: form}}
+		cmd.Args = args
+		result.Commands = append(result.Commands, cmd)
+		return nil
+	}
+
 	var sb strings.Builder
 	if funcName != "" {
 		sb.WriteString(funcName)
@@ -2317,6 +2342,19 @@ textoutLoop:
 	// `\x{NN}` escape sequence. If fewer than 3 real chars and at
 	// least one escape/replacement sign, treat it as stub.
 	if isLikelyStubTextout(textStr) {
+		return nil
+	}
+
+	// Try to fold this textout into the previous resource (OCaml
+	// add_textout_fails, disassembler.ml L1389-L1485). When the
+	// previous command is a `#res<NNNN>` referring to the most recent
+	// resource entry, the new text is appended there instead of
+	// allocating a new resource — this collapses chains like
+	//     Msg("バタンッ！") + shake(4)
+	// and
+	//     Msg("\{\m{B}}「") + FontSize(30) + Msg("くそぅ…") + FontSize() + Msg("」")
+	// into a single resource string, matching OCaml output exactly.
+	if opts.SeparateStrings && !addTextoutFails(result, textStr) {
 		return nil
 	}
 

@@ -128,6 +128,12 @@ type Command struct {
 	Opcode  string        // Opcode string for annotation
 	LineNo  int           // Debug line number
 	ResIdx  int           // Resource string index (-1 if none)
+
+	// Args holds the original (rendered) argument strings for this
+	// command, preserved on ccode-form opcodes (FontSize, shake, …)
+	// so a later textout may back-merge through addTextoutFails when
+	// the forward merge failed. Empty for non-ccode commands.
+	Args []string
 }
 
 // Text returns the text representation of the command's kepago elements.
@@ -263,6 +269,27 @@ type FuncDef struct {
 	Name       string
 	Flags      []FuncFlag
 	Prototypes [][]ParamType // One or more parameter lists
+
+	// Ccode is the kepago "control-code" rendering name for this
+	// function, set when the KFN entry has a `{xxx}` annotation
+	// between the function name and the opcode triple, e.g.
+	//
+	//	fun FontSize {size} <0:Msg:00101, 1> ('size') ()
+	//	fun shake       {}  <1:Grp:00032, 0> ('index')
+	//
+	// When Ccode != "", the disassembler renders the command as
+	// `\<Ccode>{args}` (or `\<Name>{args}` if `{}` empty form) instead
+	// of `<Name>(args)`, and attempts to fold it into the previous
+	// textout resource via addTextoutFails (matching OCaml's
+	// disassembler.ml L2340-L2353).
+	//
+	// The annotation forms map to:
+	//   {}        → Ccode = Name           (e.g. shake → \shake)
+	//   {xxx}     → Ccode = "xxx"          (e.g. FontSize → \size)
+	//   {*xxx}    → Ccode = "xxx", +IsTextout
+	//   {=xxx}    → Ccode = "xxx", +NoBraces
+	//   {*=xxx}   → Ccode = "xxx", +NoBraces +IsLbr
+	Ccode string
 }
 
 // FuncRegistry holds known function definitions, loaded from KFN files.

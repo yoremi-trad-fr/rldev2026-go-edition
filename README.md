@@ -1,4 +1,7 @@
 # Rldev2026-Go Port Status
+Update : 19/05/2026 : An initial version of the GUI has been created for Rldev2026
+
+
 
 **Status update:** `18/05/2026`
 

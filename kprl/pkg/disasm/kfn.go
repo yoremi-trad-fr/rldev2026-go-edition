@@ -190,6 +190,17 @@ func ParseKFN(r io.Reader) (*FuncRegistry, error) {
 			if name == "" {
 				continue
 			}
+			// Parse the optional ccode annotation `{...}` that sits
+			// between the function name and the opcode triple.
+			// See kfnParser.mly L129-L135 for the OCaml grammar:
+			//   ccode:
+			//     | /* empty */         → no kepago form
+			//     | Lbr Rbr             → {}      Unnamed, uses fn name
+			//     | Lbr IDENT Rbr       → {xxx}   Named
+			//     | Lbr St IDENT Rbr    → {*xxx}  Named + IsTextout
+			//     | Lbr Eq IDENT Rbr    → {=xxx}  Named + NoBraces
+			//     | Lbr St Eq IDENT Rbr → {*=xxx} Named + NoBraces + IsLbr
+			ccode, ccodeFlags := extractCcode(trimmed, name)
 			if m := opcodeRe.FindStringSubmatch(trimmed); m != nil {
 				opType, _ := strconv.Atoi(m[1])
 				modStr := m[2]
@@ -200,7 +211,8 @@ func ParseKFN(r io.Reader) (*FuncRegistry, error) {
 				modNum := resolveModule(modStr, modNames)
 
 				opStr := fmt.Sprintf("%d:%03d:%05d,%d", opType, modNum, opCode, overload)
-				def := FuncDef{Name: name}
+				def := FuncDef{Name: name, Ccode: ccode}
+				def.Flags = append(def.Flags, ccodeFlags...)
 
 				// Parse flags from the parenthesized hint
 				if strings.Contains(trimmed, "(skip ") {
@@ -275,6 +287,78 @@ func extractFunName(line string) string {
 		return ""
 	}
 	return rest[:end]
+}
+
+// extractCcode pulls the kepago control-code annotation `{...}` that
+// may appear between the function name and the opcode triple in a KFN
+// `fun` line. Returns ("", nil) if no annotation is present.
+//
+// Maps the OCaml kfnParser.mly grammar (L129-L135):
+//
+//	{}        → ("<name>", [])              — Unnamed, uses fn name as ccode
+//	{xxx}     → ("xxx",    [])              — Named
+//	{*xxx}    → ("xxx",    [IsTextout])
+//	{=xxx}    → ("xxx",    [NoBraces])
+//	{*=xxx}   → ("xxx",    [NoBraces, IsLbr])
+//
+// We only scan the substring between the function name and the first
+// '<' (opcode triple start) so we don't pick up the parameter braces
+// later in the line.
+func extractCcode(line, funcName string) (string, []FuncFlag) {
+	// Locate the substring between fn name and opcode '<'.
+	nameIdx := strings.Index(line, funcName)
+	if nameIdx < 0 {
+		return "", nil
+	}
+	rest := line[nameIdx+len(funcName):]
+	opStart := strings.Index(rest, "<")
+	if opStart < 0 {
+		return "", nil
+	}
+	zone := rest[:opStart]
+	// Find a `{...}` group; skip the parenthesised flag hint if any.
+	lb := strings.Index(zone, "{")
+	if lb < 0 {
+		return "", nil
+	}
+	rb := strings.Index(zone[lb:], "}")
+	if rb < 0 {
+		return "", nil
+	}
+	inner := strings.TrimSpace(zone[lb+1 : lb+rb])
+	// Parse the leading flag markers.
+	var flags []FuncFlag
+	hasStar := false
+	hasEq := false
+	for len(inner) > 0 {
+		switch inner[0] {
+		case '*':
+			hasStar = true
+			inner = inner[1:]
+		case '=':
+			hasEq = true
+			inner = inner[1:]
+		default:
+			goto doneFlags
+		}
+	}
+doneFlags:
+	// Set flags per grammar.
+	switch {
+	case hasStar && hasEq:
+		flags = append(flags, FlagNoBraces, FlagIsLbr)
+	case hasEq:
+		flags = append(flags, FlagNoBraces)
+	case hasStar:
+		flags = append(flags, FlagIsTextout)
+	}
+	// The remaining content is the ccode name; if empty (Unnamed),
+	// fall back to the function name.
+	ccode := strings.TrimSpace(inner)
+	if ccode == "" {
+		ccode = funcName
+	}
+	return ccode, flags
 }
 
 // resolveModule converts a module name (like "Jmp") or number string to a number.
