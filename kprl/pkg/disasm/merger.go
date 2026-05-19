@@ -63,24 +63,28 @@ func addTextoutFails(result *DisassemblyResult, s string) bool {
 	// where !rescount is the index of the most recent resource string.
 	// In Go terms: len(ResStrs)-1 is the latest index, and `last.Value`
 	// must equal "#res<NNNN>" for that index.
-	if len(result.ResStrs) == 0 {
-		// TODO: FontSize back-merge cases. The two OCaml branches
-		//   | [S last] when ...opcode = "op<0:Msg:00101,..."
-		//   | [S "FontSize"]
-		// rewrite the previous command's kepago in-place AND allocate
-		// a fresh resource for the merged "\size{N}<s>" content. This
-		// shifts all subsequent resource indices, so we defer it until
-		// a game that needs it (none of the Key titles seen so far).
-		return true
+	if len(result.ResStrs) > 0 {
+		latestIdx := len(result.ResStrs) - 1
+		expected := fmt.Sprintf("#res<%04d>", latestIdx)
+		if last.Value == expected {
+			result.ResStrs[latestIdx] += s
+			return false
+		}
 	}
-	latestIdx := len(result.ResStrs) - 1
-	expected := fmt.Sprintf("#res<%04d>", latestIdx)
-	if last.Value != expected {
-		return true
+
+	// Back-merge case (OCaml cases 1/2 in add_textout_fails): if a
+	// standalone FontSize control code has no previous textout to absorb
+	// it, the next textout becomes the resource and the FontSize command is
+	// rewritten to reference that merged resource.
+	if strings.HasPrefix(last.Value, "\\size{") {
+		idx := len(result.ResStrs)
+		result.ResStrs = append(result.ResStrs, last.Value+s)
+		prev.Kepago = []CommandElem{ElemString{Value: fmt.Sprintf("#res<%04d>", idx)}}
+		prev.ResIdx = idx
+		return false
 	}
-	// Merge: extend the latest resource string.
-	result.ResStrs[latestIdx] += s
-	return false
+
+	return true
 }
 
 // formatCcodeForm renders a function call as its kepago control-code

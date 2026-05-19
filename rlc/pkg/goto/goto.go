@@ -10,11 +10,11 @@
 //   - goto_case/gosub_case: computed jump by matching expression against values
 //
 // This package handles:
-//   1. SpecialCase: optimizes constant conditionals — when the condition
-//      is a compile-time constant, the conditional is replaced with either
-//      nothing (dead branch) or an unconditional goto/gosub.
-//   2. GotoOn: emits opcode(expr){label1, label2, ...}
-//   3. GotoCase: emits opcode(expr){(match1)label1, (match2)label2, ()default}
+//  1. SpecialCase: optimizes constant conditionals — when the condition
+//     is a compile-time constant, the conditional is replaced with either
+//     nothing (dead branch) or an unconditional goto/gosub.
+//  2. GotoOn: emits opcode(expr){label1, label2, ...}
+//  3. GotoCase: emits opcode(expr){(match1)label1, (match2)label2, ()default}
 //
 // The package name is "gotojmp" (not "goto") because "goto" is a Go keyword.
 package gotojmp
@@ -115,13 +115,13 @@ func EmitGotoOn(out *codegen.Output, loc ast.Loc, reg *kfn.Registry, funcName st
 	}
 
 	out.EmitOpcode(loc, 0, opMod, opCode, len(labels), 0)
-	out.AddCode(loc, []byte{'('})
-	out.EmitExpr(expr)
-	out.AddCode(loc, []byte{')', '{'})
+	out.AddCodeRaw(loc, []byte{'('})
+	out.EmitExprRaw(expr)
+	out.AddCodeRaw(loc, []byte{')', '{'})
 	for _, lbl := range labels {
 		out.AddLabelRef(lbl.Ident, lbl.Loc)
 	}
-	out.AddCode(ast.Nowhere, []byte{'}'})
+	out.AddCodeRaw(ast.Nowhere, []byte{'}'})
 }
 
 // ============================================================
@@ -148,20 +148,20 @@ func EmitGotoCase(out *codegen.Output, loc ast.Loc, reg *kfn.Registry, funcName 
 	}
 
 	out.EmitOpcode(loc, 0, opMod, opCode, len(cases), 0)
-	out.AddCode(loc, []byte{'('})
-	out.EmitExpr(expr)
-	out.AddCode(loc, []byte{')', '{'})
+	out.AddCodeRaw(loc, []byte{'('})
+	out.EmitExprRaw(expr)
+	out.AddCodeRaw(loc, []byte{')', '{'})
 
 	for _, arm := range cases {
 		if arm.IsDefault {
-			out.AddCode(ast.Nowhere, []byte{'(', ')'})
+			out.AddCodeRaw(ast.Nowhere, []byte{'(', ')'})
 		} else {
-			out.AddCode(ast.Nowhere, []byte{'('})
-			out.EmitExpr(arm.Expr)
-			out.AddCode(ast.Nowhere, []byte{')'})
+			out.AddCodeRaw(ast.Nowhere, []byte{'('})
+			out.EmitExprRaw(arm.Expr)
+			out.AddCodeRaw(ast.Nowhere, []byte{')'})
 		}
 		out.AddLabelRef(arm.Label.Ident, arm.Label.Loc)
 	}
 
-	out.AddCode(ast.Nowhere, []byte{'}'})
+	out.AddCodeRaw(ast.Nowhere, []byte{'}'})
 }

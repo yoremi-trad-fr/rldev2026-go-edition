@@ -2,24 +2,27 @@
 // Transposed from OCaml's rlc/keAstParser.mly (~569 lines).
 //
 // Grammar overview (operator precedence low → high):
-//   expr1: || (LOR)
-//   expr2: && (LAND)
-//   expr3: == != (equality)
-//   expr4: < <= > >= (comparison)
-//   expr5: + - | ^ (add/bitwise)
-//   expr6: * / % & (mul/bitwise)
-//   expr7: << >> (shift)
-//   expr8: unary (- ! ~)
-//   expr9: primary (int, string, variable, funcall, parens)
+//
+//	expr1: || (LOR)
+//	expr2: && (LAND)
+//	expr3: == != (equality)
+//	expr4: < <= > >= (comparison)
+//	expr5: + - | ^ (add/bitwise)
+//	expr6: * / % & (mul/bitwise)
+//	expr7: << >> (shift)
+//	expr8: unary (- ! ~)
+//	expr9: primary (int, string, variable, funcall, parens)
 //
 // Statement types: halt, break, continue, label, return, assignment,
-//   function call, if/else, while, repeat/till, for, case/of/ecase,
-//   declarations (int/str), directives (#define/#if/#for/etc.),
-//   goto_on/goto_case, select, raw/endraw, op<...>
+//
+//	function call, if/else, while, repeat/till, for, case/of/ecase,
+//	declarations (int/str), directives (#define/#if/#for/etc.),
+//	goto_on/goto_case, select, raw/endraw, op<...>
 package parser
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
 	"github.com/yoremi/rldev-go/rlc/pkg/lexer"
@@ -93,7 +96,9 @@ func (p *Parser) ParseExpression() ast.Expr {
 func (p *Parser) parseStatements() []ast.Stmt {
 	var stmts []ast.Stmt
 	for p.cur.Type != token.EOF && p.cur.Type != token.DEOF {
-		if p.match(token.COMMA) { continue }
+		if p.match(token.COMMA) {
+			continue
+		}
 		s := p.parseStatement()
 		if s != nil {
 			stmts = append(stmts, s)
@@ -106,12 +111,20 @@ func (p *Parser) parseStatementsUntil(stops ...token.Type) []ast.Stmt {
 	var stmts []ast.Stmt
 	for {
 		for _, s := range stops {
-			if p.cur.Type == s { return stmts }
+			if p.cur.Type == s {
+				return stmts
+			}
 		}
-		if p.cur.Type == token.EOF { return stmts }
-		if p.match(token.COMMA) { continue }
+		if p.cur.Type == token.EOF {
+			return stmts
+		}
+		if p.match(token.COMMA) {
+			continue
+		}
 		s := p.parseStatement()
-		if s != nil { stmts = append(stmts, s) }
+		if s != nil {
+			stmts = append(stmts, s)
+		}
 	}
 }
 
@@ -119,13 +132,17 @@ func (p *Parser) parseStatement() ast.Stmt {
 	loc := p.loc()
 	switch p.cur.Type {
 	case token.DHALT:
-		p.advance(); return ast.HaltStmt{Loc: loc}
+		p.advance()
+		return ast.HaltStmt{Loc: loc}
 	case token.BREAK:
-		p.advance(); return ast.BreakStmt{Loc: loc}
+		p.advance()
+		return ast.BreakStmt{Loc: loc}
 	case token.CONTINUE:
-		p.advance(); return ast.ContinueStmt{Loc: loc}
+		p.advance()
+		return ast.ContinueStmt{Loc: loc}
 	case token.LABEL:
-		name := p.cur.StrVal; p.advance()
+		name := p.cur.StrVal
+		p.advance()
 		return ast.LabelStmt{Loc: loc, Label: ast.Label{Loc: loc, Ident: name}}
 	case token.RETURN:
 		p.advance()
@@ -165,7 +182,8 @@ func (p *Parser) parseStatement() ast.Stmt {
 	case token.DVERSION:
 		return p.parseDVersion()
 	case token.DLOAD:
-		p.advance(); return ast.LoadFileStmt{Loc: loc, Path: p.parseExpr()}
+		p.advance()
+		return ast.LoadFileStmt{Loc: loc, Path: p.parseExpr()}
 	case token.DINLINE:
 		return p.parseDInline()
 	case token.DHIDING:
@@ -190,23 +208,28 @@ func (p *Parser) parseStatement() ast.Stmt {
 // ============================================================
 
 func (p *Parser) parseIf() ast.Stmt {
-	loc := p.loc(); p.expect(token.IF)
+	loc := p.loc()
+	p.expect(token.IF)
 	cond := p.parseExpr()
 	then := p.parseCStatement()
 	var els ast.Stmt
-	if p.match(token.ELSE) { els = p.parseCStatement() }
+	if p.match(token.ELSE) {
+		els = p.parseCStatement()
+	}
 	return ast.IfStmt{Loc: loc, Cond: cond, Then: then, Else: els}
 }
 
 func (p *Parser) parseWhile() ast.Stmt {
-	loc := p.loc(); p.expect(token.WHILE)
+	loc := p.loc()
+	p.expect(token.WHILE)
 	cond := p.parseExpr()
 	body := p.parseCStatement()
 	return ast.WhileStmt{Loc: loc, Cond: cond, Body: body}
 }
 
 func (p *Parser) parseRepeat() ast.Stmt {
-	loc := p.loc(); p.expect(token.REPEAT)
+	loc := p.loc()
+	p.expect(token.REPEAT)
 	body := p.parseStatementsUntil(token.TILL)
 	p.expect(token.TILL)
 	cond := p.parseExpr()
@@ -214,12 +237,18 @@ func (p *Parser) parseRepeat() ast.Stmt {
 }
 
 func (p *Parser) parseFor() ast.Stmt {
-	loc := p.loc(); p.expect(token.FOR); p.expect(token.LPAR)
+	loc := p.loc()
+	p.expect(token.FOR)
+	p.expect(token.LPAR)
 	init := p.parseStatementsUntil(token.SEMI)
 	p.expect(token.SEMI)
 	cond := p.parseExpr()
 	// forsep: ; or )(
-	if p.match(token.SEMI) { /* ok */ } else { p.expect(token.RPAR); p.expect(token.LPAR) }
+	if p.match(token.SEMI) { /* ok */
+	} else {
+		p.expect(token.RPAR)
+		p.expect(token.LPAR)
+	}
 	step := p.parseStatementsUntil(token.RPAR)
 	p.expect(token.RPAR)
 	body := p.parseCStatement()
@@ -227,12 +256,15 @@ func (p *Parser) parseFor() ast.Stmt {
 }
 
 func (p *Parser) parseCase() ast.Stmt {
-	loc := p.loc(); p.expect(token.CASE)
+	loc := p.loc()
+	p.expect(token.CASE)
 	expr := p.parseExpr()
 	var arms []ast.CaseArm
 	var def []ast.Stmt
 	for p.cur.Type != token.ECASE && p.cur.Type != token.EOF {
-		if p.match(token.COMMA) { continue }
+		if p.match(token.COMMA) {
+			continue
+		}
 		if p.cur.Type == token.OF {
 			p.advance()
 			val := p.parseExpr()
@@ -250,14 +282,16 @@ func (p *Parser) parseCase() ast.Stmt {
 }
 
 func (p *Parser) parseBlock() ast.Stmt {
-	loc := p.loc(); p.expect(token.COLON)
+	loc := p.loc()
+	p.expect(token.COLON)
 	stmts := p.parseStatementsUntil(token.SEMI)
 	p.expect(token.SEMI)
 	return ast.BlockStmt{Loc: loc, Stmts: stmts}
 }
 
 func (p *Parser) parseRaw() ast.Stmt {
-	loc := p.loc(); p.expect(token.RAW)
+	loc := p.loc()
+	p.expect(token.RAW)
 	var elts []ast.RawElt
 	for p.cur.Type != token.ENDRAW && p.cur.Type != token.EOF {
 		switch p.cur.Type {
@@ -271,19 +305,26 @@ func (p *Parser) parseRaw() ast.Stmt {
 			elts = append(elts, ast.RawElt{Kind: "bytes", Str: fmt.Sprintf("$%c", rune(p.cur.IntVal))})
 			p.advance()
 		case token.COMMA:
-			elts = append(elts, ast.RawElt{Kind: "bytes", Str: ","}); p.advance()
+			elts = append(elts, ast.RawElt{Kind: "bytes", Str: ","})
+			p.advance()
 		case token.LPAR:
-			elts = append(elts, ast.RawElt{Kind: "bytes", Str: "("}); p.advance()
+			elts = append(elts, ast.RawElt{Kind: "bytes", Str: "("})
+			p.advance()
 		case token.RPAR:
-			elts = append(elts, ast.RawElt{Kind: "bytes", Str: ")"}); p.advance()
+			elts = append(elts, ast.RawElt{Kind: "bytes", Str: ")"})
+			p.advance()
 		case token.LCUR:
-			elts = append(elts, ast.RawElt{Kind: "bytes", Str: "{"}); p.advance()
+			elts = append(elts, ast.RawElt{Kind: "bytes", Str: "{"})
+			p.advance()
 		case token.RCUR:
-			elts = append(elts, ast.RawElt{Kind: "bytes", Str: "}"}); p.advance()
+			elts = append(elts, ast.RawElt{Kind: "bytes", Str: "}"})
+			p.advance()
 		case token.LSQU:
-			elts = append(elts, ast.RawElt{Kind: "bytes", Str: "["}); p.advance()
+			elts = append(elts, ast.RawElt{Kind: "bytes", Str: "["})
+			p.advance()
 		case token.RSQU:
-			elts = append(elts, ast.RawElt{Kind: "bytes", Str: "]"}); p.advance()
+			elts = append(elts, ast.RawElt{Kind: "bytes", Str: "]"})
+			p.advance()
 		default:
 			p.advance()
 		}
@@ -303,7 +344,8 @@ func (p *Parser) parseCStatement() ast.Stmt {
 // ============================================================
 
 func (p *Parser) parseDIf() ast.Stmt {
-	loc := p.loc(); p.advance() // skip #if / #ifdef / #ifndef
+	loc := p.loc()
+	p.advance() // skip #if / #ifdef / #ifndef
 	cond := p.parseExpr()
 	body := p.parseStatementsUntil(token.DELSE, token.DELSEIF, token.DENDIF)
 	var cont ast.DIfCont
@@ -322,11 +364,13 @@ func (p *Parser) parseDIf() ast.Stmt {
 }
 
 func (p *Parser) parseDFor() ast.Stmt {
-	loc := p.loc(); p.expect(token.DFOR)
+	loc := p.loc()
+	p.expect(token.DFOR)
 	name := p.expect(token.IDENT).StrVal
 	p.expect(token.SET)
 	from := p.parseExpr()
-	p.expect(token.POINT); p.expect(token.POINT)
+	p.expect(token.POINT)
+	p.expect(token.POINT)
 	to := p.parseExpr()
 	body := p.parseCStatement()
 	return ast.DForStmt{Loc: loc, Ident: name, From: from, To: to, Body: body}
@@ -336,8 +380,11 @@ func (p *Parser) parseDefine() ast.Stmt {
 	loc := p.loc()
 	kind := p.cur.StrVal // "define", "sdefine", "const", "bind", "ebind", "redefine"
 	p.advance()
-	if p.cur.Type != token.IDENT { return nil }
-	name := p.cur.StrVal; p.advance()
+	if p.cur.Type != token.IDENT {
+		return nil
+	}
+	name := p.cur.StrVal
+	p.advance()
 	var val ast.Expr
 	if p.match(token.SET) {
 		val = p.parseExpr()
@@ -359,17 +406,20 @@ func (p *Parser) parseDefine() ast.Stmt {
 }
 
 func (p *Parser) parseUndef() ast.Stmt {
-	loc := p.loc(); p.expect(token.DUNDEF)
+	loc := p.loc()
+	p.expect(token.DUNDEF)
 	var names []string
 	for p.cur.Type == token.IDENT {
-		names = append(names, p.cur.StrVal); p.advance()
+		names = append(names, p.cur.StrVal)
+		p.advance()
 		p.match(token.COMMA)
 	}
 	return ast.DUndefStmt{Loc: loc, Idents: names}
 }
 
 func (p *Parser) parseDSet() ast.Stmt {
-	loc := p.loc(); p.expect(token.DSET)
+	loc := p.loc()
+	p.expect(token.DSET)
 	name := p.expect(token.IDENT).StrVal
 	op := p.parseAssignOp()
 	val := p.parseExpr()
@@ -379,19 +429,22 @@ func (p *Parser) parseDSet() ast.Stmt {
 
 func (p *Parser) parseDWithExpr() ast.Stmt {
 	loc := p.loc()
-	name := p.cur.StrVal; p.advance()
+	name := p.cur.StrVal
+	p.advance()
 	val := p.parseExpr()
 	return ast.DirectiveStmt{Loc: loc, Name: name, Value: val}
 }
 
 func (p *Parser) parseDTarget() ast.Stmt {
-	loc := p.loc(); p.expect(token.DTARGET)
+	loc := p.loc()
+	p.expect(token.DTARGET)
 	name := p.expect(token.IDENT).StrVal
 	return ast.DTargetStmt{Loc: loc, Target: name}
 }
 
 func (p *Parser) parseDVersion() ast.Stmt {
-	loc := p.loc(); p.expect(token.DVERSION)
+	loc := p.loc()
+	p.expect(token.DVERSION)
 	a := p.parseExpr()
 	zero := ast.IntLit{Loc: loc, Val: 0}
 	b, c, d := ast.Expr(zero), ast.Expr(zero), ast.Expr(zero)
@@ -408,7 +461,8 @@ func (p *Parser) parseDVersion() ast.Stmt {
 }
 
 func (p *Parser) parseDInline() ast.Stmt {
-	loc := p.loc(); p.expect(token.DINLINE)
+	loc := p.loc()
+	p.expect(token.DINLINE)
 	name := p.expect(token.IDENT).StrVal
 	p.expect(token.LPAR)
 	var params []ast.InlineParam
@@ -419,9 +473,12 @@ func (p *Parser) parseDInline() ast.Stmt {
 			p.expect(token.RSQU)
 			params = append(params, ast.InlineParam{Loc: p.loc(), Ident: pname, Optional: true})
 		} else if p.cur.Type == token.IDENT {
-			pname := p.cur.StrVal; p.advance()
+			pname := p.cur.StrVal
+			p.advance()
 			var def ast.Expr
-			if p.match(token.SET) { def = p.parseExpr() }
+			if p.match(token.SET) {
+				def = p.parseExpr()
+			}
 			params = append(params, ast.InlineParam{Loc: p.loc(), Ident: pname, Default: def})
 		}
 		p.match(token.COMMA)
@@ -432,7 +489,8 @@ func (p *Parser) parseDInline() ast.Stmt {
 }
 
 func (p *Parser) parseDHiding() ast.Stmt {
-	loc := p.loc(); p.expect(token.DHIDING)
+	loc := p.loc()
+	p.expect(token.DHIDING)
 	name := p.expect(token.IDENT).StrVal
 	body := p.parseCStatement()
 	return ast.HidingStmt{Loc: loc, Ident: name, Body: body}
@@ -444,7 +502,8 @@ func (p *Parser) parseDHiding() ast.Stmt {
 
 func (p *Parser) parseGotoOn() ast.Stmt {
 	loc := p.loc()
-	ident := p.cur.StrVal; p.advance()
+	ident := p.cur.StrVal
+	p.advance()
 	expr := p.parseExpr()
 	p.expect(token.LCUR)
 	var labels []ast.Label
@@ -461,14 +520,16 @@ func (p *Parser) parseGotoOn() ast.Stmt {
 
 func (p *Parser) parseGotoCase() ast.Stmt {
 	loc := p.loc()
-	ident := p.cur.StrVal; p.advance()
+	ident := p.cur.StrVal
+	p.advance()
 	expr := p.parseExpr()
 	p.expect(token.LCUR)
 	var cases []ast.GotoCaseArm
 	for p.cur.Type != token.RCUR && p.cur.Type != token.EOF {
 		if p.cur.Type == token.USCORE {
 			// default: _: @label
-			p.advance(); p.expect(token.COLON)
+			p.advance()
+			p.expect(token.COLON)
 			lbl := p.expect(token.LABEL)
 			cases = append(cases, ast.GotoCaseArm{IsDefault: true, Label: ast.Label{Loc: p.loc(), Ident: lbl.StrVal}})
 		} else {
@@ -501,7 +562,9 @@ func (p *Parser) parseSelect() ast.Stmt {
 
 func (p *Parser) parseSelParamList() []ast.SelParam {
 	var params []ast.SelParam
-	if p.cur.Type == token.RPAR { return params }
+	if p.cur.Type == token.RPAR {
+		return params
+	}
 	params = append(params, p.parseSelParam())
 	for p.match(token.COMMA) {
 		params = append(params, p.parseSelParam())
@@ -527,15 +590,18 @@ func (p *Parser) parseSelParam() ast.SelParam {
 // ============================================================
 
 func (p *Parser) parseUnknownOp() ast.Stmt {
-	loc := p.loc(); p.expect(token.OP)
+	loc := p.loc()
+	p.expect(token.OP)
 	p.expect(token.LTN)
 	opType := int(p.expect(token.INTEGER).IntVal)
 	p.parseSep()
 	opModule := 0
 	if p.cur.Type == token.INTEGER {
-		opModule = int(p.cur.IntVal); p.advance()
+		opModule = int(p.cur.IntVal)
+		p.advance()
 	} else if p.cur.Type == token.IDENT {
-		_ = p.cur.StrVal; p.advance() // module name lookup would go here
+		_ = p.cur.StrVal
+		p.advance() // module name lookup would go here
 	}
 	p.parseSep()
 	opCode := int(p.expect(token.INTEGER).IntVal)
@@ -565,9 +631,11 @@ func (p *Parser) parseDecl() ast.Stmt {
 	loc := p.loc()
 	var dt ast.DeclType
 	if p.cur.Type == token.STR {
-		dt.IsStr = true; p.advance()
+		dt.IsStr = true
+		p.advance()
 	} else {
-		dt.BitWidth = int(p.cur.IntVal); p.advance()
+		dt.BitWidth = int(p.cur.IntVal)
+		p.advance()
 	}
 	// Optional decldirs: (zero, block, ext, labelled)
 	var dirs []ast.DeclDir
@@ -575,10 +643,14 @@ func (p *Parser) parseDecl() ast.Stmt {
 		for p.cur.Type != token.RPAR && p.cur.Type != token.EOF {
 			if p.cur.Type == token.IDENT {
 				switch p.cur.StrVal {
-				case "zero": dirs = append(dirs, ast.DirZero)
-				case "block": dirs = append(dirs, ast.DirBlock)
-				case "ext": dirs = append(dirs, ast.DirExt)
-				case "labelled", "labeled": dirs = append(dirs, ast.DirLabel)
+				case "zero":
+					dirs = append(dirs, ast.DirZero)
+				case "block":
+					dirs = append(dirs, ast.DirBlock)
+				case "ext":
+					dirs = append(dirs, ast.DirExt)
+				case "labelled", "labeled":
+					dirs = append(dirs, ast.DirLabel)
 				}
 				p.advance()
 			}
@@ -663,17 +735,28 @@ func (p *Parser) parseExprOrAssign() ast.Stmt {
 func (p *Parser) parseAssignOp() ast.AssignOp {
 	var op ast.AssignOp
 	switch p.cur.Type {
-	case token.SET:  op = ast.AssignSet
-	case token.SADD: op = ast.AssignAdd
-	case token.SSUB: op = ast.AssignSub
-	case token.SMUL: op = ast.AssignMul
-	case token.SDIV: op = ast.AssignDiv
-	case token.SMOD: op = ast.AssignMod
-	case token.SAND: op = ast.AssignAnd
-	case token.SOR:  op = ast.AssignOr
-	case token.SXOR: op = ast.AssignXor
-	case token.SSHL: op = ast.AssignShl
-	case token.SSHR: op = ast.AssignShr
+	case token.SET:
+		op = ast.AssignSet
+	case token.SADD:
+		op = ast.AssignAdd
+	case token.SSUB:
+		op = ast.AssignSub
+	case token.SMUL:
+		op = ast.AssignMul
+	case token.SDIV:
+		op = ast.AssignDiv
+	case token.SMOD:
+		op = ast.AssignMod
+	case token.SAND:
+		op = ast.AssignAnd
+	case token.SOR:
+		op = ast.AssignOr
+	case token.SXOR:
+		op = ast.AssignXor
+	case token.SSHL:
+		op = ast.AssignShl
+	case token.SSHR:
+		op = ast.AssignShr
 	}
 	p.advance()
 	return op
@@ -691,7 +774,9 @@ func (p *Parser) parseExpr() ast.Expr { return p.parseExprOr() }
 // token stream (to disambiguate it from a complex tuple `(a, b, c)`)
 // and the surrounding context might still extend that expression with
 // binary or comparison operators — e.g.
-//   goto_unless ((cond1) || (cond2)) @label
+//
+//	goto_unless ((cond1) || (cond2)) @label
+//
 // where the outer `||` must attach to the freshly built ParenExpr.
 func (p *Parser) continueExprFrom(atom ast.Expr) ast.Expr {
 	return p.contOr(p.contAnd(p.contEq(p.contCmp(p.contAdd(p.contMul(p.contShift(atom)))))))
@@ -819,7 +904,8 @@ func (p *Parser) contOr(lhs ast.Expr) ast.Expr {
 func (p *Parser) parseExprOr() ast.Expr {
 	lhs := p.parseExprAnd()
 	for p.cur.Type == token.LOR {
-		loc := p.loc(); p.advance()
+		loc := p.loc()
+		p.advance()
 		rhs := p.parseExprAnd()
 		lhs = ast.ChainExpr{Loc: loc, LHS: lhs, Op: ast.ChainOr, RHS: rhs}
 	}
@@ -830,7 +916,8 @@ func (p *Parser) parseExprOr() ast.Expr {
 func (p *Parser) parseExprAnd() ast.Expr {
 	lhs := p.parseExprEq()
 	for p.cur.Type == token.LAND {
-		loc := p.loc(); p.advance()
+		loc := p.loc()
+		p.advance()
 		rhs := p.parseExprEq()
 		lhs = ast.ChainExpr{Loc: loc, LHS: lhs, Op: ast.ChainAnd, RHS: rhs}
 	}
@@ -843,9 +930,14 @@ func (p *Parser) parseExprEq() ast.Expr {
 	for {
 		loc := p.loc()
 		switch p.cur.Type {
-		case token.EQU: p.advance(); lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpEqu, RHS: p.parseExprCmp()}
-		case token.NEQ: p.advance(); lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpNeq, RHS: p.parseExprCmp()}
-		default: return lhs
+		case token.EQU:
+			p.advance()
+			lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpEqu, RHS: p.parseExprCmp()}
+		case token.NEQ:
+			p.advance()
+			lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpNeq, RHS: p.parseExprCmp()}
+		default:
+			return lhs
 		}
 	}
 }
@@ -856,11 +948,20 @@ func (p *Parser) parseExprCmp() ast.Expr {
 	for {
 		loc := p.loc()
 		switch p.cur.Type {
-		case token.LTN: p.advance(); lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpLtn, RHS: p.parseExprAdd()}
-		case token.LTE: p.advance(); lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpLte, RHS: p.parseExprAdd()}
-		case token.GTN: p.advance(); lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpGtn, RHS: p.parseExprAdd()}
-		case token.GTE: p.advance(); lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpGte, RHS: p.parseExprAdd()}
-		default: return lhs
+		case token.LTN:
+			p.advance()
+			lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpLtn, RHS: p.parseExprAdd()}
+		case token.LTE:
+			p.advance()
+			lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpLte, RHS: p.parseExprAdd()}
+		case token.GTN:
+			p.advance()
+			lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpGtn, RHS: p.parseExprAdd()}
+		case token.GTE:
+			p.advance()
+			lhs = ast.CmpExpr{Loc: loc, LHS: lhs, Op: ast.CmpGte, RHS: p.parseExprAdd()}
+		default:
+			return lhs
 		}
 	}
 }
@@ -871,11 +972,20 @@ func (p *Parser) parseExprAdd() ast.Expr {
 	for {
 		loc := p.loc()
 		switch p.cur.Type {
-		case token.ADD: p.advance(); lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpAdd, RHS: p.parseExprMul()}
-		case token.SUB: p.advance(); lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpSub, RHS: p.parseExprMul()}
-		case token.OR:  p.advance(); lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpOr,  RHS: p.parseExprMul()}
-		case token.XOR: p.advance(); lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpXor, RHS: p.parseExprMul()}
-		default: return lhs
+		case token.ADD:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpAdd, RHS: p.parseExprMul()}
+		case token.SUB:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpSub, RHS: p.parseExprMul()}
+		case token.OR:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpOr, RHS: p.parseExprMul()}
+		case token.XOR:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpXor, RHS: p.parseExprMul()}
+		default:
+			return lhs
 		}
 	}
 }
@@ -886,11 +996,20 @@ func (p *Parser) parseExprMul() ast.Expr {
 	for {
 		loc := p.loc()
 		switch p.cur.Type {
-		case token.MUL: p.advance(); lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpMul, RHS: p.parseExprShift()}
-		case token.DIV: p.advance(); lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpDiv, RHS: p.parseExprShift()}
-		case token.MOD: p.advance(); lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpMod, RHS: p.parseExprShift()}
-		case token.AND: p.advance(); lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpAnd, RHS: p.parseExprShift()}
-		default: return lhs
+		case token.MUL:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpMul, RHS: p.parseExprShift()}
+		case token.DIV:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpDiv, RHS: p.parseExprShift()}
+		case token.MOD:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpMod, RHS: p.parseExprShift()}
+		case token.AND:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpAnd, RHS: p.parseExprShift()}
+		default:
+			return lhs
 		}
 	}
 }
@@ -901,9 +1020,14 @@ func (p *Parser) parseExprShift() ast.Expr {
 	for {
 		loc := p.loc()
 		switch p.cur.Type {
-		case token.SHL: p.advance(); lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpShl, RHS: p.parseUnary()}
-		case token.SHR: p.advance(); lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpShr, RHS: p.parseUnary()}
-		default: return lhs
+		case token.SHL:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpShl, RHS: p.parseUnary()}
+		case token.SHR:
+			p.advance()
+			lhs = ast.BinOp{Loc: loc, LHS: lhs, Op: ast.OpShr, RHS: p.parseUnary()}
+		default:
+			return lhs
 		}
 	}
 }
@@ -912,9 +1036,15 @@ func (p *Parser) parseExprShift() ast.Expr {
 func (p *Parser) parseUnary() ast.Expr {
 	loc := p.loc()
 	switch p.cur.Type {
-	case token.SUB:   p.advance(); return ast.UnaryExpr{Loc: loc, Op: ast.UnarySub, Val: p.parseUnary()}
-	case token.NOT:   p.advance(); return ast.UnaryExpr{Loc: loc, Op: ast.UnaryNot, Val: p.parseUnary()}
-	case token.TILDE: p.advance(); return ast.UnaryExpr{Loc: loc, Op: ast.UnaryInv, Val: p.parseUnary()}
+	case token.SUB:
+		p.advance()
+		return ast.UnaryExpr{Loc: loc, Op: ast.UnarySub, Val: p.parseUnary()}
+	case token.NOT:
+		p.advance()
+		return ast.UnaryExpr{Loc: loc, Op: ast.UnaryNot, Val: p.parseUnary()}
+	case token.TILDE:
+		p.advance()
+		return ast.UnaryExpr{Loc: loc, Op: ast.UnaryInv, Val: p.parseUnary()}
 	}
 	return p.parsePrimary()
 }
@@ -924,31 +1054,49 @@ func (p *Parser) parsePrimary() ast.Expr {
 	loc := p.loc()
 	switch p.cur.Type {
 	case token.INTEGER:
-		v := p.cur.IntVal; p.advance()
+		v := p.cur.IntVal
+		p.advance()
 		return ast.IntLit{Loc: loc, Val: v}
 	case token.STRING:
-		s := p.cur.StrVal; p.advance()
+		s := p.cur.StrVal
+		p.advance()
 		return ast.StrLit{Loc: loc, Tokens: []ast.StrToken{ast.TextToken{Loc: loc, Text: s}}}
 	case token.DRES:
-		key := p.cur.StrVal; p.advance()
+		key := p.cur.StrVal
+		p.advance()
 		return ast.ResRef{Loc: loc, Key: key}
 	case token.REG:
 		p.advance()
 		return ast.StoreRef{Loc: loc}
 	case token.VAR:
-		bank := int(p.cur.IntVal); p.advance()
+		bank := int(p.cur.IntVal)
+		p.advance()
 		p.expect(token.LSQU)
 		idx := p.parseExpr()
 		p.expect(token.RSQU)
 		return ast.IntVar{Loc: loc, Bank: bank, Index: idx}
 	case token.SVAR:
-		bank := int(p.cur.IntVal); p.advance()
+		bank := int(p.cur.IntVal)
+		p.advance()
 		p.expect(token.LSQU)
 		idx := p.parseExpr()
 		p.expect(token.RSQU)
 		return ast.StrVar{Loc: loc, Bank: bank, Index: idx}
 	case token.IDENT:
-		name := p.cur.StrVal; p.advance()
+		name := p.cur.StrVal
+		p.advance()
+		if strings.HasPrefix(name, "\\") {
+			if p.cur.Type == token.LCUR {
+				p.advance()
+				params := p.parseBraceParamList()
+				p.expect(token.RCUR)
+				return ast.FuncCall{Loc: loc, Ident: name, Params: params}
+			}
+			if p.cur.Type == token.LPAR {
+				return p.parseFuncCall(loc, name)
+			}
+			return ast.FuncCall{Loc: loc, Ident: name}
+		}
 		if p.cur.Type == token.LPAR {
 			return p.parseFuncCall(loc, name)
 		}
@@ -986,7 +1134,8 @@ func (p *Parser) parsePrimary() ast.Expr {
 		}
 		return ast.VarOrFunc{Loc: loc, Ident: name}
 	case token.GOTO:
-		name := p.cur.StrVal; p.advance()
+		name := p.cur.StrVal
+		p.advance()
 		var params []ast.Param
 		if p.cur.Type == token.LPAR {
 			p.advance()
@@ -996,7 +1145,8 @@ func (p *Parser) parsePrimary() ast.Expr {
 		var label *ast.Label
 		if p.cur.Type == token.LABEL {
 			lbl := ast.Label{Loc: p.loc(), Ident: p.cur.StrVal}
-			label = &lbl; p.advance()
+			label = &lbl
+			p.advance()
 		}
 		return ast.FuncCall{Loc: loc, Ident: name, Params: params, Label: label}
 	case token.LPAR:
@@ -1031,7 +1181,8 @@ func (p *Parser) parseFuncCall(loc ast.Loc, name string) ast.Expr {
 	var label *ast.Label
 	if p.cur.Type == token.LABEL && isGotoLike(name) {
 		lbl := ast.Label{Loc: p.loc(), Ident: p.cur.StrVal}
-		label = &lbl; p.advance()
+		label = &lbl
+		p.advance()
 	}
 	return ast.FuncCall{Loc: loc, Ident: name, Params: params, Label: label}
 }
@@ -1050,7 +1201,9 @@ func isGotoLike(name string) bool {
 
 func (p *Parser) parseParamList() []ast.Param {
 	var params []ast.Param
-	if p.cur.Type == token.RPAR { return params }
+	if p.cur.Type == token.RPAR {
+		return params
+	}
 	// Empty-slot tolerance — see comment below. Applies to the leading
 	// position too: `(, expr)` after the lexer has skipped a stripped
 	// /* nested:N bytes */ commented out by the disassembler.
@@ -1069,6 +1222,26 @@ func (p *Parser) parseParamList() []ast.Param {
 		// like InitExFrames whose nested-complex parameters aren't
 		// yet round-trippable through our toolchain.
 		if p.cur.Type == token.RPAR || p.cur.Type == token.COMMA {
+			params = append(params, ast.SimpleParam{Loc: p.loc(), Expr: ast.IntLit{Loc: p.loc(), Val: 0}})
+			continue
+		}
+		params = append(params, p.parseParam())
+	}
+	return params
+}
+
+func (p *Parser) parseBraceParamList() []ast.Param {
+	var params []ast.Param
+	if p.cur.Type == token.RCUR {
+		return params
+	}
+	if p.cur.Type == token.COMMA {
+		params = append(params, ast.SimpleParam{Loc: p.loc(), Expr: ast.IntLit{Loc: p.loc(), Val: 0}})
+	} else {
+		params = append(params, p.parseParam())
+	}
+	for p.match(token.COMMA) {
+		if p.cur.Type == token.RCUR || p.cur.Type == token.COMMA {
 			params = append(params, ast.SimpleParam{Loc: p.loc(), Expr: ast.IntLit{Loc: p.loc(), Val: 0}})
 			continue
 		}

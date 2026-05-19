@@ -3,7 +3,8 @@
 // Transposed from OCaml's rlc/compilerFrame.ml (1315 lines).
 //
 // This is the top-level driver tying together all backend packages:
-//   lexer/parser → AST → compilerframe → codegen → .seen bytecode
+//
+//	lexer/parser → AST → compilerframe → codegen → .seen bytecode
 //
 // Entry points:
 //   - New(reg, ini)    — create a fully-wired compiler
@@ -15,6 +16,7 @@ package compilerframe
 
 import (
 	"fmt"
+	"strings"
 
 	"golang.org/x/text/encoding/japanese"
 	"golang.org/x/text/transform"
@@ -63,7 +65,7 @@ func New(reg *kfn.Registry, iniTable *ini.Table) *Compiler {
 	c := &Compiler{
 		Mem: mem, Out: out, Norm: norm,
 		Intrin: intrinsic.New(mem),
-		Reg: reg, Ini: iniTable, State: state,
+		Reg:    reg, Ini: iniTable, State: state,
 	}
 	c.Directive = &directive.Compiler{
 		Mem: mem, Norm: norm, Output: out,
@@ -195,7 +197,7 @@ func (c *Compiler) compileTextStub(ret ast.ReturnStmt) {
 		} else {
 			// Non-string non-res expression → just emit as-is
 			c.Out.AddKidoku(ret.Loc, ret.Loc.Line)
-			c.Out.EmitExpr(ret.Expr)
+			c.Out.EmitExprRaw(ret.Expr)
 			return
 		}
 	}
@@ -701,8 +703,15 @@ func (c *Compiler) compileAssign(s ast.AssignStmt) {
 }
 
 func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
-	if c.Intrin.IsBuiltin(s.Ident) {
-		result, err := c.Intrin.EvalAsExpr(s.Ident, s.Loc, s.Params)
+	ident := s.Ident
+	ctrlCode := false
+	if strings.HasPrefix(ident, "\\") {
+		ctrlCode = true
+		ident = strings.TrimPrefix(ident, "\\")
+	}
+
+	if !ctrlCode && c.Intrin.IsBuiltin(ident) {
+		result, err := c.Intrin.EvalAsExpr(ident, s.Loc, s.Params)
 		if err != nil {
 			c.error(s.Loc, err.Error())
 			return
@@ -715,7 +724,7 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 	}
 
 	// Regular function: lookup + overload + emit via opcode + params
-	fd, err := fn.LookupFuncDef(c.Reg, s.Ident, s.Params, false)
+	fd, err := fn.LookupFuncDef(c.Reg, ident, s.Params, ctrlCode)
 	if err != nil {
 		c.error(s.Loc, err.Error())
 		return
@@ -781,7 +790,7 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 	// leaves the window in an undefined state and ends up on a black
 	// screen.
 	if len(emitParams) > 0 {
-		c.Out.AddCode(s.Loc, []byte{'('})
+		c.Out.AddCodeRaw(s.Loc, []byte{'('})
 		// Track whether the previous emitted parameter was a string
 		// literal. OCaml funcAsm.ml L82-89 (`Literal`) inserts an ASCII
 		// `,` between two consecutive string args, because string args
@@ -797,28 +806,28 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 			case ast.SimpleParam:
 				isString := isStringExpr(pp.Expr)
 				if prevWasString && isString {
-					c.Out.AddCode(s.Loc, []byte{','})
+					c.Out.AddCodeRaw(s.Loc, []byte{','})
 				}
-				c.Out.EmitExpr(pp.Expr)
+				c.Out.EmitExprRaw(pp.Expr)
 				prevWasString = isString
 			case ast.ComplexParam:
-				c.Out.AddCode(s.Loc, []byte{'('})
+				c.Out.AddCodeRaw(s.Loc, []byte{'('})
 				for _, e := range pp.Exprs {
-					c.Out.EmitExpr(e)
+					c.Out.EmitExprRaw(e)
 				}
-				c.Out.AddCode(s.Loc, []byte{')'})
+				c.Out.AddCodeRaw(s.Loc, []byte{')'})
 				prevWasString = false
 			case ast.SpecialParam:
 				// 0x61 tag ( exprs ) — OCaml special_arg / __special.
-				c.Out.AddCode(s.Loc, []byte{0x61, byte(pp.Tag), '('})
+				c.Out.AddCodeRaw(s.Loc, []byte{0x61, byte(pp.Tag), '('})
 				for _, e := range pp.Exprs {
-					c.Out.EmitExpr(e)
+					c.Out.EmitExprRaw(e)
 				}
-				c.Out.AddCode(s.Loc, []byte{')'})
+				c.Out.AddCodeRaw(s.Loc, []byte{')'})
 				prevWasString = false
 			}
 		}
-		c.Out.AddCode(s.Loc, []byte{')'})
+		c.Out.AddCodeRaw(s.Loc, []byte{')'})
 	}
 
 	// Emit label reference if present
@@ -831,8 +840,8 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 		if _, isStore := s.Dest.(ast.StoreRef); !isStore {
 			if fd.HasFlag(kfn.FlagPushStore) {
 				// Simulate: dest \= store
-				c.Out.EmitExpr(s.Dest)
-				c.Out.AddCode(s.Loc, []byte{'\\', 0x1e, '$', 0xc8})
+				c.Out.EmitExprRaw(s.Dest)
+				c.Out.AddCodeRaw(s.Loc, []byte{'\\', 0x1e, '$', 0xc8})
 			}
 		}
 	}
@@ -1080,9 +1089,9 @@ func (c *Compiler) compileIf(s ast.IfStmt) {
 
 // compileCase handles case/switch statements. (OCaml L925-1066)
 // Tries:
-//   1. Compile-time case selection (constant expression → pick matching arm)
-//   2. goto_on (consecutive integer cases → efficient jump table)
-//   3. goto_case (general fallback)
+//  1. Compile-time case selection (constant expression → pick matching arm)
+//  2. goto_on (consecutive integer cases → efficient jump table)
+//  3. goto_case (general fallback)
 func (c *Compiler) compileCase(s ast.CaseStmt) {
 	skip := c.State.UniqueLabel(s.Loc)
 	c.breakStack = append(c.breakStack, skip.Ident)
@@ -1307,7 +1316,6 @@ func (c *Compiler) warning(loc ast.Loc, msg string) {
 	diag.Warning(diag.Loc{File: loc.File, Line: loc.Line}, "%s", msg)
 }
 
-
 // uncountParamSet builds the set of parameter indices whose KFN
 // prototype carries the FUncount (`<`) flag, given a chosen overload
 // for a function definition. Returns a boolean slice of length nParams
@@ -1351,21 +1359,53 @@ func normalizeCondParam(p ast.Param) ast.Param {
 }
 
 // liftNot recursively rewrites `!e` as `e == 0` so the binary compare
-// can be emitted by EmitExpr. Recurses into ParenExpr so the surface
-// form `(!e)` is also handled.
+// can be emitted by EmitExpr. RealLive has no unary-not bytecode, and
+// the disassembler can emit shapes like `!intA[3] == 218`; leaving the
+// nested UnaryNot in place drops the left operand and corrupts the
+// following opcode stream.
 func liftNot(e ast.Expr) ast.Expr {
+	return liftNotInExpr(e, false)
+}
+
+func liftNotInExpr(e ast.Expr, nested bool) ast.Expr {
 	switch x := e.(type) {
 	case ast.UnaryExpr:
 		if x.Op == ast.UnaryNot {
-			return ast.CmpExpr{
+			cmp := ast.CmpExpr{
 				Loc: x.Loc,
-				LHS: liftNot(x.Val),
+				LHS: liftNotInExpr(x.Val, false),
 				Op:  ast.CmpEqu,
 				RHS: ast.IntLit{Loc: x.Loc, Val: 0},
 			}
+			if nested {
+				return ast.ParenExpr{Loc: x.Loc, Expr: cmp}
+			}
+			return cmp
 		}
+		return ast.UnaryExpr{Loc: x.Loc, Op: x.Op, Val: liftNotInExpr(x.Val, true)}
 	case ast.ParenExpr:
-		return ast.ParenExpr{Loc: x.Loc, Expr: liftNot(x.Expr)}
+		return ast.ParenExpr{Loc: x.Loc, Expr: liftNotInExpr(x.Expr, false)}
+	case ast.CmpExpr:
+		return ast.CmpExpr{
+			Loc: x.Loc,
+			LHS: liftNotInExpr(x.LHS, true),
+			Op:  x.Op,
+			RHS: liftNotInExpr(x.RHS, true),
+		}
+	case ast.ChainExpr:
+		return ast.ChainExpr{
+			Loc: x.Loc,
+			LHS: liftNotInExpr(x.LHS, true),
+			Op:  x.Op,
+			RHS: liftNotInExpr(x.RHS, true),
+		}
+	case ast.BinOp:
+		return ast.BinOp{
+			Loc: x.Loc,
+			LHS: liftNotInExpr(x.LHS, true),
+			Op:  x.Op,
+			RHS: liftNotInExpr(x.RHS, true),
+		}
 	}
 	return e
 }

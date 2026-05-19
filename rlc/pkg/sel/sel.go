@@ -15,11 +15,13 @@
 //   - Special: a conditional parameter with effects (colour, title, hide, etc.)
 //
 // Conditional effects use single-char op codes:
-//   '0' = colour, '1' = title/grey, '2' = hide, '3' = blank, '4' = cursor
+//
+//	'0' = colour, '1' = title/grey, '2' = hide, '3' = blank, '4' = cursor
 //
 // Bytecode layout:
-//   opcode(window_expr){ param1 param2 ... }
-//   where each param can have conditions: (cond_expr)op_char(normal_param)
+//
+//	opcode(window_expr){ param1 param2 ... }
+//	where each param can have conditions: (cond_expr)op_char(normal_param)
 package sel
 
 import (
@@ -36,11 +38,16 @@ import (
 // EffectOp maps a condition effect name to its bytecode character.
 func EffectOp(name string) (byte, error) {
 	switch name {
-	case "colour":         return '0', nil
-	case "title", "grey":  return '1', nil
-	case "hide":           return '2', nil
-	case "blank":          return '3', nil
-	case "cursor":         return '4', nil
+	case "colour":
+		return '0', nil
+	case "title", "grey":
+		return '1', nil
+	case "hide":
+		return '2', nil
+	case "blank":
+		return '3', nil
+	case "cursor":
+		return '4', nil
 	}
 	return 0, fmt.Errorf("unknown effect '%s' in select condition", name)
 }
@@ -54,7 +61,7 @@ type SelParamKind int
 
 const (
 	SelAlways  SelParamKind = iota // always displayed
-	SelSpecial                      // conditional display
+	SelSpecial                     // conditional display
 )
 
 // CondKind distinguishes condition types within a Special parameter.
@@ -112,13 +119,13 @@ func EmitSelect(out *codegen.Output, loc ast.Loc, opcode int, window ast.Expr, d
 		if opcode == 13 {
 			return fmt.Errorf("select window specifiers are not valid for opcode %d", opcode)
 		}
-		out.AddCode(ast.Nowhere, []byte{'('})
-		out.EmitExpr(window)
-		out.AddCode(ast.Nowhere, []byte{')'})
+		out.AddCodeRaw(ast.Nowhere, []byte{'('})
+		out.EmitExprRaw(window)
+		out.AddCodeRaw(ast.Nowhere, []byte{')'})
 	}
 
 	// Open parameter block
-	out.AddCode(ast.Nowhere, []byte{'{'})
+	out.AddCodeRaw(ast.Nowhere, []byte{'{'})
 
 	// Emit each parameter
 	for _, p := range params {
@@ -132,7 +139,7 @@ func EmitSelect(out *codegen.Output, loc ast.Loc, opcode int, window ast.Expr, d
 				emitParamExpr(out, p.Loc, p.Expr)
 			} else {
 				// Emit conditions block
-				out.AddCode(ast.Nowhere, []byte{'('})
+				out.AddCodeRaw(ast.Nowhere, []byte{'('})
 				for _, c := range p.Conds {
 					op, err := EffectOp(c.Effect)
 					if err != nil {
@@ -140,20 +147,20 @@ func EmitSelect(out *codegen.Output, loc ast.Loc, opcode int, window ast.Expr, d
 					}
 					switch c.Kind {
 					case CondFlag:
-						out.AddCode(ast.Nowhere, []byte{op})
+						out.AddCodeRaw(ast.Nowhere, []byte{op})
 					case CondNonCond:
-						out.AddCode(ast.Nowhere, []byte{op})
-						out.EmitExpr(c.Expr)
+						out.AddCodeRaw(ast.Nowhere, []byte{op})
+						out.EmitExprRaw(c.Expr)
 					case CondCond:
-						out.AddCode(ast.Nowhere, []byte{'('})
-						out.EmitExpr(c.Cond)
-						out.AddCode(ast.Nowhere, []byte{')', op})
+						out.AddCodeRaw(ast.Nowhere, []byte{'('})
+						out.EmitExprRaw(c.Cond)
+						out.AddCodeRaw(ast.Nowhere, []byte{')', op})
 						if c.Expr != nil {
-							out.EmitExpr(c.Expr)
+							out.EmitExprRaw(c.Expr)
 						}
 					}
 				}
-				out.AddCode(ast.Nowhere, []byte{')'})
+				out.AddCodeRaw(ast.Nowhere, []byte{')'})
 				// Emit the display expression
 				emitParamExpr(out, p.Loc, p.Expr)
 			}
@@ -161,12 +168,12 @@ func EmitSelect(out *codegen.Output, loc ast.Loc, opcode int, window ast.Expr, d
 	}
 
 	// Close parameter block
-	out.AddCode(ast.Nowhere, []byte{'}'})
+	out.AddCodeRaw(ast.Nowhere, []byte{'}'})
 
 	// If dest is not Store, emit assignment: dest \= store
 	if _, isStore := dest.(ast.StoreRef); !isStore {
-		out.EmitExpr(dest)
-		out.AddCode(loc, []byte{'\\', 0x1e, '$', 0xc8}) // \= $store
+		out.EmitExprRaw(dest)
+		out.AddCodeRaw(loc, []byte{'\\', 0x1e, '$', 0xc8}) // \= $store
 	}
 
 	return nil
@@ -176,7 +183,7 @@ func EmitSelect(out *codegen.Output, loc ast.Loc, opcode int, window ast.Expr, d
 // For now this emits the raw expression; the full compiler would
 // also handle literal strings with ###PRINT wrapping.
 func emitParamExpr(out *codegen.Output, loc ast.Loc, e ast.Expr) {
-	out.EmitExpr(e)
+	out.EmitSelectParamExpr(loc, e)
 }
 
 // ============================================================

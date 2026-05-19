@@ -49,7 +49,10 @@ func TestLexPunctuation(t *testing.T) {
 }
 
 func TestLexDecimalNumbers(t *testing.T) {
-	tests := []struct{ src string; val int32 }{
+	tests := []struct {
+		src string
+		val int32
+	}{
 		{"0", 0}, {"42", 42}, {"1_000", 1000}, {"255", 255},
 	}
 	for _, tt := range tests {
@@ -62,7 +65,10 @@ func TestLexDecimalNumbers(t *testing.T) {
 }
 
 func TestLexHexNumbers(t *testing.T) {
-	tests := []struct{ src string; val int32 }{
+	tests := []struct {
+		src string
+		val int32
+	}{
 		{"$ff", 255}, {"$FF", 255}, {"$1a", 26}, {"$0", 0},
 		{"0xff", 255}, {"0xFF", 255},
 	}
@@ -91,7 +97,10 @@ func TestLexBinaryOctal(t *testing.T) {
 }
 
 func TestLexKeywords(t *testing.T) {
-	tests := []struct{ src string; typ token.Type }{
+	tests := []struct {
+		src string
+		typ token.Type
+	}{
 		{"if", token.IF}, {"else", token.ELSE}, {"while", token.WHILE},
 		{"for", token.FOR}, {"case", token.CASE}, {"of", token.OF},
 		{"other", token.OTHER}, {"ecase", token.ECASE},
@@ -111,7 +120,10 @@ func TestLexKeywords(t *testing.T) {
 }
 
 func TestLexTypeKeywords(t *testing.T) {
-	tests := []struct{ src string; width int32 }{
+	tests := []struct {
+		src   string
+		width int32
+	}{
 		{"int", 32}, {"str", 0}, {"bit", 1}, {"bit2", 2}, {"bit4", 4}, {"byte", 8},
 	}
 	for _, tt := range tests {
@@ -130,7 +142,10 @@ func TestLexTypeKeywords(t *testing.T) {
 }
 
 func TestLexDirectives(t *testing.T) {
-	tests := []struct{ src string; typ token.Type }{
+	tests := []struct {
+		src string
+		typ token.Type
+	}{
 		{"#define", token.DDEFINE}, {"#sdefine", token.DDEFINE},
 		{"#undef", token.DUNDEF}, {"#set", token.DSET},
 		{"#const", token.DDEFINE}, {"#bind", token.DDEFINE},
@@ -164,7 +179,11 @@ func TestLexDWithExpr(t *testing.T) {
 }
 
 func TestLexVariables(t *testing.T) {
-	tests := []struct{ src string; typ token.Type; bank int32 }{
+	tests := []struct {
+		src  string
+		typ  token.Type
+		bank int32
+	}{
 		{"intA", token.VAR, 0x00}, {"intB", token.VAR, 0x01},
 		{"intZ", token.VAR, 0x19}, {"intL", token.VAR, 0x0b},
 		{"strK", token.SVAR, 0x0a}, {"strM", token.SVAR, 0x0c}, {"strS", token.SVAR, 0x12},
@@ -181,7 +200,11 @@ func TestLexVariables(t *testing.T) {
 }
 
 func TestLexGotoSelect(t *testing.T) {
-	tests := []struct{ src string; typ token.Type; val int32 }{
+	tests := []struct {
+		src string
+		typ token.Type
+		val int32
+	}{
 		{"goto_on", token.GO_LIST, 0},
 		{"gosub_on", token.GO_LIST, 0},
 		{"goto_case", token.GO_CASE, 0},
@@ -227,30 +250,66 @@ func TestLexLabels(t *testing.T) {
 	}
 }
 
+func TestLexTopLevelControlCode(t *testing.T) {
+	l := New(`\wait{3000} \p`, "test")
+
+	tok := l.Next()
+	if tok.Type != token.IDENT || tok.StrVal != `\wait` {
+		t.Fatalf("control ident: got %s %q, want IDENT \\\\wait", tok.Type, tok.StrVal)
+	}
+	if tok := l.Next(); tok.Type != token.LCUR {
+		t.Fatalf("open brace: got %s, want LCUR", tok.Type)
+	}
+	if tok := l.Next(); tok.Type != token.INTEGER || tok.IntVal != 3000 {
+		t.Fatalf("param: got %s %d, want INTEGER 3000", tok.Type, tok.IntVal)
+	}
+	if tok := l.Next(); tok.Type != token.RCUR {
+		t.Fatalf("close brace: got %s, want RCUR", tok.Type)
+	}
+	tok = l.Next()
+	if tok.Type != token.IDENT || tok.StrVal != `\p` {
+		t.Fatalf("no-brace control ident: got %s %q, want IDENT \\\\p", tok.Type, tok.StrVal)
+	}
+}
+
 func TestLexComments(t *testing.T) {
 	// Line comment
 	l := New("42 // comment\n43", "test")
 	tok1 := l.Next()
-	if tok1.IntVal != 42 { t.Errorf("before comment: got %d", tok1.IntVal) }
+	if tok1.IntVal != 42 {
+		t.Errorf("before comment: got %d", tok1.IntVal)
+	}
 	tok2 := l.Next()
-	if tok2.IntVal != 43 { t.Errorf("after comment: got %d", tok2.IntVal) }
+	if tok2.IntVal != 43 {
+		t.Errorf("after comment: got %d", tok2.IntVal)
+	}
 
 	// Block comment
 	l = New("10 {- block comment -} 20", "test")
 	tok1 = l.Next()
-	if tok1.IntVal != 10 { t.Errorf("before block: got %d", tok1.IntVal) }
+	if tok1.IntVal != 10 {
+		t.Errorf("before block: got %d", tok1.IntVal)
+	}
 	tok2 = l.Next()
-	if tok2.IntVal != 20 { t.Errorf("after block: got %d", tok2.IntVal) }
+	if tok2.IntVal != 20 {
+		t.Errorf("after block: got %d", tok2.IntVal)
+	}
 }
 
 func TestLexLineTracking(t *testing.T) {
 	l := New("a\nb\nc", "test")
 	tok1 := l.Next()
-	if tok1.Line != 1 { t.Errorf("line 1: got %d", tok1.Line) }
+	if tok1.Line != 1 {
+		t.Errorf("line 1: got %d", tok1.Line)
+	}
 	tok2 := l.Next()
-	if tok2.Line != 2 { t.Errorf("line 2: got %d", tok2.Line) }
+	if tok2.Line != 2 {
+		t.Errorf("line 2: got %d", tok2.Line)
+	}
 	tok3 := l.Next()
-	if tok3.Line != 3 { t.Errorf("line 3: got %d", tok3.Line) }
+	if tok3.Line != 3 {
+		t.Errorf("line 3: got %d", tok3.Line)
+	}
 }
 
 func TestLexMagicConstants(t *testing.T) {
@@ -290,7 +349,9 @@ halt`
 	count := 0
 	for {
 		tok := l.Next()
-		if tok.Type == token.EOF { break }
+		if tok.Type == token.EOF {
+			break
+		}
 		count++
 	}
 	if count < 15 {
@@ -301,12 +362,20 @@ halt`
 func TestLexPeekBackup(t *testing.T) {
 	l := New("1 2 3", "test")
 	tok1 := l.Peek()
-	if tok1.IntVal != 1 { t.Errorf("peek: got %d", tok1.IntVal) }
+	if tok1.IntVal != 1 {
+		t.Errorf("peek: got %d", tok1.IntVal)
+	}
 	tok1 = l.Next()
-	if tok1.IntVal != 1 { t.Errorf("next after peek: got %d", tok1.IntVal) }
+	if tok1.IntVal != 1 {
+		t.Errorf("next after peek: got %d", tok1.IntVal)
+	}
 	tok2 := l.Next()
-	if tok2.IntVal != 2 { t.Errorf("next 2: got %d", tok2.IntVal) }
+	if tok2.IntVal != 2 {
+		t.Errorf("next 2: got %d", tok2.IntVal)
+	}
 	l.Backup()
 	tok2b := l.Next()
-	if tok2b.IntVal != 2 { t.Errorf("backup+next: got %d", tok2b.IntVal) }
+	if tok2b.IntVal != 2 {
+		t.Errorf("backup+next: got %d", tok2b.IntVal)
+	}
 }

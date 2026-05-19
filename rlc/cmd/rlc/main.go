@@ -31,6 +31,7 @@ import (
 
 	"github.com/yoremi/rldev-go/pkg/diag"
 	"github.com/yoremi/rldev-go/pkg/encoding"
+	"github.com/yoremi/rldev-go/rlc/pkg/ast"
 	"github.com/yoremi/rldev-go/rlc/pkg/codegen"
 	"github.com/yoremi/rldev-go/rlc/pkg/compilerframe"
 	"github.com/yoremi/rldev-go/rlc/pkg/ini"
@@ -319,6 +320,29 @@ func compileFile(opts *Options, srcPath string) error {
 	}
 
 	compiler.Compile(program.Stmts)
+
+	// Append the trailing `SeenEnd` debug marker. The Python compiler
+	// (compiler_frame.py L505-510) writes this at the very end of every
+	// SEEN bytecode when debug info is enabled: the SJIS bytes for the
+	// ASCII string "SeenEnd" (each char is fullwidth in SJIS) followed
+	// by 32 bytes of 0xff padding. The RealLive engine appears to use
+	// this both as a hard end-of-program marker and as a safety pad in
+	// case the IP runs past the last valid opcode.
+	//
+	// Original Clannad SEEN bytecodes ALL end with this 46-byte trailer
+	// (verified across 242 files). Without it, the engine reads past
+	// the last opcode into garbage memory — manifesting as the game
+	// hanging at startup right after the splash, with no menu drawn.
+	// SEEN9020-9023 (which are NEARLY empty: just a kidoku marker + the
+	// SeenEnd trailer in the original) showed this perfectly: the Go
+	// build was producing 3-byte files where the original is 49 bytes.
+	if opts.DebugInfo {
+		const seenEndTrailer = "" +
+			"\x82\x72\x82\x85\x82\x85\x82\x8e\x82\x64\x82\x8e\x82\x84" +
+			"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff" +
+			"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+		compiler.Out.AddCode(ast.Loc{}, []byte(seenEndTrailer))
+	}
 
 	// Diagnostics already streamed via the diag reporter as
 	// c.warning / c.error were called; the slices are kept on the

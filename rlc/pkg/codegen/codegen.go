@@ -5,11 +5,11 @@
 //   - rlc/bytecodeGen.ml (267 lines)   — binary file generation for RealLive/AVG2000
 //
 // The codegen pipeline has two stages:
-//   1. IR construction: the compiler emits IR elements (Code, Label, LabelRef,
-//      Entrypoint, Kidoku, Lineref) into an Output buffer.
-//   2. Binary generation: Generate() traverses the IR to compute label positions,
-//      build the bytecode buffer, optionally compress, and produce the final
-//      .TXT (SEEN) file in RealLive or AVG2000 format.
+//  1. IR construction: the compiler emits IR elements (Code, Label, LabelRef,
+//     Entrypoint, Kidoku, Lineref) into an Output buffer.
+//  2. Binary generation: Generate() traverses the IR to compute label positions,
+//     build the bytecode buffer, optionally compress, and produce the final
+//     .TXT (SEEN) file in RealLive or AVG2000 format.
 //
 // Bytecode encoding (RealLive expressions):
 //   - Integers: $\xff followed by 4 LE bytes
@@ -23,12 +23,15 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"strings"
 
 	"github.com/yoremi/rldev-go/pkg/diag"
 	"github.com/yoremi/rldev-go/pkg/text"
 	"github.com/yoremi/rldev-go/pkg/texttransforms"
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
 	"github.com/yoremi/rldev-go/rlc/pkg/kfn"
+	"github.com/yoremi/rldev-go/rlc/pkg/lexer"
+	"github.com/yoremi/rldev-go/rlc/pkg/parser"
 )
 
 // ============================================================
@@ -38,16 +41,26 @@ import (
 // Bytecodes for arithmetic operators in expressions.
 func OpCode(op ast.ArithOp) byte {
 	switch op {
-	case ast.OpAdd: return 0x00
-	case ast.OpSub: return 0x01
-	case ast.OpMul: return 0x02
-	case ast.OpDiv: return 0x03
-	case ast.OpMod: return 0x04
-	case ast.OpAnd: return 0x05
-	case ast.OpOr:  return 0x06
-	case ast.OpXor: return 0x07
-	case ast.OpShl: return 0x08
-	case ast.OpShr: return 0x09
+	case ast.OpAdd:
+		return 0x00
+	case ast.OpSub:
+		return 0x01
+	case ast.OpMul:
+		return 0x02
+	case ast.OpDiv:
+		return 0x03
+	case ast.OpMod:
+		return 0x04
+	case ast.OpAnd:
+		return 0x05
+	case ast.OpOr:
+		return 0x06
+	case ast.OpXor:
+		return 0x07
+	case ast.OpShl:
+		return 0x08
+	case ast.OpShr:
+		return 0x09
 	}
 	return 0x00
 }
@@ -55,12 +68,18 @@ func OpCode(op ast.ArithOp) byte {
 // Bytecodes for comparison operators.
 func CmpCode(op ast.CmpOp) byte {
 	switch op {
-	case ast.CmpEqu: return 0x28
-	case ast.CmpNeq: return 0x29
-	case ast.CmpLte: return 0x2a
-	case ast.CmpLtn: return 0x2b
-	case ast.CmpGte: return 0x2c
-	case ast.CmpGtn: return 0x2d
+	case ast.CmpEqu:
+		return 0x28
+	case ast.CmpNeq:
+		return 0x29
+	case ast.CmpLte:
+		return 0x2a
+	case ast.CmpLtn:
+		return 0x2b
+	case ast.CmpGte:
+		return 0x2c
+	case ast.CmpGtn:
+		return 0x2d
 	}
 	return 0x28
 }
@@ -68,8 +87,10 @@ func CmpCode(op ast.CmpOp) byte {
 // Bytecodes for short-circuit logical operators.
 func ChainCode(op ast.ChainOp) byte {
 	switch op {
-	case ast.ChainAnd: return 0x3c
-	case ast.ChainOr:  return 0x3d
+	case ast.ChainAnd:
+		return 0x3c
+	case ast.ChainOr:
+		return 0x3d
 	}
 	return 0x3c
 }
@@ -77,17 +98,28 @@ func ChainCode(op ast.ChainOp) byte {
 // Bytecodes for assignment operators.
 func AssignCode(op ast.AssignOp) byte {
 	switch op {
-	case ast.AssignAdd: return 0x14
-	case ast.AssignSub: return 0x15
-	case ast.AssignMul: return 0x16
-	case ast.AssignDiv: return 0x17
-	case ast.AssignMod: return 0x18
-	case ast.AssignAnd: return 0x19
-	case ast.AssignOr:  return 0x1a
-	case ast.AssignXor: return 0x1b
-	case ast.AssignShl: return 0x1c
-	case ast.AssignShr: return 0x1d
-	case ast.AssignSet: return 0x1e
+	case ast.AssignAdd:
+		return 0x14
+	case ast.AssignSub:
+		return 0x15
+	case ast.AssignMul:
+		return 0x16
+	case ast.AssignDiv:
+		return 0x17
+	case ast.AssignMod:
+		return 0x18
+	case ast.AssignAnd:
+		return 0x19
+	case ast.AssignOr:
+		return 0x1a
+	case ast.AssignXor:
+		return 0x1b
+	case ast.AssignShl:
+		return 0x1c
+	case ast.AssignShr:
+		return 0x1d
+	case ast.AssignSet:
+		return 0x1e
 	}
 	return 0x1e
 }
@@ -147,8 +179,8 @@ type IR struct {
 
 // Output accumulates IR elements during compilation.
 type Output struct {
-	IR      []IR
-	labels  map[string]bool // tracks defined label names (for duplicate detection)
+	IR       []IR
+	labels   map[string]bool // tracks defined label names (for duplicate detection)
 	lastLine int
 
 	// ResolveRes, when non-nil, is invoked to resolve a `#res<KEY>`
@@ -169,6 +201,14 @@ func NewOutput() *Output {
 // AddCode appends raw bytecode.
 func (o *Output) AddCode(loc ast.Loc, code []byte) {
 	o.maybeLine(loc)
+	o.AddCodeRaw(loc, code)
+}
+
+// AddCodeRaw appends bytecode without injecting a source-line marker.
+// It is used while building one logical bytecode expression or function
+// argument list; OCaml emits those as a single Code chunk after one
+// maybe_line call, so line markers must not appear in the middle.
+func (o *Output) AddCodeRaw(loc ast.Loc, code []byte) {
 	o.IR = append(o.IR, IR{Type: IRCode, Bytes: code, Loc: loc})
 }
 
@@ -249,41 +289,47 @@ func (o *Output) encodeText(loc ast.Loc, s string) ([]byte, error) {
 }
 
 func (o *Output) EmitExpr(e ast.Expr) {
+	o.maybeLine(exprLoc(e))
+	o.EmitExprRaw(e)
+}
+
+// EmitExprRaw emits an expression without inserting line markers inside it.
+func (o *Output) EmitExprRaw(e ast.Expr) {
 	switch x := e.(type) {
 	case ast.IntLit:
-		o.AddCode(x.Loc, EncodeInt32(x.Val))
+		o.AddCodeRaw(x.Loc, EncodeInt32(x.Val))
 	case ast.StoreRef:
-		o.AddCode(x.Loc, []byte{'$', 0xc8})
+		o.AddCodeRaw(x.Loc, []byte{'$', 0xc8})
 	case ast.IntVar:
-		o.AddCode(x.Loc, []byte{'$', byte(x.Bank), '['})
-		o.EmitExpr(x.Index)
-		o.AddCode(x.Loc, []byte{']'})
+		o.AddCodeRaw(x.Loc, []byte{'$', byte(x.Bank), '['})
+		o.EmitExprRaw(x.Index)
+		o.AddCodeRaw(x.Loc, []byte{']'})
 	case ast.StrVar:
-		o.AddCode(x.Loc, []byte{'$', byte(x.Bank), '['})
-		o.EmitExpr(x.Index)
-		o.AddCode(x.Loc, []byte{']'})
+		o.AddCodeRaw(x.Loc, []byte{'$', byte(x.Bank), '['})
+		o.EmitExprRaw(x.Index)
+		o.AddCodeRaw(x.Loc, []byte{']'})
 	case ast.BinOp:
-		o.EmitExpr(x.LHS)
-		o.AddCode(x.Loc, []byte{'\\', OpCode(x.Op)})
-		o.EmitExpr(x.RHS)
+		o.EmitExprRaw(x.LHS)
+		o.AddCodeRaw(x.Loc, []byte{'\\', OpCode(x.Op)})
+		o.EmitExprRaw(x.RHS)
 	case ast.CmpExpr:
-		o.EmitExpr(x.LHS)
-		o.AddCode(x.Loc, []byte{'\\', CmpCode(x.Op)})
-		o.EmitExpr(x.RHS)
+		o.EmitExprRaw(x.LHS)
+		o.AddCodeRaw(x.Loc, []byte{'\\', CmpCode(x.Op)})
+		o.EmitExprRaw(x.RHS)
 	case ast.ChainExpr:
-		o.EmitExpr(x.LHS)
-		o.AddCode(x.Loc, []byte{'\\', ChainCode(x.Op)})
-		o.EmitExpr(x.RHS)
+		o.EmitExprRaw(x.LHS)
+		o.AddCodeRaw(x.Loc, []byte{'\\', ChainCode(x.Op)})
+		o.EmitExprRaw(x.RHS)
 	case ast.UnaryExpr:
 		if x.Op == ast.UnarySub {
-			o.AddCode(x.Loc, []byte{'\\', OpCode(ast.OpSub)})
-			o.EmitExpr(x.Val)
+			o.AddCodeRaw(x.Loc, []byte{'\\', OpCode(ast.OpSub)})
+			o.EmitExprRaw(x.Val)
 		}
 		// Other unary ops should have been transformed to binary by expr normalization
 	case ast.ParenExpr:
-		o.AddCode(x.Loc, []byte{'('})
-		o.EmitExpr(x.Expr)
-		o.AddCode(x.Loc, []byte{')'})
+		o.AddCodeRaw(x.Loc, []byte{'('})
+		o.EmitExprRaw(x.Expr)
+		o.AddCodeRaw(x.Loc, []byte{')'})
 	case ast.StrLit:
 		// String literals are inlined in the bytecode as raw encoded
 		// bytes — there's no length prefix or terminator; the closing
@@ -294,12 +340,12 @@ func (o *Output) EmitExpr(e ast.Expr) {
 		// silently dropped, leaving the bytecode 30-40 % too short.
 		bytes, err := o.encodeStrLit(x)
 		if err == nil {
-			o.AddCode(x.Loc, bytes)
+			o.AddCodeRaw(x.Loc, bytes)
 		} else {
 			// Best-effort: emit an empty quoted pair so the param list
 			// stays balanced. Bytecode will still be wrong but the
 			// reader won't desync past this opcode.
-			o.AddCode(x.Loc, []byte{'"', '"'})
+			o.AddCodeRaw(x.Loc, []byte{'"', '"'})
 		}
 	case ast.ResRef:
 		// #res<KEY> is a deferred reference to a string defined in the
@@ -318,13 +364,141 @@ func (o *Output) EmitExpr(e ast.Expr) {
 			if t, ok := o.ResolveRes(x.Key); ok {
 				b, err := o.encodeResourceText(x.Loc, t)
 				if err == nil {
-					o.AddCode(x.Loc, b)
+					o.AddCodeRaw(x.Loc, b)
 					break
 				}
 			}
 		}
-		o.AddCode(x.Loc, []byte{'"', '"'})
+		o.AddCodeRaw(x.Loc, []byte{'"', '"'})
 	}
+}
+
+// EmitSelectParamExpr emits one select option payload. Select literal
+// parameters are not regular function string arguments: embedded
+// variable markers such as `\s{strS[1011]}` must become
+// `###PRINT($strS[...])` inside the select block, matching OCaml
+// select.ml handle_parameter.
+func (o *Output) EmitSelectParamExpr(loc ast.Loc, e ast.Expr) {
+	switch x := e.(type) {
+	case ast.ResRef:
+		if o.ResolveRes != nil {
+			if raw, ok := o.ResolveRes(x.Key); ok {
+				o.emitSelectText(x.Loc, raw)
+				return
+			}
+		}
+	case ast.StrLit:
+		if raw, ok := strLitPlainText(x); ok {
+			o.emitSelectText(x.Loc, raw)
+			return
+		}
+	}
+
+	o.AddCodeRaw(loc, []byte("###PRINT("))
+	o.EmitExprRaw(e)
+	o.AddCodeRaw(loc, []byte{')'})
+}
+
+func strLitPlainText(s ast.StrLit) (string, bool) {
+	var b strings.Builder
+	for _, tok := range s.Tokens {
+		switch t := tok.(type) {
+		case ast.TextToken:
+			b.WriteString(t.Text)
+		case ast.SpaceToken:
+			b.WriteString(strings.Repeat(" ", t.Count))
+		default:
+			return "", false
+		}
+	}
+	return b.String(), true
+}
+
+func (o *Output) emitSelectText(loc ast.Loc, raw string) {
+	r := []rune(raw)
+	textStart := 0
+	quoted := false
+
+	setQuotes := func(q bool) {
+		if quoted != q {
+			quoted = q
+			o.AddCodeRaw(loc, []byte{'"'})
+		}
+	}
+
+	flushText := func(end int) {
+		if end <= textStart {
+			return
+		}
+		chunk := string(r[textStart:end])
+		b, err := o.encodeText(loc, chunk)
+		if err != nil {
+			return
+		}
+		if hasUnsafeUnquotedByte(b) {
+			setQuotes(true)
+		}
+		o.AddCodeRaw(loc, b)
+	}
+
+	for i := 0; i < len(r); {
+		if r[i] == '\\' && i+2 < len(r) && r[i+2] == '{' && (r[i+1] == 's' || r[i+1] == 'i') {
+			end := i + 3
+			for end < len(r) && r[end] != '}' {
+				end++
+			}
+			if end < len(r) {
+				flushText(i)
+				setQuotes(false)
+				exprText := strings.TrimSpace(string(r[i+3 : end]))
+				o.AddCodeRaw(loc, []byte("###PRINT("))
+				o.EmitExprRaw(parseInlineExpr(loc, exprText))
+				o.AddCodeRaw(loc, []byte{')'})
+				i = end + 1
+				textStart = i
+				continue
+			}
+		}
+		i++
+	}
+	flushText(len(r))
+	setQuotes(false)
+}
+
+func parseInlineExpr(loc ast.Loc, src string) ast.Expr {
+	l := lexer.New(src, loc.File)
+	p := parser.New(l)
+	return p.ParseExpression()
+}
+
+func exprLoc(e ast.Expr) ast.Loc {
+	switch x := e.(type) {
+	case ast.IntLit:
+		return x.Loc
+	case ast.StoreRef:
+		return x.Loc
+	case ast.IntVar:
+		return x.Loc
+	case ast.StrVar:
+		return x.Loc
+	case ast.BinOp:
+		return x.Loc
+	case ast.CmpExpr:
+		return x.Loc
+	case ast.ChainExpr:
+		return x.Loc
+	case ast.UnaryExpr:
+		return x.Loc
+	case ast.ParenExpr:
+		return x.Loc
+	case ast.StrLit:
+		return x.Loc
+	case ast.ResRef:
+		return x.Loc
+	case ast.FuncCall:
+		return x.Loc
+	}
+	return ast.Nowhere
 }
 
 // encodeResourceText tokenises a resolved resource string and emits the
@@ -339,11 +513,11 @@ func (o *Output) EmitExpr(e ast.Expr) {
 //
 // Examples (Clannad bytecode):
 //
-//   `title (#res<0000>)`  where res = "渚・後日"
-//     →  ( SJIS-bytes )      no quotes
+//	`title (#res<0000>)`  where res = "渚・後日"
+//	  →  ( SJIS-bytes )      no quotes
 //
-//   `SetLocalName(0, #res<0001>)` where res = "\{美佐枝}「お…」"
-//     →  ( "" 81 79 " SJIS " 81 7a " 81 75 SJIS 81 76 " )
+//	`SetLocalName(0, #res<0001>)` where res = "\{美佐枝}「お…」"
+//	  →  ( "" 81 79 " SJIS " 81 7a " 81 75 SJIS 81 76 " )
 //
 // The previous implementation called setQuotes(true) at the start,
 // producing `( "SJIS" )` for the simple case — the engine sees an
@@ -640,6 +814,7 @@ func parseNameToken(r []rune, start int) (rtToken, int, bool) {
 // safe fallback.
 func (o *Output) encodeStrLit(s ast.StrLit) ([]byte, error) {
 	var buf []byte
+	needsQuotes := false
 	for _, tok := range s.Tokens {
 		switch t := tok.(type) {
 		case ast.TextToken:
@@ -647,8 +822,12 @@ func (o *Output) encodeStrLit(s ast.StrLit) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
+			if hasUnsafeUnquotedByte(b) {
+				needsQuotes = true
+			}
 			buf = append(buf, b...)
 		case ast.SpaceToken:
+			needsQuotes = true
 			for i := 0; i < t.Count; i++ {
 				buf = append(buf, ' ')
 			}
@@ -661,10 +840,13 @@ func (o *Output) encodeStrLit(s ast.StrLit) ([]byte, error) {
 		case ast.PercentToken:
 			buf = append(buf, 0x81, 0x93)
 		case ast.HyphenToken:
+			needsQuotes = true
 			buf = append(buf, '-')
 		case ast.RCurToken:
+			needsQuotes = true
 			buf = append(buf, '}')
 		case ast.DQuoteToken:
+			needsQuotes = true
 			buf = append(buf, '"')
 		case ast.ResRefToken:
 			// Resolve and inline the resource text with full marker
@@ -686,14 +868,48 @@ func (o *Output) encodeStrLit(s ast.StrLit) ([]byte, error) {
 			return nil, fmt.Errorf("unsupported string token %T", tok)
 		}
 	}
+	if len(buf) == 0 {
+		return []byte{'"', '"'}, nil
+	}
+	if needsQuotes {
+		quoted := make([]byte, 0, len(buf)+2)
+		quoted = append(quoted, '"')
+		quoted = append(quoted, buf...)
+		quoted = append(quoted, '"')
+		return quoted, nil
+	}
 	return buf, nil
+}
+
+func hasUnsafeUnquotedByte(b []byte) bool {
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if c >= 0x80 {
+			if i+1 < len(b) {
+				i++
+			}
+			continue
+		}
+		if c >= 'A' && c <= 'Z' {
+			continue
+		}
+		if c >= '0' && c <= '9' {
+			continue
+		}
+		if c == '_' || c == '?' {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // EmitAssignment encodes an assignment and appends it.
 func (o *Output) EmitAssignment(loc ast.Loc, dest ast.Expr, op ast.AssignOp, expr ast.Expr) {
-	o.EmitExpr(dest)
-	o.AddCode(loc, []byte{'\\', AssignCode(op)})
-	o.EmitExpr(expr)
+	o.maybeLine(loc)
+	o.EmitExprRaw(dest)
+	o.AddCodeRaw(loc, []byte{'\\', AssignCode(op)})
+	o.EmitExprRaw(expr)
 }
 
 // EmitOpcode encodes and appends an opcode header.
@@ -708,12 +924,12 @@ func (o *Output) EmitOpcode(loc ast.Loc, opType, opModule, opCode, argc, overloa
 // GenerateOptions controls output file generation.
 type GenerateOptions struct {
 	Target          kfn.Target
-	CompilerVersion int    // e.g., 10002
+	CompilerVersion int // e.g., 10002
 	Compress        bool
 	DebugInfo       bool
 	Metadata        []byte // optional metadata bytes
 	Version         kfn.Version
-	KidokuType      int    // 0=auto, 1=@, 2=!
+	KidokuType      int // 0=auto, 1=@, 2=!
 
 	// DramatisPersonae is the list of #character names collected during
 	// directive processing. When DebugInfo is true and Target is
@@ -926,15 +1142,15 @@ func buildRealLive(bytecode []byte, bytecodeLen, compressedLen int, entrypoints 
 	// a bloated and broken SEEN.TXT that the engine refuses to load.
 	copy(file[0x00:], []byte("KPRL"))
 	putInt32(file, 0x04, opts.CompilerVersion)
-	putInt32(file, 0x08, 0x1d0)         // kidoku table offset
+	putInt32(file, 0x08, 0x1d0)            // kidoku table offset
 	putInt32(file, 0x0c, len(kidokuTable)) // kidoku count
-	putInt32(file, 0x10, kidokuBytes)     // kidoku table size
-	putInt32(file, 0x14, dramOff)         // dramatis offset
-	putInt32(file, 0x18, dramatisCount)   // dramatis count (0 if !debug_info)
-	putInt32(file, 0x1c, dramatisSize)    // dramatis table size in bytes
-	putInt32(file, 0x20, bcOff)           // bytecode offset
-	putInt32(file, 0x24, bytecodeLen)     // bytecode length
-	putInt32(file, 0x28, compressedLen)   // compressed length
+	putInt32(file, 0x10, kidokuBytes)      // kidoku table size
+	putInt32(file, 0x14, dramOff)          // dramatis offset
+	putInt32(file, 0x18, dramatisCount)    // dramatis count (0 if !debug_info)
+	putInt32(file, 0x1c, dramatisSize)     // dramatis table size in bytes
+	putInt32(file, 0x20, bcOff)            // bytecode offset
+	putInt32(file, 0x24, bytecodeLen)      // bytecode length
+	putInt32(file, 0x28, compressedLen)    // compressed length
 	// val_0x2c (#Z-1) defaults to 0; 0x30 (#Z-2) = val_0x2c + 3.
 	// OCaml bytecodeGen.ml L54-55. Although the engine itself doesn't
 	// check these fields, OCaml output sets them and certain tools may.

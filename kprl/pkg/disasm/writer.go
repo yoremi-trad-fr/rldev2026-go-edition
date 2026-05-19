@@ -73,6 +73,22 @@ func (w *Writer) convertText(sjisText string) string {
 	return utf8Str
 }
 
+// convertHeaderText converts stored header strings without interpreting
+// textout-only RealLive name markers. Character names in the SEEN header are
+// literal display strings, so bytes like 81 96 82 61 must remain ＊Ｂ instead
+// of becoming \m{B}.
+func (w *Writer) convertHeaderText(sjisText string) string {
+	enc := strings.ToUpper(w.opts.Encoding)
+	if enc == "" || enc == "CP932" || enc == "SHIFT-JIS" || enc == "SJIS" || enc == "SHIFT_JIS" || enc == "SHIFTJIS" {
+		return sjisText
+	}
+	utf8Str, err := encoding.SJSToUTF8([]byte(sjisText))
+	if err != nil {
+		return sjisText
+	}
+	return utf8Str
+}
+
 // decodeNameMarkers replaces each RealLive name-marker byte sequence in s
 // by its kepago text form (\l{...} or \m{...}). Reference: kprl OCaml
 // disassembler.ml L1534-1555.
@@ -229,7 +245,7 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 
 	// Write dramatis personae
 	for _, name := range result.Header.DramatisPersonae {
-		fmt.Fprintf(resOut, "#character '%s'\n", w.convertText(name))
+		fmt.Fprintf(resOut, "#character '%s'\n", w.convertHeaderText(name))
 	}
 	if resFile != srcFile && len(result.Header.DramatisPersonae) > 0 {
 		fmt.Fprintln(resOut)

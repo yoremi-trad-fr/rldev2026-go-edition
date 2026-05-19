@@ -15,42 +15,68 @@ func newComp() *Compiler {
 
 func TestNew(t *testing.T) {
 	c := newComp()
-	if c.Mem == nil { t.Error("Mem") }
-	if c.Out == nil { t.Error("Out") }
-	if c.Norm == nil { t.Error("Norm") }
-	if c.Directive == nil { t.Error("Directive") }
-	if c.Intrin == nil { t.Error("Intrin") }
-	if c.Reg == nil { t.Error("Reg") }
-	if c.Ini == nil { t.Error("Ini") }
-	if c.State == nil { t.Error("State") }
+	if c.Mem == nil {
+		t.Error("Mem")
+	}
+	if c.Out == nil {
+		t.Error("Out")
+	}
+	if c.Norm == nil {
+		t.Error("Norm")
+	}
+	if c.Directive == nil {
+		t.Error("Directive")
+	}
+	if c.Intrin == nil {
+		t.Error("Intrin")
+	}
+	if c.Reg == nil {
+		t.Error("Reg")
+	}
+	if c.Ini == nil {
+		t.Error("Ini")
+	}
+	if c.State == nil {
+		t.Error("State")
+	}
 }
 
 func TestMetaCallbackWired(t *testing.T) {
 	c := newComp()
 	// meta.State.CompileStatements should delegate to c.Parse
-	if c.State.CompileStatements == nil { t.Error("callback not wired") }
+	if c.State.CompileStatements == nil {
+		t.Error("callback not wired")
+	}
 	// Trigger via meta
 	c.State.ParseOne(ast.HaltStmt{})
 	// Halt should have been emitted
-	if c.Out.Length() == 0 { t.Error("halt not emitted via meta callback") }
+	if c.Out.Length() == 0 {
+		t.Error("halt not emitted via meta callback")
+	}
 }
 
 func TestParseEmpty(t *testing.T) {
 	c := newComp()
 	c.Parse(nil)
-	if c.HasErrors() { t.Error("should have no errors") }
+	if c.HasErrors() {
+		t.Error("should have no errors")
+	}
 }
 
 func TestParseHalt(t *testing.T) {
 	c := newComp()
 	c.Parse([]ast.Stmt{ast.HaltStmt{}})
-	if c.Out.Length() == 0 { t.Error("halt not emitted") }
+	if c.Out.Length() == 0 {
+		t.Error("halt not emitted")
+	}
 }
 
 func TestParseDirective(t *testing.T) {
 	c := newComp()
 	c.Parse([]ast.Stmt{ast.DefineStmt{Ident: "X", Value: ast.IntLit{Val: 42}}})
-	if !c.Mem.Defined("X") { t.Error("X not defined") }
+	if !c.Mem.Defined("X") {
+		t.Error("X not defined")
+	}
 }
 
 func TestParseTODO(t *testing.T) {
@@ -59,8 +85,12 @@ func TestParseTODO(t *testing.T) {
 	c.Parse([]ast.Stmt{ast.LoadFileStmt{Loc: ast.Loc{File: "t", Line: 1}, Path: ast.StrLit{
 		Tokens: []ast.StrToken{ast.TextToken{Text: "test.kh"}},
 	}}})
-	if c.HasErrors() { t.Error("should not have errors, only warnings") }
-	if len(c.Warnings) == 0 { t.Error("should have pending warning") }
+	if c.HasErrors() {
+		t.Error("should not have errors, only warnings")
+	}
+	if len(c.Warnings) == 0 {
+		t.Error("should have pending warning")
+	}
 }
 
 func TestCompileMergesDirectiveDiagnostics(t *testing.T) {
@@ -69,14 +99,20 @@ func TestCompileMergesDirectiveDiagnostics(t *testing.T) {
 	c.Compile([]ast.Stmt{
 		ast.DUndefStmt{Loc: ast.Loc{File: "t", Line: 1}, Idents: []string{"NOPE"}},
 	})
-	if !c.HasErrors() { t.Error("should have merged directive errors") }
+	if !c.HasErrors() {
+		t.Error("should have merged directive errors")
+	}
 }
 
 func TestHasErrors(t *testing.T) {
 	c := newComp()
-	if c.HasErrors() { t.Error("fresh compiler should have no errors") }
+	if c.HasErrors() {
+		t.Error("fresh compiler should have no errors")
+	}
 	c.error(ast.Nowhere, "test")
-	if !c.HasErrors() { t.Error("should have errors") }
+	if !c.HasErrors() {
+		t.Error("should have errors")
+	}
 }
 
 func TestRecursiveParse(t *testing.T) {
@@ -86,8 +122,12 @@ func TestRecursiveParse(t *testing.T) {
 		ast.DefineStmt{Ident: "B", Value: ast.IntLit{Val: 2}},
 		ast.HaltStmt{},
 	})
-	if !c.Mem.Defined("A") { t.Error("A") }
-	if !c.Mem.Defined("B") { t.Error("B") }
+	if !c.Mem.Defined("A") {
+		t.Error("A")
+	}
+	if !c.Mem.Defined("B") {
+		t.Error("B")
+	}
 }
 
 // --- Structure tests ---
@@ -98,7 +138,9 @@ func TestParseSeq(t *testing.T) {
 		ast.DefineStmt{Ident: "S1", Value: ast.IntLit{Val: 1}},
 		ast.HaltStmt{},
 	}})
-	if !c.Mem.Defined("S1") { t.Error("S1 not defined in seq") }
+	if !c.Mem.Defined("S1") {
+		t.Error("S1 not defined in seq")
+	}
 }
 
 func TestParseBlock(t *testing.T) {
@@ -117,7 +159,9 @@ func TestParseIfConstTrue(t *testing.T) {
 		Cond: ast.IntLit{Val: 1},
 		Then: ast.DefineStmt{Ident: "X_TRUE", Value: ast.IntLit{Val: 1}},
 	})
-	if !c.Mem.Defined("X_TRUE") { t.Error("X_TRUE should be defined (const-true branch)") }
+	if !c.Mem.Defined("X_TRUE") {
+		t.Error("X_TRUE should be defined (const-true branch)")
+	}
 }
 
 func TestParseIfConstFalse(t *testing.T) {
@@ -128,8 +172,12 @@ func TestParseIfConstFalse(t *testing.T) {
 		Then: ast.DefineStmt{Ident: "IF_THEN", Value: ast.IntLit{Val: 1}},
 		Else: ast.DefineStmt{Ident: "IF_ELSE", Value: ast.IntLit{Val: 2}},
 	})
-	if c.Mem.Defined("IF_THEN") { t.Error("IF_THEN should NOT be defined (const-false)") }
-	if !c.Mem.Defined("IF_ELSE") { t.Error("IF_ELSE should be defined (else branch)") }
+	if c.Mem.Defined("IF_THEN") {
+		t.Error("IF_THEN should NOT be defined (const-false)")
+	}
+	if !c.Mem.Defined("IF_ELSE") {
+		t.Error("IF_ELSE should be defined (else branch)")
+	}
 }
 
 func TestParseWhileConstFalse(t *testing.T) {
@@ -139,25 +187,33 @@ func TestParseWhileConstFalse(t *testing.T) {
 		Cond: ast.IntLit{Val: 0},
 		Body: ast.DefineStmt{Ident: "W_BODY", Value: ast.IntLit{Val: 1}},
 	})
-	if c.Mem.Defined("W_BODY") { t.Error("W_BODY should NOT be defined (while(0))") }
+	if c.Mem.Defined("W_BODY") {
+		t.Error("W_BODY should NOT be defined (while(0))")
+	}
 }
 
 func TestBreakOutsideLoop(t *testing.T) {
 	c := newComp()
 	c.ParseNormElt(ast.BreakStmt{Loc: ast.Loc{File: "t", Line: 1}})
-	if !c.HasErrors() { t.Error("break outside loop should error") }
+	if !c.HasErrors() {
+		t.Error("break outside loop should error")
+	}
 }
 
 func TestContinueOutsideLoop(t *testing.T) {
 	c := newComp()
 	c.ParseNormElt(ast.ContinueStmt{Loc: ast.Loc{File: "t", Line: 1}})
-	if !c.HasErrors() { t.Error("continue outside loop should error") }
+	if !c.HasErrors() {
+		t.Error("continue outside loop should error")
+	}
 }
 
 func TestLabelEmit(t *testing.T) {
 	c := newComp()
 	c.ParseNormElt(ast.LabelStmt{Label: ast.Label{Ident: "mytest"}})
-	if c.Out.Length() == 0 { t.Error("label should be emitted") }
+	if c.Out.Length() == 0 {
+		t.Error("label should be emitted")
+	}
 }
 
 func TestAssignEmit(t *testing.T) {
@@ -167,7 +223,57 @@ func TestAssignEmit(t *testing.T) {
 		Op:   ast.AssignSet,
 		Expr: ast.IntLit{Val: 42},
 	})
-	if c.Out.Length() == 0 { t.Error("assignment should be emitted") }
+	if c.Out.Length() == 0 {
+		t.Error("assignment should be emitted")
+	}
+}
+
+func TestCompileTopLevelControlCode(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "wait",
+		CCStr:    "wait",
+		OpType:   1,
+		OpModule: 0,
+		OpCode:   100,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+			Params:  []kfn.Parameter{{Type: kfn.PInt}},
+		}},
+	})
+	c.ParseNormElt(ast.FuncCallStmt{
+		Loc:   ast.Loc{File: "t", Line: 1},
+		Ident: `\wait`,
+		Params: []ast.Param{ast.SimpleParam{
+			Loc:  ast.Loc{File: "t", Line: 1},
+			Expr: ast.IntLit{Loc: ast.Loc{File: "t", Line: 1}, Val: 3000},
+		}},
+	})
+	if c.HasErrors() {
+		t.Fatalf("control code compile errors: %v", c.Errors)
+	}
+	if c.Out.Length() == 0 {
+		t.Fatal("control code should emit bytecode")
+	}
+}
+
+func TestNormalizeCondParamNestedNot(t *testing.T) {
+	loc := ast.Loc{File: "t", Line: 1}
+	param := ast.SimpleParam{Loc: loc, Expr: ast.CmpExpr{
+		Loc: loc,
+		LHS: ast.UnaryExpr{
+			Loc: loc,
+			Op:  ast.UnaryNot,
+			Val: ast.IntVar{Loc: loc, Bank: 0, Index: ast.IntLit{Loc: loc, Val: 3}},
+		},
+		Op:  ast.CmpEqu,
+		RHS: ast.IntLit{Loc: loc, Val: 218},
+	}}
+	out := normalizeCondParam(param).(ast.SimpleParam)
+	cmp := out.Expr.(ast.CmpExpr)
+	if _, ok := cmp.LHS.(ast.ParenExpr); !ok {
+		t.Fatalf("nested ! should be parenthesized after lowering, got %T", cmp.LHS)
+	}
 }
 
 // --- Compile-time structures ---
@@ -179,7 +285,9 @@ func TestDIfTrue(t *testing.T) {
 		Body: []ast.Stmt{ast.DefineStmt{Ident: "DIF_T", Value: ast.IntLit{Val: 1}}},
 		Cont: ast.DEndifStmt{},
 	})
-	if !c.Mem.Defined("DIF_T") { t.Error("DIF_T should be defined (#if true)") }
+	if !c.Mem.Defined("DIF_T") {
+		t.Error("DIF_T should be defined (#if true)")
+	}
 }
 
 func TestDIfFalse(t *testing.T) {
@@ -189,7 +297,9 @@ func TestDIfFalse(t *testing.T) {
 		Body: []ast.Stmt{ast.DefineStmt{Ident: "DIF_SKIP", Value: ast.IntLit{Val: 1}}},
 		Cont: ast.DEndifStmt{},
 	})
-	if c.Mem.Defined("DIF_SKIP") { t.Error("DIF_SKIP should NOT be defined (#if false)") }
+	if c.Mem.Defined("DIF_SKIP") {
+		t.Error("DIF_SKIP should NOT be defined (#if false)")
+	}
 }
 
 func TestDIfElse(t *testing.T) {
@@ -201,8 +311,12 @@ func TestDIfElse(t *testing.T) {
 			Body: []ast.Stmt{ast.DefineStmt{Ident: "ELSE_HIT", Value: ast.IntLit{Val: 2}}},
 		},
 	})
-	if c.Mem.Defined("SKIP") { t.Error("SKIP should not be defined") }
-	if !c.Mem.Defined("ELSE_HIT") { t.Error("ELSE_HIT should be defined (#else)") }
+	if c.Mem.Defined("SKIP") {
+		t.Error("SKIP should not be defined")
+	}
+	if !c.Mem.Defined("ELSE_HIT") {
+		t.Error("ELSE_HIT should be defined (#else)")
+	}
 }
 
 func TestDFor(t *testing.T) {
@@ -215,7 +329,9 @@ func TestDFor(t *testing.T) {
 		Body:  ast.HaltStmt{},
 	})
 	// Should have emitted 3 halt instructions
-	if c.Out.Length() < 3 { t.Errorf("expected 3 halts, IR length: %d", c.Out.Length()) }
+	if c.Out.Length() < 3 {
+		t.Errorf("expected 3 halts, IR length: %d", c.Out.Length())
+	}
 }
 
 func TestDForReverse(t *testing.T) {
@@ -227,7 +343,9 @@ func TestDForReverse(t *testing.T) {
 		Body:  ast.HaltStmt{},
 	})
 	// 5,4,3 = 3 iterations
-	if c.Out.Length() < 3 { t.Errorf("expected 3 halts (reverse), IR length: %d", c.Out.Length()) }
+	if c.Out.Length() < 3 {
+		t.Errorf("expected 3 halts (reverse), IR length: %d", c.Out.Length())
+	}
 }
 
 func TestHiding(t *testing.T) {
@@ -238,7 +356,9 @@ func TestHiding(t *testing.T) {
 		Body:  ast.HaltStmt{},
 	})
 	// __INLINE_CALL__ should be undefined after hiding completes
-	if c.Mem.Defined("__INLINE_CALL__") { t.Error("__INLINE_CALL__ should be cleaned up") }
+	if c.Mem.Defined("__INLINE_CALL__") {
+		t.Error("__INLINE_CALL__ should be cleaned up")
+	}
 }
 
 func TestCaseDegenerate(t *testing.T) {
@@ -249,7 +369,9 @@ func TestCaseDegenerate(t *testing.T) {
 		Arms:    nil,
 		Default: []ast.Stmt{ast.HaltStmt{}},
 	})
-	if c.HasErrors() { t.Errorf("degenerate case should not error: %v", c.Errors) }
+	if c.HasErrors() {
+		t.Errorf("degenerate case should not error: %v", c.Errors)
+	}
 }
 
 func TestRawCodeBytes(t *testing.T) {
@@ -259,7 +381,9 @@ func TestRawCodeBytes(t *testing.T) {
 			{Kind: "bytes", Str: "\x01\x02\x03"},
 		},
 	})
-	if c.Out.Length() == 0 { t.Error("raw bytes should be emitted") }
+	if c.Out.Length() == 0 {
+		t.Error("raw bytes should be emitted")
+	}
 }
 
 func TestRawCodeHex(t *testing.T) {
@@ -269,9 +393,10 @@ func TestRawCodeHex(t *testing.T) {
 			{Kind: "ident", Str: "#FF00"},
 		},
 	})
-	if c.HasErrors() { t.Errorf("hex raw should not error: %v", c.Errors) }
+	if c.HasErrors() {
+		t.Errorf("hex raw should not error: %v", c.Errors)
+	}
 }
-
 
 // ============================================================
 // Text compilation tests
@@ -286,8 +411,12 @@ func TestTextStubASCII(t *testing.T) {
 		}},
 	})
 	// Should emit kidoku + quoted text
-	if c.Out.Length() == 0 { t.Error("no output") }
-	if c.HasErrors() { t.Errorf("errors: %v", c.Errors) }
+	if c.Out.Length() == 0 {
+		t.Error("no output")
+	}
+	if c.HasErrors() {
+		t.Errorf("errors: %v", c.Errors)
+	}
 }
 
 func TestTextStubDQuote(t *testing.T) {
@@ -301,7 +430,9 @@ func TestTextStubDQuote(t *testing.T) {
 			ast.DQuoteToken{},
 		}},
 	})
-	if c.HasErrors() { t.Errorf("errors: %v", c.Errors) }
+	if c.HasErrors() {
+		t.Errorf("errors: %v", c.Errors)
+	}
 }
 
 func TestTextStubSpeaker(t *testing.T) {
@@ -315,7 +446,9 @@ func TestTextStubSpeaker(t *testing.T) {
 			ast.TextToken{Text: "Hello!"},
 		}},
 	})
-	if c.HasErrors() { t.Errorf("errors: %v", c.Errors) }
+	if c.HasErrors() {
+		t.Errorf("errors: %v", c.Errors)
+	}
 }
 
 func TestTextStubSpace(t *testing.T) {
@@ -328,7 +461,9 @@ func TestTextStubSpace(t *testing.T) {
 			ast.TextToken{Text: "b"},
 		}},
 	})
-	if c.HasErrors() { t.Errorf("errors: %v", c.Errors) }
+	if c.HasErrors() {
+		t.Errorf("errors: %v", c.Errors)
+	}
 }
 
 func TestTextStubSpecialChars(t *testing.T) {
@@ -343,7 +478,9 @@ func TestTextStubSpecialChars(t *testing.T) {
 			ast.RLenticToken{},
 		}},
 	})
-	if c.HasErrors() { t.Errorf("errors: %v", c.Errors) }
+	if c.HasErrors() {
+		t.Errorf("errors: %v", c.Errors)
+	}
 }
 
 func TestTextStubEmoji(t *testing.T) {
@@ -356,7 +493,9 @@ func TestTextStubEmoji(t *testing.T) {
 			}},
 		}},
 	})
-	if c.HasErrors() { t.Errorf("errors: %v", c.Errors) }
+	if c.HasErrors() {
+		t.Errorf("errors: %v", c.Errors)
+	}
 }
 
 func TestTextStubName(t *testing.T) {
@@ -367,14 +506,18 @@ func TestTextStubName(t *testing.T) {
 			ast.NameToken{Index: ast.IntLit{Val: 3}, Global: false},
 		}},
 	})
-	if c.HasErrors() { t.Errorf("errors: %v", c.Errors) }
+	if c.HasErrors() {
+		t.Errorf("errors: %v", c.Errors)
+	}
 }
 
 func TestTextStubNilExpr(t *testing.T) {
 	c := newComp()
 	c.ParseElt(ast.ReturnStmt{Loc: ast.Loc{Line: 1}})
 	// Should do nothing
-	if c.HasErrors() { t.Errorf("errors: %v", c.Errors) }
+	if c.HasErrors() {
+		t.Errorf("errors: %v", c.Errors)
+	}
 }
 
 func TestTextStubDynLinNotDefined(t *testing.T) {
@@ -386,7 +529,9 @@ func TestTextStubDynLinNotDefined(t *testing.T) {
 			ast.TextToken{Text: "test"},
 		}},
 	})
-	if c.HasErrors() { t.Errorf("errors: %v", c.Errors) }
+	if c.HasErrors() {
+		t.Errorf("errors: %v", c.Errors)
+	}
 }
 
 func TestTextStubDynLinError(t *testing.T) {
@@ -397,5 +542,7 @@ func TestTextStubDynLinError(t *testing.T) {
 		Loc:  ast.Loc{Line: 1},
 		Expr: ast.StrLit{Tokens: []ast.StrToken{ast.TextToken{Text: "x"}}},
 	})
-	if !c.HasErrors() { t.Error("should error when dynlin=1 but no library") }
+	if !c.HasErrors() {
+		t.Error("should error when dynlin=1 but no library")
+	}
 }

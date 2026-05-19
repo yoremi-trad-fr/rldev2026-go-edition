@@ -133,10 +133,14 @@ func (l *Lexer) scan() {
 
 		// --- Three-char operators ---
 		if c == '<' && c1 == '<' && l.peek2() == '=' {
-			l.pos += 3; l.emit(token.SSHL); continue
+			l.pos += 3
+			l.emit(token.SSHL)
+			continue
 		}
 		if c == '>' && c1 == '>' && l.peek2() == '=' {
-			l.pos += 3; l.emit(token.SSHR); continue
+			l.pos += 3
+			l.emit(token.SSHR)
+			continue
 		}
 
 		// --- Two-char operators ---
@@ -166,6 +170,12 @@ func (l *Lexer) scan() {
 		// --- Labels ---
 		if c == '@' {
 			l.scanLabel()
+			continue
+		}
+
+		// --- Top-level Kepago control codes ---
+		if c == '\\' && isIdentStart(c1) {
+			l.scanControlIdent()
 			continue
 		}
 
@@ -220,23 +230,40 @@ func (l *Lexer) scan() {
 func (l *Lexer) scanTwoChar(c, c1 rune) bool {
 	var typ token.Type
 	switch {
-	case c == '+' && c1 == '=': typ = token.SADD
-	case c == '-' && c1 == '=': typ = token.SSUB
-	case c == '*' && c1 == '=': typ = token.SMUL
-	case c == '/' && c1 == '=': typ = token.SDIV
-	case c == '%' && c1 == '=': typ = token.SMOD
-	case c == '&' && c1 == '=': typ = token.SAND
-	case c == '|' && c1 == '=': typ = token.SOR
-	case c == '^' && c1 == '=': typ = token.SXOR
-	case c == '-' && c1 == '>': typ = token.ARROW
-	case c == '<' && c1 == '<': typ = token.SHL
-	case c == '>' && c1 == '>': typ = token.SHR
-	case c == '=' && c1 == '=': typ = token.EQU
-	case c == '!' && c1 == '=': typ = token.NEQ
-	case c == '<' && c1 == '=': typ = token.LTE
-	case c == '>' && c1 == '=': typ = token.GTE
-	case c == '&' && c1 == '&': typ = token.LAND
-	case c == '|' && c1 == '|': typ = token.LOR
+	case c == '+' && c1 == '=':
+		typ = token.SADD
+	case c == '-' && c1 == '=':
+		typ = token.SSUB
+	case c == '*' && c1 == '=':
+		typ = token.SMUL
+	case c == '/' && c1 == '=':
+		typ = token.SDIV
+	case c == '%' && c1 == '=':
+		typ = token.SMOD
+	case c == '&' && c1 == '=':
+		typ = token.SAND
+	case c == '|' && c1 == '=':
+		typ = token.SOR
+	case c == '^' && c1 == '=':
+		typ = token.SXOR
+	case c == '-' && c1 == '>':
+		typ = token.ARROW
+	case c == '<' && c1 == '<':
+		typ = token.SHL
+	case c == '>' && c1 == '>':
+		typ = token.SHR
+	case c == '=' && c1 == '=':
+		typ = token.EQU
+	case c == '!' && c1 == '=':
+		typ = token.NEQ
+	case c == '<' && c1 == '=':
+		typ = token.LTE
+	case c == '>' && c1 == '=':
+		typ = token.GTE
+	case c == '&' && c1 == '&':
+		typ = token.LAND
+	case c == '|' && c1 == '|':
+		typ = token.LOR
 	default:
 		return false
 	}
@@ -250,29 +277,52 @@ func (l *Lexer) scanTwoChar(c, c1 rune) bool {
 func (l *Lexer) scanOneChar(c rune) bool {
 	var typ token.Type
 	switch c {
-	case '(': typ = token.LPAR
-	case ')': typ = token.RPAR
-	case '[': typ = token.LSQU
-	case ']': typ = token.RSQU
-	case '{': typ = token.LCUR
-	case '}': typ = token.RCUR
-	case ':': typ = token.COLON
-	case ';': typ = token.SEMI
-	case ',': typ = token.COMMA
-	case '.': typ = token.POINT
-	case '=': typ = token.SET
-	case '+': typ = token.ADD
-	case '-': typ = token.SUB
-	case '*': typ = token.MUL
-	case '/': typ = token.DIV
-	case '%': typ = token.MOD
-	case '&': typ = token.AND
-	case '|': typ = token.OR
-	case '^': typ = token.XOR
-	case '<': typ = token.LTN
-	case '>': typ = token.GTN
-	case '!': typ = token.NOT
-	case '~': typ = token.TILDE
+	case '(':
+		typ = token.LPAR
+	case ')':
+		typ = token.RPAR
+	case '[':
+		typ = token.LSQU
+	case ']':
+		typ = token.RSQU
+	case '{':
+		typ = token.LCUR
+	case '}':
+		typ = token.RCUR
+	case ':':
+		typ = token.COLON
+	case ';':
+		typ = token.SEMI
+	case ',':
+		typ = token.COMMA
+	case '.':
+		typ = token.POINT
+	case '=':
+		typ = token.SET
+	case '+':
+		typ = token.ADD
+	case '-':
+		typ = token.SUB
+	case '*':
+		typ = token.MUL
+	case '/':
+		typ = token.DIV
+	case '%':
+		typ = token.MOD
+	case '&':
+		typ = token.AND
+	case '|':
+		typ = token.OR
+	case '^':
+		typ = token.XOR
+	case '<':
+		typ = token.LTN
+	case '>':
+		typ = token.GTN
+	case '!':
+		typ = token.NOT
+	case '~':
+		typ = token.TILDE
 	default:
 		return false
 	}
@@ -312,7 +362,9 @@ func (l *Lexer) scanNumber() {
 			l.pos++
 			s := l.collectWhile(func(r rune) bool { return r == '0' || r == '1' || r == '_' })
 			s = strings.ReplaceAll(s, "_", "")
-			if s == "" { s = "0" }
+			if s == "" {
+				s = "0"
+			}
 			v, _ := strconv.ParseInt(s, 2, 32)
 			l.emitInt(int32(v))
 		} else if next == '%' {
@@ -320,7 +372,9 @@ func (l *Lexer) scanNumber() {
 			l.pos++
 			s := l.collectWhile(func(r rune) bool { return (r >= '0' && r <= '7') || r == '_' })
 			s = strings.ReplaceAll(s, "_", "")
-			if s == "" { s = "0" }
+			if s == "" {
+				s = "0"
+			}
 			v, _ := strconv.ParseInt(s, 8, 32)
 			l.emitInt(int32(v))
 		} else if isHexDigit(next) {
@@ -359,16 +413,24 @@ func (l *Lexer) scanString() {
 		if c == '\\' && l.pos+1 < len(l.src) {
 			l.pos++
 			switch l.src[l.pos] {
-			case 'n':  sb.WriteByte('\n')
-			case 't':  sb.WriteByte('\t')
-			case '\\': sb.WriteByte('\\')
-			case '\'': sb.WriteByte('\'')
-			case '"':  sb.WriteByte('"')
-			default:   sb.WriteRune(l.src[l.pos])
+			case 'n':
+				sb.WriteByte('\n')
+			case 't':
+				sb.WriteByte('\t')
+			case '\\':
+				sb.WriteByte('\\')
+			case '\'':
+				sb.WriteByte('\'')
+			case '"':
+				sb.WriteByte('"')
+			default:
+				sb.WriteRune(l.src[l.pos])
 			}
 			l.pos++
 		} else {
-			if c == '\n' { l.line++ }
+			if c == '\n' {
+				l.line++
+			}
 			sb.WriteRune(c)
 			l.pos++
 		}
@@ -386,6 +448,15 @@ func (l *Lexer) scanLabel() {
 	}
 	name := string(l.src[start:l.pos])
 	l.emitStr(token.LABEL, name)
+}
+
+func (l *Lexer) scanControlIdent() {
+	l.pos++ // skip leading backslash
+	start := l.pos
+	for l.pos < len(l.src) && isIdentCont(l.src[l.pos]) {
+		l.pos++
+	}
+	l.emitStr(token.IDENT, "\\"+string(l.src[start:l.pos]))
 }
 
 // --- Identifiers and keywords ---
@@ -468,7 +539,9 @@ func (l *Lexer) skipLineComment() {
 }
 
 // scanOpcodeLiteral consumes a literal of the form
-//   op<TYPE:MODULE:FUNCTION, OVERLOAD>
+//
+//	op<TYPE:MODULE:FUNCTION, OVERLOAD>
+//
 // and emits it as a single IDENT token whose StrVal is the entire literal
 // (e.g. "op<35:035:21072,84>"). Returns true when the literal was matched
 // and consumed, false otherwise (in which case the lexer falls through
@@ -616,13 +689,27 @@ func (l *Lexer) collectWhile(pred func(rune) bool) string {
 // --- Character classification ---
 
 func isIdentStart(r rune) bool {
-	if r >= 'A' && r <= 'Z' { return true }
-	if r >= 'a' && r <= 'z' { return true }
-	if r == '_' || r == '?' || r == '#' || r == '$' { return true }
-	if r >= 0x3041 && r <= 0x3093 { return true } // Hiragana
-	if r >= 0x30A1 && r <= 0x30F6 { return true } // Katakana
-	if r >= 0x4E00 && r <= 0x9FA0 { return true } // CJK
-	if r >= 0xFF01 && r <= 0xFF5E { return true } // Fullwidth ASCII
+	if r >= 'A' && r <= 'Z' {
+		return true
+	}
+	if r >= 'a' && r <= 'z' {
+		return true
+	}
+	if r == '_' || r == '?' || r == '#' || r == '$' {
+		return true
+	}
+	if r >= 0x3041 && r <= 0x3093 {
+		return true
+	} // Hiragana
+	if r >= 0x30A1 && r <= 0x30F6 {
+		return true
+	} // Katakana
+	if r >= 0x4E00 && r <= 0x9FA0 {
+		return true
+	} // CJK
+	if r >= 0xFF01 && r <= 0xFF5E {
+		return true
+	} // Fullwidth ASCII
 	return false
 }
 
