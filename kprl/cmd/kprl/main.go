@@ -30,6 +30,7 @@ import (
 	"github.com/yoremi/rldev-go/pkg/gamedef"
 	"github.com/yoremi/rldev-go/pkg/kprl"
 	"github.com/yoremi/rldev-go/pkg/rlcmp"
+	"github.com/yoremi/rldev-go/pkg/texttransforms"
 )
 
 const version = "2.0.26-go"
@@ -55,23 +56,24 @@ var (
 
 // Disassembly options
 var (
-	encoding       = flag.String("e", "CP932", "output text encoding")
-	bom            = flag.Bool("bom", false, "include UTF-8 BOM")
-	singleFile     = flag.Bool("s", false, "don't separate text into resource file")
-	separateAll    = flag.Bool("S", false, "put all text in resource file")
-	suppressUnref  = flag.Bool("u", false, "suppress unreferenced code")
-	annotate       = flag.Bool("n", false, "annotate with offsets")
-	noCodes        = flag.Bool("r", false, "don't generate control codes")
-	debugInfo      = flag.Bool("g", false, "read debug information")
-	target         = flag.String("t", "", "target: RealLive, AVG2000, Kinetic")
-	targetVersion  = flag.String("f", "", "interpreter version (n.n.n.n) or filename")
-	kfnFile        = flag.String("kfn", "", "RealLive function definition file (default: reallive.kfn)")
-	castFile       = flag.String("cast", "", "cast of characters translation file")
-	decKey         = flag.String("y", "", "decoder key for compiler version 110002")
-	srcExt         = flag.String("ext", "org", "source file extension")
-	showOpcodes    = flag.Bool("opcodes", false, "show opcode annotations")
-	hexDump        = flag.Bool("hexdump", false, "generate hex dump")
-	rawStrings     = flag.Bool("raw-strings", false, "no special markup in strings")
+	encoding        = flag.String("e", "CP932", "output text encoding")
+	outputTransform = flag.String("transform-output", "", "text transform override: none, western, chinese, korean")
+	bom             = flag.Bool("bom", false, "include UTF-8 BOM")
+	singleFile      = flag.Bool("s", false, "don't separate text into resource file")
+	separateAll     = flag.Bool("S", false, "put all text in resource file")
+	suppressUnref   = flag.Bool("u", false, "suppress unreferenced code")
+	annotate        = flag.Bool("n", false, "annotate with offsets")
+	noCodes         = flag.Bool("r", false, "don't generate control codes")
+	debugInfo       = flag.Bool("g", false, "read debug information")
+	target          = flag.String("t", "", "target: RealLive, AVG2000, Kinetic")
+	targetVersion   = flag.String("f", "", "interpreter version (n.n.n.n) or filename")
+	kfnFile         = flag.String("kfn", "", "RealLive function definition file (default: reallive.kfn)")
+	castFile        = flag.String("cast", "", "cast of characters translation file")
+	decKey          = flag.String("y", "", "decoder key for compiler version 110002")
+	srcExt          = flag.String("ext", "org", "source file extension")
+	showOpcodes     = flag.Bool("opcodes", false, "show opcode annotations")
+	hexDump         = flag.Bool("hexdump", false, "generate hex dump")
+	rawStrings      = flag.Bool("raw-strings", false, "no special markup in strings")
 )
 
 func main() {
@@ -275,6 +277,15 @@ func doDisassemble(args []string, opts kprl.Options) error {
 		Encoding:         *encoding,
 		BOM:              *bom,
 		Verbose:          *verbose,
+	}
+
+	if *outputTransform != "" {
+		mode, err := texttransforms.ParseMode(*outputTransform)
+		if err != nil {
+			return err
+		}
+		disOpts.TextTransform = mode
+		disOpts.TextTransformSet = true
 	}
 
 	if *target != "" {

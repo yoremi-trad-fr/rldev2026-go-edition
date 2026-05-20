@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/yoremi/rldev-go/pkg/encoding"
+	"github.com/yoremi/rldev-go/pkg/text"
+	"github.com/yoremi/rldev-go/pkg/texttransforms"
 )
 
 // Writer outputs disassembly results to files.
@@ -56,17 +58,16 @@ func (c *crlfWriter) Write(p []byte) (int, error) {
 
 // convertText converts raw Shift-JIS bytes to the target encoding,
 // after first translating RealLive name markers (\l{...} / \m{...}).
-func (w *Writer) convertText(sjisText string) string {
+func (w *Writer) convertText(sjisText string, transform texttransforms.EncMode) string {
 	// Decode RealLive name markers (0x81 0x93 / 0x96 + 0x82 NN)
 	// before any encoding conversion. Otherwise SJIS-to-UTF8 sees the
 	// marker bytes as fullwidth characters (e.g. 0x81 0x96 → ＊).
 	sjisText = decodeNameMarkers(sjisText)
 
-	enc := strings.ToUpper(w.opts.Encoding)
-	if enc == "" || enc == "CP932" || enc == "SHIFT-JIS" || enc == "SJIS" || enc == "SHIFT_JIS" || enc == "SHIFTJIS" {
+	if isBytePreservingEncoding(w.opts.Encoding) {
 		return sjisText
 	}
-	utf8Str, err := encoding.SJSToUTF8([]byte(sjisText))
+	utf8Str, err := decodeBytecodeText([]byte(sjisText), transform)
 	if err != nil {
 		return sjisText
 	}
@@ -78,8 +79,7 @@ func (w *Writer) convertText(sjisText string) string {
 // literal display strings, so bytes like 81 96 82 61 must remain ＊Ｂ instead
 // of becoming \m{B}.
 func (w *Writer) convertHeaderText(sjisText string) string {
-	enc := strings.ToUpper(w.opts.Encoding)
-	if enc == "" || enc == "CP932" || enc == "SHIFT-JIS" || enc == "SJIS" || enc == "SHIFT_JIS" || enc == "SHIFTJIS" {
+	if isBytePreservingEncoding(w.opts.Encoding) {
 		return sjisText
 	}
 	utf8Str, err := encoding.SJSToUTF8([]byte(sjisText))
@@ -87,6 +87,31 @@ func (w *Writer) convertHeaderText(sjisText string) string {
 		return sjisText
 	}
 	return utf8Str
+}
+
+func isBytePreservingEncoding(enc string) bool {
+	switch strings.ToUpper(enc) {
+	case "", "CP932", "SHIFT-JIS", "SJIS", "SHIFT_JIS", "SHIFTJIS":
+		return true
+	default:
+		return false
+	}
+}
+
+func decodeBytecodeText(data []byte, transform texttransforms.EncMode) (string, error) {
+	if transform == texttransforms.EncNone {
+		return encoding.SJSToUTF8(data)
+	}
+
+	previous := texttransforms.GetMode()
+	texttransforms.SetMode(transform)
+	defer texttransforms.SetMode(previous)
+
+	decoded, err := texttransforms.ReadBytecode(data)
+	if err != nil {
+		return "", err
+	}
+	return text.ToUTF8(decoded), nil
 }
 
 // decodeNameMarkers replaces each RealLive name-marker byte sequence in s
@@ -282,12 +307,27 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 	// OCaml format: each resource on its own line, prefixed with <NNNN>.
 	if w.opts.SeparateStrings {
 		for i, s := range result.ResStrs {
-			converted := w.convertText(s)
+			converted := w.convertText(s, result.TextTransform)
+			converted = escapeResourceLineText(converted)
 			fmt.Fprintf(resOut, "<%04d> %s\n", i, converted)
 		}
 	}
 
 	return nil
+}
+
+func escapeResourceLineText(s string) string {
+	if s == "" {
+		return s
+	}
+	if strings.HasPrefix(s, "//") {
+		return `\` + s
+	}
+	switch []rune(s)[0] {
+	case ' ', '\t', '<':
+		return `\` + s
+	}
+	return s
 }
 
 // SourceInfo returns the count of text lines and total byte length
@@ -348,9 +388,8 @@ func formatCommand(cmd Command, labels map[int]int, opts Options, result *Disass
 			// stray SJIS bytes leak into the .org file and break the
 			// downstream lexer.
 			s := resolvePointers(v.Value, labels)
-			enc := strings.ToUpper(opts.Encoding)
-			if enc != "" && enc != "CP932" && enc != "SHIFT-JIS" && enc != "SJIS" && enc != "SHIFT_JIS" && enc != "SHIFTJIS" {
-				if utf8Str, err := encoding.SJSToUTF8([]byte(s)); err == nil {
+			if !isBytePreservingEncoding(opts.Encoding) {
+				if utf8Str, err := decodeBytecodeText([]byte(s), result.TextTransform); err == nil {
 					s = utf8Str
 				}
 			}
@@ -364,10 +403,9 @@ func formatCommand(cmd Command, labels map[int]int, opts Options, result *Disass
 				sb.WriteString(fmt.Sprintf("@unknown_%d", v.Offset))
 			}
 		case ElemText:
-			// Convert SJIS text if output encoding is UTF-8
-			enc := strings.ToUpper(opts.Encoding)
-			if enc != "" && enc != "CP932" && enc != "SHIFT-JIS" && enc != "SJIS" {
-				if utf8Str, err := encoding.SJSToUTF8([]byte(v.Value)); err == nil {
+			// Convert bytecode text if output encoding is UTF-8.
+			if !isBytePreservingEncoding(opts.Encoding) {
+				if utf8Str, err := decodeBytecodeText([]byte(v.Value), result.TextTransform); err == nil {
 					sb.WriteString(utf8Str)
 				} else {
 					sb.WriteString(v.Value)

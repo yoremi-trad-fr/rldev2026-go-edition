@@ -31,6 +31,7 @@ import (
 
 	"github.com/yoremi/rldev-go/pkg/diag"
 	"github.com/yoremi/rldev-go/pkg/encoding"
+	"github.com/yoremi/rldev-go/pkg/texttransforms"
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
 	"github.com/yoremi/rldev-go/rlc/pkg/codegen"
 	"github.com/yoremi/rldev-go/rlc/pkg/compilerframe"
@@ -58,7 +59,9 @@ type Options struct {
 	SrcExt   string // --src-ext source extension (default "org")
 
 	// Encoding
-	Encoding string // -e encoding (default "CP932")
+	Encoding        string // -e input encoding (default "CP932")
+	OutputTransform string // -x output text transformation (default none)
+	ForceTransform  bool   // --force-transform
 
 	// Target
 	Target        string // --target RealLive|AVG2000|Kinetic
@@ -127,9 +130,9 @@ const (
 // verboseCounter is a flag.Value that increments on each invocation.
 type verboseCounter int
 
-func (v *verboseCounter) String() string     { return strconv.Itoa(int(*v)) }
-func (v *verboseCounter) Set(string) error   { *v++; return nil }
-func (v *verboseCounter) IsBoolFlag() bool   { return true }
+func (v *verboseCounter) String() string   { return strconv.Itoa(int(*v)) }
+func (v *verboseCounter) Set(string) error { *v++; return nil }
+func (v *verboseCounter) IsBoolFlag() bool { return true }
 
 func parseFlags(args []string) (*Options, error) {
 	opts := DefaultOptions()
@@ -150,6 +153,9 @@ func parseFlags(args []string) (*Options, error) {
 
 	// Encoding
 	fs.StringVar(&opts.Encoding, "e", opts.Encoding, "encoding (CP932|UTF-8|...)")
+	fs.StringVar(&opts.OutputTransform, "x", opts.OutputTransform, "output text transformation (NONE|WESTERN|CHINESE|KOREAN)")
+	fs.StringVar(&opts.OutputTransform, "transform-output", opts.OutputTransform, "output text transformation (NONE|WESTERN|CHINESE|KOREAN)")
+	fs.BoolVar(&opts.ForceTransform, "force-transform", opts.ForceTransform, "replace characters that cannot be represented in the output transformation")
 
 	// Target
 	fs.StringVar(&opts.Target, "target", "", "target engine: RealLive|AVG2000|Kinetic")
@@ -400,7 +406,7 @@ func compileFile(opts *Options, srcPath string) error {
 	// Total for "RLdev" = 23 bytes, matching what the engine and tools
 	// expect.
 	if opts.Metadata {
-		genOpts.Metadata = buildRLdevMetadata(genOpts.Version, opts.Encoding)
+		genOpts.Metadata = buildRLdevMetadata(genOpts.Version, texttransforms.GetMode())
 	}
 
 	bytecode, err := compiler.Out.Generate(genOpts)
@@ -586,6 +592,12 @@ func main() {
 			os.Exit(1)
 		}
 	}
+
+	if err := texttransforms.SetEncoding(opts.OutputTransform); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	texttransforms.ForceEncode = opts.ForceTransform
 
 	// Configure the diag reporter once, process-wide. compileFile()
 	// calls diag.Reset() per file so counters and Summary() are
@@ -847,22 +859,17 @@ func autoDetectVersion(srcPath string) (kfn.Version, string, error) {
 // 2026 metadata; tools that read this field never gate behaviour on it,
 // and any change here would make Go-produced bytecode diff every byte
 // against the OCaml reference for no functional benefit.
-func buildRLdevMetadata(ver kfn.Version, sourceEnc string) []byte {
+func buildRLdevMetadata(ver kfn.Version, transform texttransforms.EncMode) []byte {
 	const compilerVersionTimes100 = 139 // RLdev 1.39
 	id := []byte("RLdev")
 
-	// Detect translation transform from the source encoding. The
-	// translator typically writes its scripts in CP1252 (Western) for
-	// French / English patches, EUC-KR (Korean) or GBK (Chinese); the
-	// default Japanese pipeline uses Shift-JIS / UTF-8 with no
-	// transform.
 	tt := byte(0)
-	switch strings.ToUpper(strings.ReplaceAll(sourceEnc, "-", "")) {
-	case "CP1252", "WINDOWS1252", "LATIN1", "ISO88591":
-		tt = 2
-	case "GBK", "CP936", "GB2312":
+	switch transform {
+	case texttransforms.EncChinese:
 		tt = 1
-	case "EUCKR", "CP949":
+	case texttransforms.EncWestern:
+		tt = 2
+	case texttransforms.EncKorean:
 		tt = 3
 	}
 

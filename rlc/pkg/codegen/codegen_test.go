@@ -206,6 +206,28 @@ func TestOutputEmitResRefEmptyString(t *testing.T) {
 	}
 }
 
+func TestOutputEmitResRefEscapedLeadingSpace(t *testing.T) {
+	o := NewOutput()
+	o.ResolveRes = func(key string) (string, bool) {
+		if key == "0000" {
+			return `\   text`, true
+		}
+		return "", false
+	}
+	o.EmitExpr(ast.ResRef{Key: "0000"})
+
+	var got []byte
+	for _, ir := range o.IR {
+		got = append(got, ir.Bytes...)
+	}
+	if bytes.Contains(got, []byte{'\\'}) {
+		t.Fatalf("escaped leading space kept a literal backslash: %q", string(got))
+	}
+	if !bytes.Contains(got, []byte("   text")) {
+		t.Fatalf("escaped leading spaces were not preserved: %q", string(got))
+	}
+}
+
 func TestOutputEmitExprStore(t *testing.T) {
 	o := NewOutput()
 	o.EmitExpr(ast.StoreRef{})

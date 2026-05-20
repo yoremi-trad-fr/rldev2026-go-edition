@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -19,6 +20,8 @@ type App struct {
 	ctx        context.Context
 	mu         sync.Mutex
 	cancelFunc context.CancelFunc
+	logMu      sync.Mutex
+	logFile    *os.File
 }
 
 func NewApp() *App {
@@ -30,6 +33,12 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) log(msg string) {
+	a.logMu.Lock()
+	if a.logFile != nil {
+		_, _ = fmt.Fprintln(a.logFile, msg)
+	}
+	a.logMu.Unlock()
+
 	if a.ctx != nil {
 		wailsRuntime.EventsEmit(a.ctx, "log", msg)
 	}
@@ -41,6 +50,41 @@ func (a *App) logError(msg string) {
 
 func (a *App) logOK(msg string) {
 	a.log("[OK] " + msg)
+}
+
+func (a *App) startLogFile(outputDir, prefix string) func() {
+	outputDir = strings.TrimSpace(outputDir)
+	if outputDir == "" {
+		return func() {}
+	}
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		a.logError(fmt.Sprintf("journal impossible: %v", err))
+		return func() {}
+	}
+
+	name := fmt.Sprintf("%s-%s.log", prefix, time.Now().Format("20060102-150405"))
+	path := filepath.Join(outputDir, name)
+	file, err := os.Create(path)
+	if err != nil {
+		a.logError(fmt.Sprintf("journal impossible: %v", err))
+		return func() {}
+	}
+
+	a.logMu.Lock()
+	previous := a.logFile
+	a.logFile = file
+	a.logMu.Unlock()
+
+	a.logOK("Log complet: " + path)
+
+	return func() {
+		a.logMu.Lock()
+		if a.logFile == file {
+			a.logFile = previous
+		}
+		a.logMu.Unlock()
+		_ = file.Close()
+	}
 }
 
 func (a *App) executableDir() (string, error) {
@@ -253,6 +297,9 @@ func (a *App) RldevDisassemble(seenFile, kfnFile, encoding, gameID, outputDir st
 	if err := required("dossier de sortie", outputDir); err != nil {
 		return a.failIf(err)
 	}
+	closeLog := a.startLogFile(outputDir, "kprl-disasm")
+	defer closeLog()
+
 	if encoding == "" {
 		encoding = "UTF-8"
 	}
@@ -335,7 +382,18 @@ func (a *App) RldevArchive(outputSeen, inputDir string) string {
 	return ""
 }
 
-func (a *App) RldevCompile(orgFile, kfnFile, gameexe, interpreter, encoding, outputDir string) string {
+func appendTransformArgs(args []string, outputTransform string, forceTransform bool) []string {
+	outputTransform = strings.TrimSpace(outputTransform)
+	if outputTransform != "" && !strings.EqualFold(outputTransform, "NONE") {
+		args = append(args, "-x", outputTransform)
+	}
+	if forceTransform {
+		args = append(args, "--force-transform")
+	}
+	return args
+}
+
+func (a *App) RldevCompile(orgFile, kfnFile, gameexe, interpreter, encoding, outputTransform string, forceTransform bool, outputDir string) string {
 	a.log("========================================")
 	a.log("  RLdev - Compilation Kepago")
 	a.log("========================================")
@@ -346,6 +404,9 @@ func (a *App) RldevCompile(orgFile, kfnFile, gameexe, interpreter, encoding, out
 	if err := required("dossier de sortie", outputDir); err != nil {
 		return a.failIf(err)
 	}
+	closeLog := a.startLogFile(outputDir, "rlc-compile")
+	defer closeLog()
+
 	if encoding == "" {
 		encoding = "UTF-8"
 	}
@@ -354,6 +415,7 @@ func (a *App) RldevCompile(orgFile, kfnFile, gameexe, interpreter, encoding, out
 	}
 
 	args := []string{"-v", "-e", encoding, "-d", outputDir}
+	args = appendTransformArgs(args, outputTransform, forceTransform)
 	if kfnFile != "" {
 		args = append(args, "-K", kfnFile)
 	}
@@ -372,7 +434,7 @@ func (a *App) RldevCompile(orgFile, kfnFile, gameexe, interpreter, encoding, out
 	return ""
 }
 
-func (a *App) RldevCompileBatch(inputDir, kfnFile, gameexe, interpreter, encoding, outputDir string) string {
+func (a *App) RldevCompileBatch(inputDir, kfnFile, gameexe, interpreter, encoding, outputTransform string, forceTransform bool, outputDir string) string {
 	a.log("========================================")
 	a.log("  RLdev - Compilation batch Kepago")
 	a.log("========================================")
@@ -383,6 +445,9 @@ func (a *App) RldevCompileBatch(inputDir, kfnFile, gameexe, interpreter, encodin
 	if err := required("dossier de sortie", outputDir); err != nil {
 		return a.failIf(err)
 	}
+	closeLog := a.startLogFile(outputDir, "rlc-batch")
+	defer closeLog()
+
 	if encoding == "" {
 		encoding = "UTF-8"
 	}
@@ -418,6 +483,7 @@ func (a *App) RldevCompileBatch(inputDir, kfnFile, gameexe, interpreter, encodin
 		a.log(fmt.Sprintf("[%d/%d] %s", i+1, len(sources), name))
 
 		args := []string{"-v", "-e", encoding, "-d", outputDir, "-o", base}
+		args = appendTransformArgs(args, outputTransform, forceTransform)
 		if kfnFile != "" {
 			args = append(args, "-K", kfnFile)
 		}

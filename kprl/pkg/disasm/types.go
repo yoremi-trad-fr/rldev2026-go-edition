@@ -9,6 +9,8 @@ package disasm
 import (
 	"fmt"
 	"strings"
+
+	"github.com/yoremi/rldev-go/pkg/texttransforms"
 )
 
 // --- Target engine modes ---
@@ -119,15 +121,15 @@ func (ElemText) isCommandElem() {}
 
 // Command represents one disassembled instruction.
 type Command struct {
-	Offset  int           // Byte offset from start of code section
-	Kepago  []CommandElem // Instruction representation
-	Hidden  bool          // Hidden from output (debug lines, etc.)
-	Unhide  bool          // Force-unhide (entrypoints)
-	IsJmp   bool          // Is a jump target (affects suppression)
-	CType   string        // Command type annotation
-	Opcode  string        // Opcode string for annotation
-	LineNo  int           // Debug line number
-	ResIdx  int           // Resource string index (-1 if none)
+	Offset int           // Byte offset from start of code section
+	Kepago []CommandElem // Instruction representation
+	Hidden bool          // Hidden from output (debug lines, etc.)
+	Unhide bool          // Force-unhide (entrypoints)
+	IsJmp  bool          // Is a jump target (affects suppression)
+	CType  string        // Command type annotation
+	Opcode string        // Opcode string for annotation
+	LineNo int           // Debug line number
+	ResIdx int           // Resource string index (-1 if none)
 
 	// Args holds the original (rendered) argument strings for this
 	// command, preserved on ccode-form opcodes (FontSize, shake, …)
@@ -158,25 +160,27 @@ func (c *Command) Text() string {
 
 // Options controls the disassembler behavior.
 type Options struct {
-	SeparateStrings  bool   // Write strings to separate .res file
-	SeparateAll      bool   // Separate all strings (not just textout)
-	IDStrings        bool   // Add IDs to resource strings
-	ReadDebugSymbols bool   // Include #line directives
-	Annotate         bool   // Add offset annotations
-	ControlCodes     bool   // Process control codes in text
-	SuppressUncalled bool   // Hide code after unconditional jumps
+	SeparateStrings  bool // Write strings to separate .res file
+	SeparateAll      bool // Separate all strings (not just textout)
+	IDStrings        bool // Add IDs to resource strings
+	ReadDebugSymbols bool // Include #line directives
+	Annotate         bool // Add offset annotations
+	ControlCodes     bool // Process control codes in text
+	SuppressUncalled bool // Hide code after unconditional jumps
 	ForcedTarget     EngineMode
 	UsesExclKidoku   bool
-	StartAddress     int    // -1 = auto
-	EndAddress       int    // -1 = auto
-	ShowOpcodes      bool   // Show opcode annotations
-	HexDump          bool   // Generate hex dump
-	RawStrings       bool   // Don't process text encoding
-	MakeMap          bool   // Generate seen map
-	FuncReg          *FuncRegistry // KFN function definitions (nil = use hardcoded)
-	SrcExt           string // Source file extension (default "org")
-	Encoding         string // Output encoding (default "CP932")
-	BOM              bool   // Write UTF-8 BOM
+	StartAddress     int                    // -1 = auto
+	EndAddress       int                    // -1 = auto
+	ShowOpcodes      bool                   // Show opcode annotations
+	HexDump          bool                   // Generate hex dump
+	RawStrings       bool                   // Don't process text encoding
+	MakeMap          bool                   // Generate seen map
+	FuncReg          *FuncRegistry          // KFN function definitions (nil = use hardcoded)
+	SrcExt           string                 // Source file extension (default "org")
+	Encoding         string                 // Output encoding (default "CP932")
+	TextTransform    texttransforms.EncMode // Text transformation override
+	TextTransformSet bool                   // True when TextTransform was set from CLI
+	BOM              bool                   // Write UTF-8 BOM
 	Verbose          int
 	SourceFile       string // Name of SEEN being disassembled (for diag messages)
 }
@@ -184,12 +188,12 @@ type Options struct {
 // DefaultOptions returns the default disassembler options.
 func DefaultOptions() Options {
 	return Options{
-		SeparateStrings:  true,
-		ControlCodes:     true,
-		StartAddress:     -1,
-		EndAddress:       -1,
-		SrcExt:           "org",
-		Encoding:         "CP932",
+		SeparateStrings: true,
+		ControlCodes:    true,
+		StartAddress:    -1,
+		EndAddress:      -1,
+		SrcExt:          "org",
+		Encoding:        "CP932",
 	}
 }
 
@@ -216,10 +220,10 @@ type Jump struct {
 
 // SeenMap holds navigation information for one SEEN file.
 type SeenMap struct {
-	EntryPoints []int              // Entry point line numbers
-	Calls       []Jump             // Outgoing calls
-	Gotos       []Jump             // Outgoing gotos
-	Entries     map[int]Jump       // Incoming calls/gotos (keyed by entry index)
+	EntryPoints []int        // Entry point line numbers
+	Calls       []Jump       // Outgoing calls
+	Gotos       []Jump       // Outgoing gotos
+	Entries     map[int]Jump // Incoming calls/gotos (keyed by entry index)
 }
 
 // NewSeenMap creates an empty SeenMap.

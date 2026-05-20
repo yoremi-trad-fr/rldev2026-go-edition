@@ -2,12 +2,13 @@
 // Transposed from OCaml's metadata.ml.
 //
 // Metadata format:
-//   int  metadata_len
-//   int  id_len
-//   char[id_len+1] compiler_identifier (null-terminated)
-//   int  compiler_version * 100
-//   4 bytes target_version (a.b.c.d)
-//   byte text_transform: 0=none, 1=Chinese, 2=Western, 3=Korean
+//
+//	int  metadata_len
+//	int  id_len
+//	char[id_len+1] compiler_identifier (null-terminated)
+//	int  compiler_version * 100
+//	4 bytes target_version (a.b.c.d)
+//	byte text_transform: 0=none, 1=Chinese, 2=Western, 3=Korean
 package metadata
 
 import (
@@ -95,9 +96,9 @@ func (m *Metadata) ToBytes(ident string, version float64, targetVersion [4]byte,
 	identBytes := []byte(ident)
 	identLen := len(identBytes)
 
-	// Calculate total size
-	totalLen := 4 + identLen + 1 + 4 + 4 + 1
-	buf := binarray.New(totalLen + 4)
+	// Calculate total segment size, including the leading length field.
+	totalLen := 4 + 4 + identLen + 1 + 4 + 4 + 1
+	buf := binarray.New(totalLen)
 
 	buf.PutInt(0, int32(totalLen))
 	buf.PutInt(4, int32(identLen))

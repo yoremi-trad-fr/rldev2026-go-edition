@@ -87,6 +87,24 @@ func addTextoutFails(result *DisassemblyResult, s string) bool {
 	return true
 }
 
+func forceTextoutCommand(result *DisassemblyResult, cmd *Command, s string, opts Options) {
+	cmd.CType = "textout"
+	if opts.SeparateStrings {
+		idx := len(result.ResStrs)
+		result.ResStrs = append(result.ResStrs, s)
+		cmd.ResIdx = idx
+		cmd.Kepago = []CommandElem{ElemString{Value: fmt.Sprintf("#res<%04d>", idx)}}
+	} else {
+		cmd.ResIdx = -1
+		cmd.Kepago = []CommandElem{
+			ElemString{Value: "'"},
+			ElemText{Value: s},
+			ElemString{Value: "'"},
+		}
+	}
+	result.Commands = append(result.Commands, *cmd)
+}
+
 // formatCcodeForm renders a function call as its kepago control-code
 // form, matching OCaml `ccode_form` (disassembler.ml L2340-L2349):
 //

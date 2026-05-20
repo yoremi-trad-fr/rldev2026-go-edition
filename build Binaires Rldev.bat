@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableExtensions
 REM ============================================================
 REM  RLdev2026-Go — Build Script (Windows)
 REM  Compile les 4 outils depuis les sources Go
@@ -9,32 +10,26 @@ echo  RLdev2026-Go Build Script
 echo  =========================
 echo.
 
-set OUTDIR=%~dp0bin
+set "ROOT=%~dp0"
+set "OUTDIR=%ROOT%bin"
+set "GOCACHE=%ROOT%.gocache"
+set "GOTMPDIR=%ROOT%.gotmp"
+set "BUILD_STATUS=0"
+
 if not exist "%OUTDIR%" mkdir "%OUTDIR%"
+if not exist "%GOCACHE%" mkdir "%GOCACHE%"
+if not exist "%GOTMPDIR%" mkdir "%GOTMPDIR%"
 
-echo [1/4] Building kprl16.exe...
-cd /d "%~dp0kprl"
-go build -o "%OUTDIR%\kprl16.exe" ./cmd/kprl/
-if errorlevel 1 (echo FAILED & goto :error)
-echo       OK
+echo  Cache Go : %GOCACHE%
+echo  Temp Go  : %GOTMPDIR%
+echo.
 
-echo [2/4] Building rlc2026.exe...
-cd /d "%~dp0rlc"
-go build -o "%OUTDIR%\rlc2026.exe" ./cmd/rlc/
-if errorlevel 1 (echo FAILED & goto :error)
-echo       OK
+cd /d "%ROOT%"
 
-echo [3/4] Building rlxml.exe...
-cd /d "%~dp0rlxml"
-go build -o "%OUTDIR%\rlxml.exe" ./cmd/rlxml/
-if errorlevel 1 (echo FAILED & goto :error)
-echo       OK
-
-echo [4/4] Building vaconv.exe...
-cd /d "%~dp0vaconv"
-go build -o "%OUTDIR%\vaconv.exe" ./cmd/vaconv/
-if errorlevel 1 (echo FAILED & goto :error)
-echo       OK
+call :build 1 kprl16.exe ".\kprl\cmd\kprl" || goto :error
+call :build 2 rlc2026.exe ".\rlc\cmd\rlc" || goto :error
+call :build 3 rlxml.exe ".\rlxml\cmd\rlxml" || goto :error
+call :build 4 vaconv.exe ".\vaconv\cmd\vaconv" || goto :error
 
 echo.
 echo  All tools built successfully in: %OUTDIR%
@@ -43,11 +38,23 @@ dir "%OUTDIR%\*.exe"
 echo.
 goto :end
 
+:build
+echo [%~1/4] Building %~2...
+go build -trimpath -ldflags "-buildid=" -o "%OUTDIR%\%~2" %~3
+if errorlevel 1 (
+    echo FAILED
+    exit /b 1
+)
+echo       OK
+exit /b 0
+
 :error
+set "BUILD_STATUS=1"
 echo.
 echo  Build FAILED. Make sure Go is installed (go.dev)
 echo.
 
 :end
-cd /d "%~dp0"
-pause
+cd /d "%ROOT%"
+if /I not "%~1"=="--no-pause" pause
+exit /b %BUILD_STATUS%

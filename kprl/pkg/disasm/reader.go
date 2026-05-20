@@ -8,6 +8,8 @@ import (
 	"github.com/yoremi/rldev-go/pkg/binarray"
 	"github.com/yoremi/rldev-go/pkg/bytecode"
 	"github.com/yoremi/rldev-go/pkg/diag"
+	"github.com/yoremi/rldev-go/pkg/metadata"
+	"github.com/yoremi/rldev-go/pkg/texttransforms"
 )
 
 // Reader reads bytecodes sequentially from a buffer.
@@ -922,14 +924,15 @@ func contextDump(data []byte, offset int) string {
 
 // DisassemblyResult holds the output of disassembly.
 type DisassemblyResult struct {
-	Commands []Command
-	ResStrs  []string     // Resource strings
-	Pointers map[int]bool // Set of pointer targets (for labels)
-	Mode     EngineMode
-	Version  Version
-	Header   bytecode.FileHeader
-	Error    string
-	SeenMap  *SeenMap
+	Commands      []Command
+	ResStrs       []string     // Resource strings
+	Pointers      map[int]bool // Set of pointer targets (for labels)
+	Mode          EngineMode
+	Version       Version
+	TextTransform texttransforms.EncMode
+	Header        bytecode.FileHeader
+	Error         string
+	SeenMap       *SeenMap
 }
 
 // Disassemble performs bytecode disassembly on the given data.
@@ -960,6 +963,11 @@ func Disassemble(arr *binarray.Buffer, opts Options) (*DisassemblyResult, error)
 		version = Version{1, 2, 7, 0}
 	}
 
+	textTransform := opts.TextTransform
+	if !opts.TextTransformSet {
+		textTransform = readMetadataTextTransform(arr, hdr)
+	}
+
 	// Calculate bounds
 	startAddr := hdr.DataOffset
 	if opts.StartAddress > hdr.DataOffset && opts.StartAddress < arr.Len() {
@@ -976,11 +984,12 @@ func Disassemble(arr *binarray.Buffer, opts Options) (*DisassemblyResult, error)
 	reader := NewReader(arr.Data, startAddr, endAddr, mode)
 
 	result := &DisassemblyResult{
-		Mode:     mode,
-		Version:  version,
-		Header:   hdr,
-		Pointers: make(map[int]bool),
-		SeenMap:  NewSeenMap(),
+		Mode:          mode,
+		Version:       version,
+		TextTransform: textTransform,
+		Header:        hdr,
+		Pointers:      make(map[int]bool),
+		SeenMap:       NewSeenMap(),
 	}
 
 	// Hook the reader so string helpers can route Japanese strings into
@@ -1023,6 +1032,40 @@ func Disassemble(arr *binarray.Buffer, opts Options) (*DisassemblyResult, error)
 	}
 
 	return result, nil
+}
+
+func readMetadataTextTransform(arr *binarray.Buffer, hdr bytecode.FileHeader) texttransforms.EncMode {
+	if hdr.HeaderVersion != bytecode.HeaderV2 || arr.Len() < 0x24 {
+		return texttransforms.EncNone
+	}
+
+	dramatisOff := int(arr.GetInt(0x14))
+	dramatisSize := int(arr.GetInt(0x1c))
+	metaOff := dramatisOff + dramatisSize
+	if metaOff < 0 || metaOff+8 > hdr.DataOffset || hdr.DataOffset > arr.Len() {
+		return texttransforms.EncNone
+	}
+
+	metaLen := int(arr.GetInt(metaOff))
+	if metaLen <= 0 || metaOff+metaLen > hdr.DataOffset {
+		return texttransforms.EncNone
+	}
+
+	meta := metadata.Read(arr, metaOff)
+	if meta.CompilerName == "" {
+		return texttransforms.EncNone
+	}
+
+	switch meta.TextTransform {
+	case metadata.TransformChinese:
+		return texttransforms.EncChinese
+	case metadata.TransformWestern:
+		return texttransforms.EncWestern
+	case metadata.TransformKorean:
+		return texttransforms.EncKorean
+	default:
+		return texttransforms.EncNone
+	}
 }
 
 // readCommand reads one command from the bytecode stream.
@@ -1295,6 +1338,10 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 		def := FuncDef{Name: funcName, Ccode: ccode, Flags: ccodeFlags}
 		form := formatCcodeForm(def, args)
 		if !addTextoutFails(result, form) {
+			return nil
+		}
+		if opts.ControlCodes && def.HasFlag(FlagIsTextout) {
+			forceTextoutCommand(result, &cmd, form, opts)
 			return nil
 		}
 		// Merge failed: emit standalone using the ccode form
@@ -2467,13 +2514,7 @@ textoutLoop:
 	}
 
 	if opts.SeparateStrings {
-		resIdx := len(result.ResStrs)
-		result.ResStrs = append(result.ResStrs, textStr)
-		cmd.ResIdx = resIdx
-		// OCaml format: "#res<NNNN>" replaces the inline string in source.
-		cmd.Kepago = []CommandElem{ElemString{
-			Value: fmt.Sprintf("#res<%04d>", resIdx),
-		}}
+		forceTextoutCommand(result, &cmd, textStr, opts)
 	} else {
 		cmd.ResIdx = -1
 		cmd.Kepago = []CommandElem{
@@ -2481,9 +2522,8 @@ textoutLoop:
 			ElemText{Value: textStr},
 			ElemString{Value: "'"},
 		}
+		result.Commands = append(result.Commands, cmd)
 	}
-
-	result.Commands = append(result.Commands, cmd)
 	return nil
 }
 

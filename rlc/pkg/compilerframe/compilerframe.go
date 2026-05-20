@@ -16,12 +16,12 @@ package compilerframe
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
-	"golang.org/x/text/encoding/japanese"
-	"golang.org/x/text/transform"
-
 	"github.com/yoremi/rldev-go/pkg/diag"
+	"github.com/yoremi/rldev-go/pkg/text"
+	"github.com/yoremi/rldev-go/pkg/texttransforms"
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
 	"github.com/yoremi/rldev-go/rlc/pkg/codegen"
 	"github.com/yoremi/rldev-go/rlc/pkg/directive"
@@ -31,8 +31,10 @@ import (
 	"github.com/yoremi/rldev-go/rlc/pkg/ini"
 	"github.com/yoremi/rldev-go/rlc/pkg/intrinsic"
 	"github.com/yoremi/rldev-go/rlc/pkg/kfn"
+	"github.com/yoremi/rldev-go/rlc/pkg/lexer"
 	"github.com/yoremi/rldev-go/rlc/pkg/memory"
 	"github.com/yoremi/rldev-go/rlc/pkg/meta"
+	"github.com/yoremi/rldev-go/rlc/pkg/parser"
 	"github.com/yoremi/rldev-go/rlc/pkg/sel"
 )
 
@@ -257,7 +259,7 @@ func (tc *textCompiler) compileToken(tok ast.StrToken) {
 	switch t := tok.(type) {
 	case ast.TextToken:
 		tc.setQuotes(true)
-		tc.buf = append(tc.buf, tc.textToSJIS(t.Text)...)
+		tc.buf = append(tc.buf, tc.textToBytecode(t.Text)...)
 
 	case ast.SpaceToken:
 		count := t.Count
@@ -371,24 +373,19 @@ func (tc *textCompiler) compileToken(tok ast.StrToken) {
 	}
 }
 
-// textToSJIS converts a UTF-8 string to Shift-JIS bytes for bytecode.
-// Uses golang.org/x/text/encoding for the conversion.
-func (tc *textCompiler) textToSJIS(s string) []byte {
-	encoder := japanese.ShiftJIS.NewEncoder()
-	result, _, err := transform.Bytes(encoder, []byte(s))
+// textToBytecode converts a UTF-8 string through the active RLdev text
+// transformation. This matches OCaml textout.ml's TextTransforms.to_bytecode
+// path, including warning collection for characters that cannot be represented.
+func (tc *textCompiler) textToBytecode(s string) []byte {
+	texttransforms.ResetBadChars()
+	result, err := texttransforms.ToBytecode(text.Text([]rune(s)))
+	for _, r := range texttransforms.BadRunes() {
+		diag.Warning(diag.Loc{File: tc.loc.File, Line: tc.loc.Line},
+			"cannot represent U+%04X %q in RealLive bytecode with %s",
+			r, string(r), texttransforms.Describe())
+	}
 	if err != nil {
-		// Fallback: try character by character, replacing failures with spaces
-		var out []byte
-		for _, r := range s {
-			rb, _, err := transform.Bytes(encoder, []byte(string(r)))
-			if err != nil {
-				out = append(out, ' ')
-				tc.c.warning(tc.loc, fmt.Sprintf("cannot represent U+%04X in Shift-JIS", r))
-			} else {
-				out = append(out, rb...)
-			}
-		}
-		return out
+		tc.c.warning(tc.loc, err.Error())
 	}
 	return result
 }
@@ -1470,6 +1467,12 @@ func (tc *textCompiler) compileResText(s string) {
 		c := r[i]
 		// Backslash escapes
 		if c == '\\' && i+1 < len(r) {
+			if value, consumed, ok := scanWaitControl(r, i); ok {
+				flushText()
+				tc.compileWaitControl(value)
+				i += consumed
+				continue
+			}
 			next := r[i+1]
 			if next == '{' {
 				flushText()
@@ -1513,6 +1516,19 @@ func (tc *textCompiler) compileResText(s string) {
 					}
 				}
 			}
+			if src, consumed, ok := scanResourceControl(r, i); ok {
+				if stmt, ok := parseResourceControl(src, tc.loc); ok && tc.isKnownResourceControl(stmt.Ident) {
+					flushText()
+					tc.c.ParseElt(stmt)
+					i += consumed
+					continue
+				}
+			}
+			if !isResourceControlStart(next) {
+				textBuf = append(textBuf, next)
+				i += 2
+				continue
+			}
 			// Unknown escape — emit literal '\'
 			textBuf = append(textBuf, c)
 			i++
@@ -1549,6 +1565,113 @@ func (tc *textCompiler) compileResText(s string) {
 		}
 	}
 	flushText()
+}
+
+func (tc *textCompiler) isKnownResourceControl(ident string) bool {
+	if !strings.HasPrefix(ident, "\\") {
+		return false
+	}
+	_, ok := tc.c.Reg.LookupCtrlCode(strings.TrimPrefix(ident, "\\"))
+	return ok
+}
+
+func scanWaitControl(r []rune, start int) (int32, int, bool) {
+	prefix := []rune(`\wait{`)
+	if start+len(prefix) >= len(r) {
+		return 0, 0, false
+	}
+	for i, c := range prefix {
+		if r[start+i] != c {
+			return 0, 0, false
+		}
+	}
+	pos := start + len(prefix)
+	argStart := pos
+	for pos < len(r) && r[pos] != '}' {
+		pos++
+	}
+	if pos >= len(r) || pos == argStart {
+		return 0, 0, false
+	}
+	raw := strings.TrimSpace(string(r[argStart:pos]))
+	value, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil {
+		return 0, 0, false
+	}
+	return int32(value), pos - start + 1, true
+}
+
+func scanResourceControl(r []rune, start int) (string, int, bool) {
+	if start+1 >= len(r) || r[start] != '\\' || !isResourceControlStart(r[start+1]) {
+		return "", 0, false
+	}
+
+	pos := start + 2
+	for pos < len(r) && isResourceControlPart(r[pos]) {
+		pos++
+	}
+	for pos < len(r) && (r[pos] == ' ' || r[pos] == '\t') {
+		pos++
+	}
+	if pos >= len(r) || r[pos] != '{' {
+		return string(r[start:pos]), pos - start, true
+	}
+
+	depth := 0
+	for pos < len(r) {
+		switch r[pos] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				pos++
+				return string(r[start:pos]), pos - start, true
+			}
+		case '\n', '\r':
+			return "", 0, false
+		}
+		pos++
+	}
+	return "", 0, false
+}
+
+func parseResourceControl(src string, loc ast.Loc) (stmt ast.FuncCallStmt, ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	p := parser.New(lexer.New(src, loc.File))
+	fc, ok := p.ParseExpression().(ast.FuncCall)
+	if !ok {
+		return ast.FuncCallStmt{}, false
+	}
+	return ast.FuncCallStmt{
+		Loc:    loc,
+		Ident:  fc.Ident,
+		Params: fc.Params,
+		Label:  fc.Label,
+	}, true
+}
+
+func isResourceControlStart(r rune) bool {
+	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_'
+}
+
+func isResourceControlPart(r rune) bool {
+	return isResourceControlStart(r) || (r >= '0' && r <= '9')
+}
+
+func (tc *textCompiler) compileWaitControl(value int32) {
+	tc.flush()
+	tc.c.ParseElt(ast.FuncCallStmt{
+		Loc:   tc.loc,
+		Ident: `\wait`,
+		Params: []ast.Param{
+			ast.SimpleParam{Loc: tc.loc, Expr: ast.IntLit{Loc: tc.loc, Val: value}},
+		},
+	})
 }
 
 func (tc *textCompiler) compileResourceNameMarker(global bool, letters []byte, hasCharID bool, charID int) {

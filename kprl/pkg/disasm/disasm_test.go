@@ -3,6 +3,10 @@ package disasm
 import (
 	"encoding/binary"
 	"testing"
+
+	"github.com/yoremi/rldev-go/pkg/binarray"
+	"github.com/yoremi/rldev-go/pkg/metadata"
+	"github.com/yoremi/rldev-go/pkg/texttransforms"
 )
 
 func TestReaderBasics(t *testing.T) {
@@ -192,5 +196,54 @@ func TestDefaultOptions(t *testing.T) {
 	}
 	if opts.SrcExt != "org" {
 		t.Errorf("SrcExt = %q, want %q", opts.SrcExt, "org")
+	}
+}
+
+func TestDisassembleReadsMetadataTextTransform(t *testing.T) {
+	var m metadata.Metadata
+	meta := m.ToBytes("RLdev", 1.39, [4]byte{1, 2, 7, 0}, metadata.TransformWestern)
+	dataOffset := 0x1d0 + len(meta)
+	data := make([]byte, dataOffset)
+
+	copy(data[0:], []byte("KPRL"))
+	binary.LittleEndian.PutUint32(data[0x04:], 10002)
+	binary.LittleEndian.PutUint32(data[0x08:], 0x1d0)
+	binary.LittleEndian.PutUint32(data[0x14:], 0x1d0)
+	binary.LittleEndian.PutUint32(data[0x20:], uint32(dataOffset))
+	copy(data[0x1d0:], meta)
+
+	result, err := Disassemble(binarray.FromBytes(data), DefaultOptions())
+	if err != nil {
+		t.Fatalf("Disassemble: %v", err)
+	}
+	if result.TextTransform != texttransforms.EncWestern {
+		t.Fatalf("TextTransform = %v, want Western", result.TextTransform)
+	}
+}
+
+func TestWriterConvertTextUsesWesternTransform(t *testing.T) {
+	opts := DefaultOptions()
+	opts.Encoding = "UTF-8"
+	w := NewWriter("", opts)
+
+	got := w.convertText("Je d\xcateste", texttransforms.EncWestern)
+	want := "Je déteste"
+	if got != want {
+		t.Fatalf("convertText() = %q, want %q", got, want)
+	}
+}
+
+func TestEscapeResourceLineText(t *testing.T) {
+	tests := map[string]string{
+		"plain":      "plain",
+		"   leading": `\   leading`,
+		"\tleading":  "\\\tleading",
+		"<tag>":      `\<tag>`,
+		"//comment":  `\//comment`,
+	}
+	for input, want := range tests {
+		if got := escapeResourceLineText(input); got != want {
+			t.Fatalf("escapeResourceLineText(%q) = %q, want %q", input, got, want)
+		}
 	}
 }

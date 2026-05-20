@@ -32,6 +32,8 @@
   let rlInterpreter = '';
   let rlOutputDir = '';
   let rlEncoding = 'UTF-8';
+  let rlOutputTransform = 'WESTERN';
+  let rlForceTransform = true;
   let rlGameId = '';
   let rlG00File = '';
   let rlPngFile = '';
@@ -54,11 +56,14 @@
 
   let pendingLines = [];
   let flushTimer = null;
+  const maxConsoleLines = 12000;
+  const keepConsoleLines = 10000;
 
   function addLine(text) {
     let cls = '';
     if (text.includes('[OK]')) cls = 'line-ok';
     else if (text.includes('[ERROR]') || text.includes('Error')) cls = 'line-err';
+    else if (text.includes('Warning')) cls = 'line-warn';
     else if (text.startsWith('═') || text.startsWith('─')) cls = 'line-sep';
     else if (text.startsWith('>')) cls = 'line-cmd';
     pendingLines.push({ text, cls });
@@ -69,7 +74,7 @@
     if (pendingLines.length > 0) {
       consoleLines = [...consoleLines, ...pendingLines];
       pendingLines = [];
-      if (consoleLines.length > 2000) consoleLines = consoleLines.slice(-1500);
+      if (consoleLines.length > maxConsoleLines) consoleLines = consoleLines.slice(-keepConsoleLines);
       tick().then(() => { if (consoleEl) consoleEl.scrollTop = consoleEl.scrollHeight; });
     }
     flushTimer = null;
@@ -159,9 +164,9 @@
   }
   function startRlCompile() {
     if (rlCompileBatch) {
-      run(() => RldevCompileBatch(rlOrgDir, rlKfnFile, rlGameexe, rlInterpreter, rlEncoding, rlOutputDir));
+      run(() => RldevCompileBatch(rlOrgDir, rlKfnFile, rlGameexe, rlInterpreter, rlEncoding, rlOutputTransform, rlForceTransform, rlOutputDir));
     } else {
-      run(() => RldevCompile(rlOrgFile, rlKfnFile, rlGameexe, rlInterpreter, rlEncoding, rlOutputDir));
+      run(() => RldevCompile(rlOrgFile, rlKfnFile, rlGameexe, rlInterpreter, rlEncoding, rlOutputTransform, rlForceTransform, rlOutputDir));
     }
   }
   function toggleCompileBatch() {
@@ -250,6 +255,8 @@
         <div class="form-group"><label>GAMEEXE.INI (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlGameexe} readonly /><button class="btn" on:click={browseRlGameexe}>Select</button></div></div>
         <div class="form-group"><label>RealLive.exe (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlInterpreter} readonly /><button class="btn" on:click={browseRlInterpreter}>Select</button></div><div class="form-hint">Détection de version PE / overloads KFN si disponible.</div></div>
         <div class="form-group"><label>Encodage source :</label><div class="form-row"><select bind:value={rlEncoding}><option value="UTF-8">UTF-8</option><option value="CP932">CP932 / Shift-JIS</option><option value="EUC-JP">EUC-JP</option></select></div></div>
+        <div class="form-group"><label>Transformation sortie :</label><div class="form-row"><select bind:value={rlOutputTransform}><option value="WESTERN">WESTERN / CP1252</option><option value="NONE">NONE / Japonais</option><option value="CHINESE">CHINESE</option><option value="KOREAN">KOREAN</option></select></div></div>
+        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlForceTransform} /> Force transform</label></div></div>
         <div class="form-group"><label>Output folder :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
         <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startRlCompile} disabled={(rlCompileBatch ? !rlOrgDir : !rlOrgFile) || !rlOutputDir}>Compile</button>{/if}</div>
 

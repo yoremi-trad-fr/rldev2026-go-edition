@@ -1,0 +1,10 @@
+.gocache/
+.gotmp/
+.codex-check/
+.codex-go-cache/
+_codex_*/
+GUI Sources/.gocache-gui/
+GUI Sources/.gotmp-gui/
+GUI Sources/frontend/.npm-cache/
+GUI Sources/frontend/node_modules/
+GUI Sources/rldev2026go.exe

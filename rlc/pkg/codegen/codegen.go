@@ -297,7 +297,8 @@ func (o *Output) encodeText(loc ast.Loc, s string) ([]byte, error) {
 	b, err := texttransforms.ToBytecode(text.Text([]rune(s)))
 	for _, r := range texttransforms.BadRunes() {
 		diag.Warning(diag.Loc{File: loc.File, Line: loc.Line},
-			"cannot represent U+%04X %q in RealLive bytecode", r, string(r))
+			"cannot represent U+%04X %q in RealLive bytecode with %s",
+			r, string(r), texttransforms.Describe())
 	}
 	return b, err
 }
@@ -723,6 +724,11 @@ func lexResourceText(s string) ([]rtToken, error) {
 					}
 				}
 			}
+			if !isResourceControlStart(next) {
+				buf = append(buf, next)
+				i += 2
+				continue
+			}
 			// Unknown backslash escape: emit literal '\' as text. The
 			// disassembler shouldn't produce these, but tolerate
 			// gracefully.
@@ -769,6 +775,10 @@ func lexResourceText(s string) ([]rtToken, error) {
 	}
 	flush()
 	return out, nil
+}
+
+func isResourceControlStart(r rune) bool {
+	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_'
 }
 
 // parseNameToken parses `\l{X}`, `\l{XX}`, `\l{X, N}`, `\l{XX, N}` and

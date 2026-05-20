@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/yoremi/rldev-go/pkg/texttransforms"
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
 	"github.com/yoremi/rldev-go/rlc/pkg/ini"
 	"github.com/yoremi/rldev-go/rlc/pkg/kfn"
@@ -534,6 +535,131 @@ func TestTextStubResourceNameMarkerLetters(t *testing.T) {
 	if bytes.Contains(got, []byte{0x81, 0x96, 0x82, 0x50}) {
 		t.Fatalf("resource name marker compiled B as digit 1: % x", got)
 	}
+}
+
+func TestTextStubUsesWesternTextTransform(t *testing.T) {
+	oldMode := texttransforms.GetMode()
+	oldForce := texttransforms.ForceEncode
+	texttransforms.SetMode(texttransforms.EncWestern)
+	texttransforms.ForceEncode = false
+	defer func() {
+		texttransforms.SetMode(oldMode)
+		texttransforms.ForceEncode = oldForce
+	}()
+
+	c := newComp()
+	c.ParseElt(ast.ReturnStmt{
+		Loc: ast.Loc{Line: 1},
+		Expr: ast.StrLit{Tokens: []ast.StrToken{
+			ast.TextToken{Text: "de"},
+			ast.TextToken{Text: "teste"},
+			ast.TextToken{Text: "é"},
+		}},
+	})
+	var got []byte
+	for _, ir := range c.Out.IR {
+		got = append(got, ir.Bytes...)
+	}
+	if !bytes.Contains(got, []byte{0xca}) {
+		t.Fatalf("western transform should encode é as 0xCA, got % x", got)
+	}
+	if bytes.Contains(got, []byte(" ")) {
+		t.Fatalf("western transform should not replace é with a space: % x", got)
+	}
+}
+
+func TestScanWaitControl(t *testing.T) {
+	value, consumed, ok := scanWaitControl([]rune(`...\wait{800} suite`), 3)
+	if !ok {
+		t.Fatal("wait control was not recognised")
+	}
+	if value != 800 {
+		t.Fatalf("value: got %d", value)
+	}
+	if consumed != len(`\wait{800}`) {
+		t.Fatalf("consumed: got %d", consumed)
+	}
+	if _, _, ok := scanWaitControl([]rune(`\wait{x}`), 0); ok {
+		t.Fatal("non-numeric wait should not be recognised")
+	}
+}
+
+func TestScanResourceControl(t *testing.T) {
+	src, consumed, ok := scanResourceControl([]rune(`\s{strS[1016]} suite`), 0)
+	if !ok {
+		t.Fatal("resource control was not recognised")
+	}
+	if src != `\s{strS[1016]}` {
+		t.Fatalf("src: got %q", src)
+	}
+	if consumed != len(`\s{strS[1016]}`) {
+		t.Fatalf("consumed: got %d", consumed)
+	}
+
+	stmt, ok := parseResourceControl(src, ast.Loc{File: "t", Line: 1})
+	if !ok {
+		t.Fatal("resource control did not parse")
+	}
+	if stmt.Ident != `\s` || len(stmt.Params) != 1 {
+		t.Fatalf("stmt: got ident=%q params=%d", stmt.Ident, len(stmt.Params))
+	}
+}
+
+func TestCompileResTextStroutControl(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "strout",
+		CCStr:    "s",
+		Flags:    []kfn.FuncFlag{kfn.FlagIsTextout},
+		OpType:   1,
+		OpModule: 1,
+		OpCode:   100,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+			Params:  []kfn.Parameter{{Type: kfn.PStrV}},
+		}},
+	})
+
+	tc := &textCompiler{c: c, loc: ast.Loc{File: "t", Line: 1}}
+	tc.compileResText(`\s{strS[1016]}`)
+	tc.flush()
+
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	if bytes.Contains(got, []byte(`\s`)) {
+		t.Fatalf("resource control was emitted as literal text: % x", got)
+	}
+	if !bytes.Contains(got, []byte{'#', 1, 1, 100, 0}) {
+		t.Fatalf("strout opcode was not emitted: % x", got)
+	}
+}
+
+func TestCompileResTextEscapedLeadingSpace(t *testing.T) {
+	c := newComp()
+	tc := &textCompiler{c: c, loc: ast.Loc{File: "t", Line: 1}}
+	tc.compileResText(`\             combo`)
+	tc.flush()
+
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	if bytes.Contains(got, []byte{'\\'}) {
+		t.Fatalf("escaped leading space kept a literal backslash: % x", got)
+	}
+	if !bytes.Contains(got, []byte("             combo")) {
+		t.Fatalf("escaped leading spaces were not preserved: % x", got)
+	}
+}
+
+func compilerOutputBytes(c *Compiler) []byte {
+	var got []byte
+	for _, ir := range c.Out.IR {
+		got = append(got, ir.Bytes...)
+	}
+	return got
 }
 
 func TestTextStubNilExpr(t *testing.T) {

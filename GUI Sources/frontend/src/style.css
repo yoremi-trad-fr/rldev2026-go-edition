@@ -6,6 +6,7 @@
   --text-main: #1a1a1a;
   --text-console: #cdd6f4;
   --text-console-ok: #a6e3a1;
+  --text-console-warn: #f9e2af;
   --text-console-err: #f38ba8;
   --border: #c0c0c0;
   --btn-bg: #e1e1e1;
@@ -94,6 +95,7 @@ html, body {
   padding: 6px 10px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
 }
 .console .line-ok { color: var(--text-console-ok); }
+.console .line-warn { color: var(--text-console-warn); }
 .console .line-err { color: var(--text-console-err); }
 .console .line-sep { color: #585b70; }
 .console .line-cmd { color: #89b4fa; }
