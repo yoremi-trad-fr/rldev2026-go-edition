@@ -1,12 +1,15 @@
 # Rldev2026-Go Port Status
-Update : 19/05/2026 : An initial version of the GUI has been created for Rldev2026
+Update : 20/05/2026 : An initial version of the GUI has been created for Rldev2026
 
-
+GUI update Best console log + full .log file
+Fixes for the -x transform not included in the GUI
+rldev2026-go now behaves in the same way as OCaml when it comes to handling encodings
 
 **Status update:** `20/05/2026`
 
 VN full supported : 
 ## Clannad Full Voice (2007)
+## Clannad (2004)
 ---
 
 # Supported Titles
@@ -27,11 +30,11 @@ VN full supported :
 
 ---
 
-## Clannad (2004)
+## Clannad (2004) : Ok
 
 * Decompilation UTF8/SJIS: Passed
 * Intermediate compilation (`.org / .ke`):  Passed
-* Final compilation: Failed
+* Final compilation: Passed
 
 ---
 
