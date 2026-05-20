@@ -2090,6 +2090,17 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 						inner.WriteByte(')')
 					}
 				case '(':
+					if localDepth == 1 {
+						d, err := r.GetDataSep(false)
+						if err != nil {
+							break nestedLoop
+						}
+						if inner.Len() > 1 {
+							inner.WriteString(", ")
+						}
+						inner.WriteString(d)
+						continue
+					}
 					r.Next()
 					localDepth++
 					inner.WriteByte('(')

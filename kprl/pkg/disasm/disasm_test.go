@@ -2,6 +2,7 @@ package disasm
 
 import (
 	"encoding/binary"
+	"strings"
 	"testing"
 
 	"github.com/yoremi/rldev-go/pkg/binarray"
@@ -230,6 +231,52 @@ func TestWriterConvertTextUsesWesternTransform(t *testing.T) {
 	want := "Je déteste"
 	if got != want {
 		t.Fatalf("convertText() = %q, want %q", got, want)
+	}
+}
+
+func TestReadFuncArgsComplexTupleKeepsParenExpressionOperators(t *testing.T) {
+	var data []byte
+	addInt := func(v int32) {
+		data = append(data, '$', 0xff)
+		var buf [4]byte
+		binary.LittleEndian.PutUint32(buf[:], uint32(v))
+		data = append(data, buf[:]...)
+	}
+
+	data = append(data, '(', '(')
+	addInt(0)
+	addInt(3600)
+	data = append(data, '\\', 0x02)
+	addInt(2)
+	data = append(data, '\\', 0x00)
+	addInt(1400)
+	data = append(data, '(')
+	addInt(3600)
+	data = append(data, '\\', 0x02)
+	addInt(2)
+	data = append(data, '\\', 0x00)
+	addInt(1400)
+	data = append(data, ')', '\\', 0x02)
+	addInt(2)
+	data = append(data, '$', 0x02, '[')
+	addInt(0)
+	data = append(data, ']', ')', ')')
+
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	args, err := readFuncArgsCtx(r, 1, nil, nil)
+	if err != nil {
+		t.Fatalf("readFuncArgsCtx() error: %v", err)
+	}
+	if len(args) != 1 {
+		t.Fatalf("args len = %d, want 1 (%v)", len(args), args)
+	}
+
+	wantPrefix := "(0, 3600 * 2 + 1400, (3600 * 2 + 1400) * 2, intC[0]) /* nested:"
+	if !strings.HasPrefix(args[0], wantPrefix) {
+		t.Fatalf("arg = %q, want prefix %q", args[0], wantPrefix)
+	}
+	if r.Pos() != len(data) {
+		t.Fatalf("reader pos = %d, want %d", r.Pos(), len(data))
 	}
 }
 

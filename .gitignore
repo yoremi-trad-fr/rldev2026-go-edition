@@ -1,5 +1,9 @@
 .gocache/
 .gotmp/
+**/.gocache-*/
+**/.gotmp-*/
+.tmp-*/
+**/_tmp_*/
 .codex-check/
 .codex-go-cache/
 _codex_*/
