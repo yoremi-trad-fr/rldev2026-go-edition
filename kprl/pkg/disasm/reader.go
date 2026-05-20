@@ -704,18 +704,18 @@ func isAsciiStringStart(b byte) bool {
 // Strings in RealLive bytecode use a peculiar two-mode encoding:
 //
 //   - "unquot" mode (default outside double-quotes):
-//       collects [A-Z 0-9 ? _ sjs-double-byte] runs as raw text;
-//       handles "###PRINT(expr)" → \i{expr} or \s{expr};
-//       a '"' switches to quot mode;
-//       any other byte ends the string (rolled back for caller).
+//     collects [A-Z 0-9 ? _ sjs-double-byte] runs as raw text;
+//     handles "###PRINT(expr)" → \i{expr} or \s{expr};
+//     a '"' switches to quot mode;
+//     any other byte ends the string (rolled back for caller).
 //
 //   - "quot" mode (after seeing a '"'):
-//       \" → '"' literal in output;
-//       \  → "\\" (escape backslash);
-//       '  → "'" or "\'" depending on sep_str;
-//       a closing '"' returns to unquot mode;
-//       sjs1 lead-byte + any → 2-byte SJIS char;
-//       anything else → raw byte.
+//     \" → '"' literal in output;
+//     \  → "\\" (escape backslash);
+//     '  → "'" or "\'" depending on sep_str;
+//     a closing '"' returns to unquot mode;
+//     sjs1 lead-byte + any → 2-byte SJIS char;
+//     anything else → raw byte.
 //
 // The final string is wrapped in single quotes when sep_str is false
 // (inline argument mode). When sep_str is true the caller intends to
@@ -922,14 +922,14 @@ func contextDump(data []byte, offset int) string {
 
 // DisassemblyResult holds the output of disassembly.
 type DisassemblyResult struct {
-	Commands  []Command
-	ResStrs   []string     // Resource strings
-	Pointers  map[int]bool // Set of pointer targets (for labels)
-	Mode      EngineMode
-	Version   Version
-	Header    bytecode.FileHeader
-	Error     string
-	SeenMap   *SeenMap
+	Commands []Command
+	ResStrs  []string     // Resource strings
+	Pointers map[int]bool // Set of pointer targets (for labels)
+	Mode     EngineMode
+	Version  Version
+	Header   bytecode.FileHeader
+	Error    string
+	SeenMap  *SeenMap
 }
 
 // Disassemble performs bytecode disassembly on the given data.
@@ -1374,6 +1374,7 @@ func readStrAssign(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode
 	result.Commands = append(result.Commands, *cmd)
 	return nil
 }
+
 // `op<type:Module:NNNNN, overload>` form, using the symbolic module name
 // when the registry knows it ("Sys", "Jmp", "Bgm", …) and the numeric
 // 3-digit form ("004") otherwise.
@@ -1442,7 +1443,8 @@ func readGotoOnLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opcod
 }
 
 // readGotoCaseLike reads goto_case / gosub_case:
-//   '(' expr ')' '{' [ '(' case-expr ')' | '()' ] int32 ×argc '}'
+//
+//	'(' expr ')' '{' [ '(' case-expr ')' | '()' ] int32 ×argc '}'
 //
 // OCaml reference: read_goto_case (disassembler.ml L1796).
 // Each case is either a value-bearing case `(case-expr) ptr` or a default
@@ -1521,14 +1523,16 @@ func readGotoCaseLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opc
 }
 
 // readGotoLike reads the bytecode shape for an unconditional jump:
-//   header already consumed; a 4-byte LE int32 pointer follows directly
-//   (no parens, no argc — the pointer is added by the IsGoto flag in the
-//   KFN).
+//
+//	header already consumed; a 4-byte LE int32 pointer follows directly
+//	(no parens, no argc — the pointer is added by the IsGoto flag in the
+//	KFN).
 //
 // OCaml reference: read_soft_function L2356:
 //
 //	if List.mem IsGoto fndef.fn_flags
 //	  then [pointer (get_int lexbuf)]
+//
 // readSelect handles the select-family opcodes: select_w, select, select_s2,
 // select_s, select_cancel, select_msgcancel, select_btncancel, select_btnwkcancel.
 //
@@ -1690,6 +1694,7 @@ func selectName(fn int) string {
 		return fmt.Sprintf("select_%05d", fn)
 	}
 }
+
 // skipDebugInfo consumes the bytes that delimit items inside a select
 // block: '\n' followed by a 16-bit line number, optionally repeated,
 // plus stray ','. Mirrors OCaml read_select.skip_debug_info.
@@ -1788,15 +1793,116 @@ func readCondGotoLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opc
 // prettifyCond rewrites "expr == 0" to "!expr" and "expr != 0" to "expr",
 // matching OCaml kprl output style for conditional gotos.
 func prettifyCond(s string) string {
+	if left, op, right, ok := splitTopLevelLogical(s); ok {
+		return prettifyCond(left) + " " + op + " " + prettifyCond(right)
+	}
+
 	const eqZero = " == 0"
 	const neZero = " != 0"
 	if strings.HasSuffix(s, eqZero) {
-		return "!" + strings.TrimSuffix(s, eqZero)
+		return "!" + unaryNotOperand(strings.TrimSuffix(s, eqZero))
 	}
 	if strings.HasSuffix(s, neZero) {
 		return strings.TrimSuffix(s, neZero)
 	}
 	return s
+}
+
+func unaryNotOperand(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || wholeExprParen(s) || !hasTopLevelExprOp(s) {
+		return s
+	}
+	return "(" + s + ")"
+}
+
+func splitTopLevelLogical(s string) (left, op, right string, ok bool) {
+	depth := 0
+	brackets := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case '[':
+			brackets++
+		case ']':
+			if brackets > 0 {
+				brackets--
+			}
+		}
+		if depth == 0 && brackets == 0 {
+			switch {
+			case strings.HasPrefix(s[i:], " && "):
+				return s[:i], "&&", s[i+4:], true
+			case strings.HasPrefix(s[i:], " || "):
+				return s[:i], "||", s[i+4:], true
+			}
+		}
+	}
+	return "", "", "", false
+}
+
+func wholeExprParen(s string) bool {
+	if len(s) < 2 || s[0] != '(' || s[len(s)-1] != ')' {
+		return false
+	}
+	depth := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			if depth == 0 && i != len(s)-1 {
+				return false
+			}
+		}
+	}
+	return depth == 0
+}
+
+func hasTopLevelExprOp(s string) bool {
+	if strings.HasPrefix(s, "-") || strings.HasPrefix(s, "+") {
+		return true
+	}
+
+	depth := 0
+	brackets := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case '[':
+			brackets++
+		case ']':
+			if brackets > 0 {
+				brackets--
+			}
+		}
+		if depth != 0 || brackets != 0 {
+			continue
+		}
+		for _, op := range []string{
+			" && ", " || ",
+			" == ", " != ", " <= ", " < ", " >= ", " > ",
+			" + ", " - ", " * ", " / ", " % ", " & ", " | ", " ^ ", " << ", " >> ",
+		} {
+			if strings.HasPrefix(s[i:], op) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // readFuncArgs reads function arguments enclosed in matched parens.
@@ -1992,13 +2098,15 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 //
 // OCaml reference: get_assignment (disassembler.ml L1294).
 // Format: '$' [varType] '[' expr ']'   ← consumed via readExprToken
-//         '\' [0x14-0x1e]              ← assignment operator (2 bytes)
-//         <expression>                 ← right-hand side
+//
+//	'\' [0x14-0x1e]              ← assignment operator (2 bytes)
+//	<expression>                 ← right-hand side
 //
 // The op-byte mapping is OCaml's `op_string.(byte - 0x14) ^ "="`:
-//   0x14 → "+=",  0x15 → "-=",  0x16 → "*=",  0x17 → "/=",  0x18 → "%=",
-//   0x19 → "&=",  0x1a → "|=",  0x1b → "^=",  0x1c → "<<=", 0x1d → ">>=",
-//   0x1e → "="    (op_string[10] is empty, so just "=")
+//
+//	0x14 → "+=",  0x15 → "-=",  0x16 → "*=",  0x17 → "/=",  0x18 → "%=",
+//	0x19 → "&=",  0x1a → "|=",  0x1b → "^=",  0x1c → "<<=", 0x1d → ">>=",
+//	0x1e → "="    (op_string[10] is empty, so just "=")
 //
 // IMPORTANT: there is NO trailing 0x5c after the expression. The previous
 // implementation consumed an extra byte at the end of every assignment,

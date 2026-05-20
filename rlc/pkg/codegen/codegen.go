@@ -222,6 +222,7 @@ func (o *Output) AddLabel(name string, loc ast.Loc) error {
 	if o.labels[name] {
 		return fmt.Errorf("%s: @%s already defined; label identifiers must be unique", loc, name)
 	}
+	o.maybeLine(loc)
 	o.IR = append(o.IR, IR{Type: IRLabel, Label: name, Loc: loc})
 	o.labels[name] = true
 	return nil
@@ -257,6 +258,19 @@ func (o *Output) maybeLine(loc ast.Loc) {
 	}
 	o.IR = append(o.IR, IR{Type: IRLineref, Index: loc.Line, Loc: loc})
 	o.lastLine = loc.Line
+}
+
+// AddLine emits a line-number marker even when the line did not change.
+// OCaml's select compiler uses Output.add_line ~force:true between menu
+// entries; those markers are the separators the bytecode reader expects
+// inside the select `{...}` block.
+func (o *Output) AddLine(loc ast.Loc) {
+	line := 0
+	if loc != ast.Nowhere {
+		line = loc.Line
+	}
+	o.IR = append(o.IR, IR{Type: IRLineref, Index: line, Loc: loc})
+	o.lastLine = line
 }
 
 // --- Expression emission helpers ---
@@ -322,6 +336,10 @@ func (o *Output) EmitExprRaw(e ast.Expr) {
 		o.EmitExprRaw(x.RHS)
 	case ast.UnaryExpr:
 		if x.Op == ast.UnarySub {
+			if lit, ok := x.Val.(ast.IntLit); ok {
+				o.AddCodeRaw(x.Loc, EncodeInt32(-lit.Val))
+				return
+			}
 			o.AddCodeRaw(x.Loc, []byte{'\\', OpCode(ast.OpSub)})
 			o.EmitExprRaw(x.Val)
 		}
@@ -559,8 +577,12 @@ func (o *Output) encodeResourceText(loc ast.Loc, text string) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
+			if hasUnsafeUnquotedByte(b) {
+				setQuotes(true)
+			}
 			buf = append(buf, b...)
 		case rtSpace:
+			setQuotes(true)
 			for i := 0; i < tk.count; i++ {
 				buf = append(buf, ' ')
 			}
@@ -585,6 +607,7 @@ func (o *Output) encodeResourceText(loc ast.Loc, text string) ([]byte, error) {
 		case rtPercent:
 			buf = append(buf, 0x81, 0x93)
 		case rtHyphen:
+			setQuotes(true)
 			buf = append(buf, '-')
 		case rtName:
 			setQuotes(false)
@@ -606,6 +629,9 @@ func (o *Output) encodeResourceText(loc ast.Loc, text string) ([]byte, error) {
 	// emit the matching closing 0x22.
 	if quoted {
 		buf = append(buf, '"')
+	}
+	if len(buf) == 0 {
+		return []byte{'"', '"'}, nil
 	}
 	return buf, nil
 }

@@ -105,6 +105,16 @@ func BuildGotoOn(reg *kfn.Registry, funcName string, expr ast.Expr, labels []str
 	}, nil
 }
 
+func unwrapParenExpr(expr ast.Expr) ast.Expr {
+	for {
+		paren, ok := expr.(ast.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = paren.Expr
+	}
+}
+
 // EmitGotoOn emits a goto_on instruction to the codegen Output buffer.
 func EmitGotoOn(out *codegen.Output, loc ast.Loc, reg *kfn.Registry, funcName string, expr ast.Expr, labels []ast.Label) {
 	fn, ok := reg.Lookup(funcName)
@@ -116,7 +126,7 @@ func EmitGotoOn(out *codegen.Output, loc ast.Loc, reg *kfn.Registry, funcName st
 
 	out.EmitOpcode(loc, 0, opMod, opCode, len(labels), 0)
 	out.AddCodeRaw(loc, []byte{'('})
-	out.EmitExprRaw(expr)
+	out.EmitExprRaw(unwrapParenExpr(expr))
 	out.AddCodeRaw(loc, []byte{')', '{'})
 	for _, lbl := range labels {
 		out.AddLabelRef(lbl.Ident, lbl.Loc)
@@ -149,7 +159,7 @@ func EmitGotoCase(out *codegen.Output, loc ast.Loc, reg *kfn.Registry, funcName 
 
 	out.EmitOpcode(loc, 0, opMod, opCode, len(cases), 0)
 	out.AddCodeRaw(loc, []byte{'('})
-	out.EmitExprRaw(expr)
+	out.EmitExprRaw(unwrapParenExpr(expr))
 	out.AddCodeRaw(loc, []byte{')', '{'})
 
 	for _, arm := range cases {

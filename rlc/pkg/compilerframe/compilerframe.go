@@ -804,11 +804,32 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 		for _, p := range emitParams {
 			switch pp := p.(type) {
 			case ast.SimpleParam:
-				isString := isStringExpr(pp.Expr)
+				// OCaml's expression AST does NOT carry an explicit
+				// ParenExpr node — parens around a sub-expression are
+				// purely grammatical and produce no bytecode of their
+				// own. The Go parser, in contrast, keeps an
+				// ast.ParenExpr to preserve source-level grouping. If
+				// we feed that ParenExpr to EmitExprRaw, it dutifully
+				// emits `(` and `)` bytes around the inner expression —
+				// but the parameter list itself ALREADY supplies the
+				// outer `(`/`)`, so we end up with `((cond))` in cases
+				// like `goto_unless (intA[1000] == 1) @2`. The engine
+				// reads the extra paren as part of the condition, the
+				// label lookup desyncs, and Clannad freezes after the
+				// splash. Strip top-level ParenExpr to match OCaml.
+				inner := pp.Expr
+				for {
+					pe, ok := inner.(ast.ParenExpr)
+					if !ok {
+						break
+					}
+					inner = pe.Expr
+				}
+				isString := isStringExpr(inner)
 				if prevWasString && isString {
 					c.Out.AddCodeRaw(s.Loc, []byte{','})
 				}
-				c.Out.EmitExprRaw(pp.Expr)
+				c.Out.EmitExprRaw(inner)
 				prevWasString = isString
 			case ast.ComplexParam:
 				c.Out.AddCodeRaw(s.Loc, []byte{'('})
@@ -1364,47 +1385,43 @@ func normalizeCondParam(p ast.Param) ast.Param {
 // nested UnaryNot in place drops the left operand and corrupts the
 // following opcode stream.
 func liftNot(e ast.Expr) ast.Expr {
-	return liftNotInExpr(e, false)
+	return liftNotInExpr(e)
 }
 
-func liftNotInExpr(e ast.Expr, nested bool) ast.Expr {
+func liftNotInExpr(e ast.Expr) ast.Expr {
 	switch x := e.(type) {
 	case ast.UnaryExpr:
 		if x.Op == ast.UnaryNot {
-			cmp := ast.CmpExpr{
+			return ast.CmpExpr{
 				Loc: x.Loc,
-				LHS: liftNotInExpr(x.Val, false),
+				LHS: liftNotInExpr(x.Val),
 				Op:  ast.CmpEqu,
 				RHS: ast.IntLit{Loc: x.Loc, Val: 0},
 			}
-			if nested {
-				return ast.ParenExpr{Loc: x.Loc, Expr: cmp}
-			}
-			return cmp
 		}
-		return ast.UnaryExpr{Loc: x.Loc, Op: x.Op, Val: liftNotInExpr(x.Val, true)}
+		return ast.UnaryExpr{Loc: x.Loc, Op: x.Op, Val: liftNotInExpr(x.Val)}
 	case ast.ParenExpr:
-		return ast.ParenExpr{Loc: x.Loc, Expr: liftNotInExpr(x.Expr, false)}
+		return ast.ParenExpr{Loc: x.Loc, Expr: liftNotInExpr(x.Expr)}
 	case ast.CmpExpr:
 		return ast.CmpExpr{
 			Loc: x.Loc,
-			LHS: liftNotInExpr(x.LHS, true),
+			LHS: liftNotInExpr(x.LHS),
 			Op:  x.Op,
-			RHS: liftNotInExpr(x.RHS, true),
+			RHS: liftNotInExpr(x.RHS),
 		}
 	case ast.ChainExpr:
 		return ast.ChainExpr{
 			Loc: x.Loc,
-			LHS: liftNotInExpr(x.LHS, true),
+			LHS: liftNotInExpr(x.LHS),
 			Op:  x.Op,
-			RHS: liftNotInExpr(x.RHS, true),
+			RHS: liftNotInExpr(x.RHS),
 		}
 	case ast.BinOp:
 		return ast.BinOp{
 			Loc: x.Loc,
-			LHS: liftNotInExpr(x.LHS, true),
+			LHS: liftNotInExpr(x.LHS),
 			Op:  x.Op,
-			RHS: liftNotInExpr(x.RHS, true),
+			RHS: liftNotInExpr(x.RHS),
 		}
 	}
 	return e
@@ -1470,12 +1487,10 @@ func (tc *textCompiler) compileResText(s string) {
 					inside := string(r[i+3 : end])
 					// Parse letters (1-2 uppercase A-Z) and optional ", N"
 					p := 0
-					letterCount := 0
-					letterIdx := 0
-					for p < len(inside) && inside[p] >= 'A' && inside[p] <= 'Z' && letterCount < 2 {
-						letterIdx = letterIdx*26 + int(inside[p]-'A')
+					var letters []byte
+					for p < len(inside) && inside[p] >= 'A' && inside[p] <= 'Z' && len(letters) < 2 {
+						letters = append(letters, inside[p])
 						p++
-						letterCount++
 					}
 					hasCharID := false
 					charID := 0
@@ -1490,17 +1505,9 @@ func (tc *textCompiler) compileResText(s string) {
 							p++
 						}
 					}
-					if letterCount > 0 && p == len(inside) {
+					if len(letters) > 0 && p == len(inside) {
 						flushText()
-						nt := ast.NameToken{
-							Loc:    tc.loc,
-							Global: next == 'm',
-							Index:  ast.IntLit{Loc: tc.loc, Val: int32(letterIdx)},
-						}
-						if hasCharID {
-							nt.CharID = ast.IntLit{Loc: tc.loc, Val: int32(charID)}
-						}
-						tc.compileToken(nt)
+						tc.compileResourceNameMarker(next == 'm', letters, hasCharID, charID)
 						i = end + 1
 						continue
 					}
@@ -1542,4 +1549,19 @@ func (tc *textCompiler) compileResText(s string) {
 		}
 	}
 	flushText()
+}
+
+func (tc *textCompiler) compileResourceNameMarker(global bool, letters []byte, hasCharID bool, charID int) {
+	tc.setQuotes(false)
+	if global {
+		tc.buf = append(tc.buf, 0x81, 0x96)
+	} else {
+		tc.buf = append(tc.buf, 0x81, 0x93)
+	}
+	for _, c := range letters {
+		tc.buf = append(tc.buf, 0x82, c-'A'+0x60)
+	}
+	if hasCharID {
+		tc.buf = append(tc.buf, 0x82, byte(charID)+0x4f)
+	}
 }

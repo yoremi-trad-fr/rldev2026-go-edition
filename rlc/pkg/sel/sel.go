@@ -126,6 +126,7 @@ func EmitSelect(out *codegen.Output, loc ast.Loc, opcode int, window ast.Expr, d
 
 	// Open parameter block
 	out.AddCodeRaw(ast.Nowhere, []byte{'{'})
+	out.AddLine(loc)
 
 	// Emit each parameter
 	for _, p := range params {
@@ -165,6 +166,7 @@ func EmitSelect(out *codegen.Output, loc ast.Loc, opcode int, window ast.Expr, d
 				emitParamExpr(out, p.Loc, p.Expr)
 			}
 		}
+		out.AddLine(p.Loc)
 	}
 
 	// Close parameter block

@@ -1293,7 +1293,11 @@ func (p *Parser) parseParam() ast.Param {
 		paren := ast.ParenExpr{Loc: openLoc, Expr: first}
 		return ast.SimpleParam{Loc: loc, Expr: p.continueExprFrom(paren)}
 	}
-	return ast.SimpleParam{Loc: loc, Expr: p.parseExpr()}
+	expr := p.parseExpr()
+	if sp, ok := specialParamFromExpr(loc, expr); ok {
+		return sp
+	}
+	return ast.SimpleParam{Loc: loc, Expr: expr}
 }
 
 func isExprStart(t token.Type) bool {
@@ -1304,4 +1308,30 @@ func isExprStart(t token.Type) bool {
 		return true
 	}
 	return false
+}
+
+func specialParamFromExpr(loc ast.Loc, expr ast.Expr) (ast.SpecialParam, bool) {
+	call, ok := expr.(ast.FuncCall)
+	if !ok || call.Ident != "__special" || len(call.Params) == 0 {
+		return ast.SpecialParam{}, false
+	}
+
+	tagParam, ok := call.Params[0].(ast.SimpleParam)
+	if !ok {
+		return ast.SpecialParam{}, false
+	}
+	tagLit, ok := tagParam.Expr.(ast.IntLit)
+	if !ok {
+		return ast.SpecialParam{}, false
+	}
+
+	out := ast.SpecialParam{Loc: loc, Tag: int(tagLit.Val)}
+	for _, param := range call.Params[1:] {
+		simple, ok := param.(ast.SimpleParam)
+		if !ok {
+			return ast.SpecialParam{}, false
+		}
+		out.Exprs = append(out.Exprs, simple.Expr)
+	}
+	return out, true
 }

@@ -187,6 +187,27 @@ func TestParseFuncCall(t *testing.T) {
 	}
 }
 
+func TestParseSpecialParam(t *testing.T) {
+	sf := parse("grpMulti('KURO', 4, __special[4]('CGKY12', 0, 0))")
+	if len(sf.Stmts) != 1 {
+		t.Fatalf("got %d stmts", len(sf.Stmts))
+	}
+	fc, ok := sf.Stmts[0].(ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("got %T", sf.Stmts[0])
+	}
+	if len(fc.Params) != 3 {
+		t.Fatalf("params: got %d", len(fc.Params))
+	}
+	sp, ok := fc.Params[2].(ast.SpecialParam)
+	if !ok {
+		t.Fatalf("third param: got %T", fc.Params[2])
+	}
+	if sp.Tag != 4 || len(sp.Exprs) != 3 {
+		t.Fatalf("special param: tag=%d exprs=%d", sp.Tag, len(sp.Exprs))
+	}
+}
+
 func TestParseTopLevelControlCode(t *testing.T) {
 	sf := parse(`\wait{3000}
 \size{}

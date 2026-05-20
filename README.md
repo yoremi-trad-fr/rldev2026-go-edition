@@ -3,8 +3,10 @@ Update : 19/05/2026 : An initial version of the GUI has been created for Rldev20
 
 
 
-**Status update:** `18/05/2026`
+**Status update:** `20/05/2026`
 
+VN full supported : 
+## Clannad Full Voice (2007)
 ---
 
 # Supported Titles
@@ -33,11 +35,11 @@ Update : 19/05/2026 : An initial version of the GUI has been created for Rldev20
 
 ---
 
-## Clannad Full Voice (2007)
+## Clannad Full Voice (2007) : OK
 
 * Decompilation UTF8/SJIS: Passed
 * Intermediate compilation (`.org / .ke`):  Passed
-* Final compilation: Failed
+* Final compilation: Passed
 
 ---
 

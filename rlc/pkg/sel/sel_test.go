@@ -87,6 +87,29 @@ func TestEmitSelectResourceStringVar(t *testing.T) {
 	}
 }
 
+func TestEmitSelectSeparatesLiteralItemsWithLineMarkers(t *testing.T) {
+	out := codegen.NewOutput()
+	params := []SelParam{
+		{Kind: SelAlways, Loc: ast.Loc{Line: 45}, Expr: ast.StrLit{Tokens: []ast.StrToken{ast.TextToken{Text: "A"}}}},
+		{Kind: SelAlways, Loc: ast.Loc{Line: 45}, Expr: ast.StrLit{Tokens: []ast.StrToken{ast.TextToken{Text: "B"}}}},
+	}
+	if err := EmitSelect(out, ast.Loc{Line: 45}, 1, nil, ast.StoreRef{}, params); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []byte
+	for _, ir := range out.IR {
+		if ir.Type == codegen.IRLineref {
+			got = append(got, 0x0a)
+			continue
+		}
+		got = append(got, ir.Bytes...)
+	}
+	if !bytes.Contains(got, []byte{'{', 0x0a, 'A', 0x0a, 'B', 0x0a, '}'}) {
+		t.Fatalf("select items should be separated by forced line markers, got %q", string(got))
+	}
+}
+
 func TestEmitSelectWithWindow(t *testing.T) {
 	out := codegen.NewOutput()
 	params := []SelParam{

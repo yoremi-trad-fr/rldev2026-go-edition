@@ -1,6 +1,7 @@
 package compilerframe
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
@@ -271,8 +272,8 @@ func TestNormalizeCondParamNestedNot(t *testing.T) {
 	}}
 	out := normalizeCondParam(param).(ast.SimpleParam)
 	cmp := out.Expr.(ast.CmpExpr)
-	if _, ok := cmp.LHS.(ast.ParenExpr); !ok {
-		t.Fatalf("nested ! should be parenthesized after lowering, got %T", cmp.LHS)
+	if _, ok := cmp.LHS.(ast.CmpExpr); !ok {
+		t.Fatalf("nested ! should lower directly to a comparison, got %T", cmp.LHS)
 	}
 }
 
@@ -508,6 +509,30 @@ func TestTextStubName(t *testing.T) {
 	})
 	if c.HasErrors() {
 		t.Errorf("errors: %v", c.Errors)
+	}
+}
+
+func TestTextStubResourceNameMarkerLetters(t *testing.T) {
+	c := newComp()
+	c.Out.ResolveRes = func(key string) (string, bool) {
+		if key == "0000" {
+			return `\{\m{B}}`, true
+		}
+		return "", false
+	}
+	c.ParseElt(ast.ReturnStmt{
+		Loc:  ast.Loc{Line: 1},
+		Expr: ast.ResRef{Key: "0000"},
+	})
+	var got []byte
+	for _, ir := range c.Out.IR {
+		got = append(got, ir.Bytes...)
+	}
+	if !bytes.Contains(got, []byte{0x81, 0x96, 0x82, 0x61}) {
+		t.Fatalf("resource name marker should preserve B, got % x", got)
+	}
+	if bytes.Contains(got, []byte{0x81, 0x96, 0x82, 0x50}) {
+		t.Fatalf("resource name marker compiled B as digit 1: % x", got)
 	}
 }
 
