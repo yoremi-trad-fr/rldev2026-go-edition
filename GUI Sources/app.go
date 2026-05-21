@@ -129,21 +129,42 @@ func (a *App) toolPath(toolName string) (string, error) {
 }
 
 func (a *App) findKFN() string {
+	var candidates []string
+
 	binDir, err := a.binDir()
-	if err != nil {
-		return ""
+	if err == nil {
+		candidates = append(candidates,
+			filepath.Join(binDir, "lib", "reallive.kfn"),
+			filepath.Join(binDir, "reallive.kfn"),
+		)
 	}
 
-	candidates := []string{
-		filepath.Join(binDir, "lib", "reallive.kfn"),
-		filepath.Join(binDir, "reallive.kfn"),
+	if exeDir, err := a.executableDir(); err == nil {
+		dir := exeDir
+		for i := 0; i < 4 && dir != ""; i++ {
+			candidates = append(candidates, filepath.Join(dir, "KFN", "reallive.kfn"))
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
 	}
+
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(wd, "KFN", "reallive.kfn"))
+	}
+
 	for _, candidate := range candidates {
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			return candidate
 		}
 	}
 	return ""
+}
+
+func (a *App) DefaultKFN() string {
+	return a.findKFN()
 }
 
 func (a *App) runTool(toolName string, args ...string) error {
@@ -306,14 +327,13 @@ func (a *App) RldevDisassemble(seenFile, kfnFile, encoding, gameID, outputDir st
 	if kfnFile == "" {
 		kfnFile = a.findKFN()
 	}
+	if err := required("KFN", kfnFile); err != nil {
+		return a.failIf(err)
+	}
 
 	args := []string{"-d", "-e", encoding, "-o", outputDir}
-	if kfnFile != "" {
-		a.log("KFN: " + kfnFile)
-		args = append(args, "-kfn", kfnFile)
-	} else {
-		a.log("KFN: non trouve, les opcodes resteront bruts si necessaire.")
-	}
+	a.log("KFN: " + kfnFile)
+	args = append(args, "-kfn", kfnFile)
 	if gameID != "" {
 		args = append(args, "-G", gameID)
 	}
@@ -413,12 +433,13 @@ func (a *App) RldevCompile(orgFile, kfnFile, gameexe, interpreter, encoding, out
 	if kfnFile == "" {
 		kfnFile = a.findKFN()
 	}
+	if err := required("KFN", kfnFile); err != nil {
+		return a.failIf(err)
+	}
 
 	args := []string{"-v", "-e", encoding, "-d", outputDir}
 	args = appendTransformArgs(args, outputTransform, forceTransform)
-	if kfnFile != "" {
-		args = append(args, "-K", kfnFile)
-	}
+	args = append(args, "-K", kfnFile)
 	if gameexe != "" {
 		args = append(args, "-i", gameexe)
 	}
@@ -454,6 +475,9 @@ func (a *App) RldevCompileBatch(inputDir, kfnFile, gameexe, interpreter, encodin
 	if kfnFile == "" {
 		kfnFile = a.findKFN()
 	}
+	if err := required("KFN", kfnFile); err != nil {
+		return a.failIf(err)
+	}
 
 	entries, err := os.ReadDir(inputDir)
 	if err != nil {
@@ -484,9 +508,7 @@ func (a *App) RldevCompileBatch(inputDir, kfnFile, gameexe, interpreter, encodin
 
 		args := []string{"-v", "-e", encoding, "-d", outputDir, "-o", base}
 		args = appendTransformArgs(args, outputTransform, forceTransform)
-		if kfnFile != "" {
-			args = append(args, "-K", kfnFile)
-		}
+		args = append(args, "-K", kfnFile)
 		if gameexe != "" {
 			args = append(args, "-i", gameexe)
 		}

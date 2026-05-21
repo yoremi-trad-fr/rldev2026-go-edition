@@ -7,12 +7,14 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 **Status update:** `20/05/2026`
 
-VN full supported : 
-## Clannad Full Voice (2007)
-## Clannad (2004)
+Supported VNs
+## -Clannad Full Voice (2007)
+## -Clannad (2004)
 ---
 
-# Supported Titles
+Planned updates to the tools: Improved .g00 compatibility, support for version 2 
+
+# To do list VN
 
 ## Kanon (1999 AVG)
 
@@ -27,22 +29,6 @@ VN full supported :
 * Decompilation UTF8/SJIS: Not implemented
 * Intermediate compilation (`.org / .ke`): Not implemented
 * Final compilation: Not implemented
-
----
-
-## Clannad (2004) : Ok
-
-* Decompilation UTF8/SJIS: Passed
-* Intermediate compilation (`.org / .ke`):  Passed
-* Final compilation: Passed
-
----
-
-## Clannad Full Voice (2007) : OK
-
-* Decompilation UTF8/SJIS: Passed
-* Intermediate compilation (`.org / .ke`):  Passed
-* Final compilation: Passed
 
 ---
 
