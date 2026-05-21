@@ -636,6 +636,39 @@ func TestCompileResTextStroutControl(t *testing.T) {
 	}
 }
 
+func TestCompileResTextControlKeepsTextOrder(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "shake",
+		CCStr:    "shake",
+		OpType:   1,
+		OpModule: 2,
+		OpCode:   3,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+			Params:  []kfn.Parameter{{Type: kfn.PInt}},
+		}},
+	})
+
+	tc := &textCompiler{c: c, loc: ast.Loc{File: "t", Line: 1}}
+	tc.compileResText(`before\shake{1}after`)
+	tc.flush()
+
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	textPos := bytes.Index(got, []byte("before"))
+	opPos := bytes.Index(got, []byte{'#', 1, 2, 3, 0})
+	afterPos := bytes.Index(got, []byte("after"))
+	if textPos < 0 || opPos < 0 || afterPos < 0 {
+		t.Fatalf("missing expected text/opcode in % x", got)
+	}
+	if !(textPos < opPos && opPos < afterPos) {
+		t.Fatalf("resource control order changed: before=%d opcode=%d after=%d bytes=% x", textPos, opPos, afterPos, got)
+	}
+}
+
 func TestCompileResTextEscapedLeadingSpace(t *testing.T) {
 	c := newComp()
 	tc := &textCompiler{c: c, loc: ast.Loc{File: "t", Line: 1}}

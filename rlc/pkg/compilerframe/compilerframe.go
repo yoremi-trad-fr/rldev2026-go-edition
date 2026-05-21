@@ -243,7 +243,8 @@ func (tc *textCompiler) setQuotes(q bool) {
 func (tc *textCompiler) flush() {
 	tc.setQuotes(false)
 	if len(tc.buf) > 0 {
-		tc.c.Out.AddCode(tc.loc, tc.buf)
+		chunk := append([]byte(nil), tc.buf...)
+		tc.c.Out.AddCode(tc.loc, chunk)
 		tc.buf = tc.buf[:0]
 	}
 }
@@ -1519,6 +1520,7 @@ func (tc *textCompiler) compileResText(s string) {
 			if src, consumed, ok := scanResourceControl(r, i); ok {
 				if stmt, ok := parseResourceControl(src, tc.loc); ok && tc.isKnownResourceControl(stmt.Ident) {
 					flushText()
+					tc.flush()
 					tc.c.ParseElt(stmt)
 					i += consumed
 					continue
