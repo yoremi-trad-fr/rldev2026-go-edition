@@ -9,5 +9,12 @@
   "author": {
     "name": "Yoremi",
     "email": "yoremi-trad@proton.me"
+  },
+  "info": {
+    "companyName": "Yoremi",
+    "productName": "RLdev 2026 Go",
+    "productVersion": "2026.0.0",
+    "copyright": "Copyright (c) 2026 Yoremi",
+    "comments": "Windows GUI for the RLdev2026-Go RealLive toolchain"
   }
 }

@@ -120,6 +120,38 @@ The goal is to provide a modern and portable implementation capable of running n
 
 ---
 
+# Building
+
+The command line tools build natively on Windows and Linux with Go 1.22 or newer.
+
+Windows:
+
+```bat
+build-rldev.bat
+```
+
+Linux / Mint:
+
+```bash
+bash build-rldev.sh
+```
+
+The older script names are still kept as wrappers:
+
+```bash
+bash "build Binaires Rldev.sh"
+```
+
+For a Linux release folder from another OS:
+
+```bash
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 OUTDIR=bin/linux-amd64 bash build-rldev.sh
+```
+
+Windows builds embed version metadata and an application manifest into the four CLI executables.
+
+---
+
 # Development Roadmap
 
 ## Phase 1

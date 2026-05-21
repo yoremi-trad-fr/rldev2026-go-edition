@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Rldev2026Go",
+  "outputfilename": "Rldev2026Go",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Yoremi",
+    "email": "yoremi-trad@proton.me"
+  },
+  "info": {
+    "companyName": "Yoremi",
+    "productName": "RLdev 2026 Go",
+    "productVersion": "2026.0.0",
+    "copyright": "Copyright (c) 2026 Yoremi",
+    "comments": "Linux GUI for the RLdev2026-Go RealLive toolchain"
+  }
+}

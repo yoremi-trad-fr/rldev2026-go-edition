@@ -12,3 +12,4 @@ GUI Sources/.gotmp-gui/
 GUI Sources/frontend/.npm-cache/
 GUI Sources/frontend/node_modules/
 GUI Sources/rldev2026go.exe
+**/*_windows_amd64.syso

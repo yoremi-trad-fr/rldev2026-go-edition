@@ -1,7 +1,6 @@
-go 1.25.0
+go 1.22
 
 use (
-	"./GUI Sources"
 	./kprl
 	./rlc
 	./rlxml
