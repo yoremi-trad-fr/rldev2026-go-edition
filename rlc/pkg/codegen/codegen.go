@@ -449,7 +449,7 @@ func (o *Output) emitSelectText(loc ast.Loc, raw string) {
 		if end <= textStart {
 			return
 		}
-		chunk := string(r[textStart:end])
+		chunk := unescapeSelectTextChunk(string(r[textStart:end]))
 		b, err := o.encodeText(loc, chunk)
 		if err != nil {
 			return
@@ -482,6 +482,29 @@ func (o *Output) emitSelectText(loc ast.Loc, raw string) {
 	}
 	flushText(len(r))
 	setQuotes(false)
+}
+
+func unescapeSelectTextChunk(s string) string {
+	r := []rune(s)
+	var b strings.Builder
+	changed := false
+	for i := 0; i < len(r); {
+		if r[i] == '\\' && i+1 < len(r) {
+			next := r[i+1]
+			if next == '\\' || next == ' ' || next == '\t' || next == '<' || next == '/' {
+				b.WriteRune(next)
+				i += 2
+				changed = true
+				continue
+			}
+		}
+		b.WriteRune(r[i])
+		i++
+	}
+	if !changed {
+		return s
+	}
+	return b.String()
 }
 
 func parseInlineExpr(loc ast.Loc, src string) ast.Expr {
@@ -851,17 +874,52 @@ func parseNameToken(r []rune, start int) (rtToken, int, bool) {
 func (o *Output) encodeStrLit(s ast.StrLit) ([]byte, error) {
 	var buf []byte
 	needsQuotes := false
-	for _, tok := range s.Tokens {
-		switch t := tok.(type) {
-		case ast.TextToken:
-			b, err := o.encodeText(s.Loc, t.Text)
+	nextDoubleQuoteOpen := true
+	appendDoubleQuote := func() {
+		if nextDoubleQuoteOpen {
+			buf = append(buf, 0x81, 0x77)
+		} else {
+			buf = append(buf, 0x81, 0x78)
+		}
+		nextDoubleQuoteOpen = !nextDoubleQuoteOpen
+	}
+	appendText := func(raw string) error {
+		start := 0
+		for i, r := range raw {
+			if r != '"' {
+				continue
+			}
+			if i > start {
+				b, err := o.encodeText(s.Loc, raw[start:i])
+				if err != nil {
+					return err
+				}
+				if hasUnsafeUnquotedByte(b) {
+					needsQuotes = true
+				}
+				buf = append(buf, b...)
+			}
+			appendDoubleQuote()
+			start = i + len(string(r))
+		}
+		if start < len(raw) {
+			b, err := o.encodeText(s.Loc, raw[start:])
 			if err != nil {
-				return nil, err
+				return err
 			}
 			if hasUnsafeUnquotedByte(b) {
 				needsQuotes = true
 			}
 			buf = append(buf, b...)
+		}
+		return nil
+	}
+	for _, tok := range s.Tokens {
+		switch t := tok.(type) {
+		case ast.TextToken:
+			if err := appendText(t.Text); err != nil {
+				return nil, err
+			}
 		case ast.SpaceToken:
 			needsQuotes = true
 			for i := 0; i < t.Count; i++ {
@@ -882,8 +940,7 @@ func (o *Output) encodeStrLit(s ast.StrLit) ([]byte, error) {
 			needsQuotes = true
 			buf = append(buf, '}')
 		case ast.DQuoteToken:
-			needsQuotes = true
-			buf = append(buf, '"')
+			appendDoubleQuote()
 		case ast.ResRefToken:
 			// Resolve and inline the resource text with full marker
 			// re-encoding — see encodeResourceText above for why.
@@ -1050,8 +1107,10 @@ func (o *Output) Generate(opts GenerateOptions) ([]byte, error) {
 	kidokuIdx := 0
 	pos := 8 // start after compression header space
 
-	// Determine kidoku marker character
-	kidokuChar := byte('@')
+	// Determine the entrypoint marker character. OCaml always emits '@'
+	// for regular kidoku markers; only entrypoints switch to '!' on newer
+	// RealLive versions or #kidoku_type 2.
+	entrypointChar := byte('@')
 	kt := opts.KidokuType
 	if kt == 0 {
 		v := opts.Version
@@ -1062,7 +1121,7 @@ func (o *Output) Generate(opts GenerateOptions) ([]byte, error) {
 		}
 	}
 	if kt == 2 {
-		kidokuChar = '!'
+		entrypointChar = '!'
 	}
 
 	for _, ir := range o.IR {
@@ -1080,7 +1139,7 @@ func (o *Output) Generate(opts GenerateOptions) ([]byte, error) {
 		case IRLabel:
 			// zero-width
 		case IRKidoku:
-			buf[pos] = kidokuChar
+			buf[pos] = '@'
 			pos++
 			if spec.kidokuLen == 2 {
 				binary.LittleEndian.PutUint16(buf[pos:], uint16(kidokuIdx))
@@ -1091,7 +1150,7 @@ func (o *Output) Generate(opts GenerateOptions) ([]byte, error) {
 			}
 			kidokuIdx++
 		case IREntrypoint:
-			buf[pos] = kidokuChar
+			buf[pos] = entrypointChar
 			pos++
 			if spec.kidokuLen == 2 {
 				binary.LittleEndian.PutUint16(buf[pos:], uint16(kidokuIdx))

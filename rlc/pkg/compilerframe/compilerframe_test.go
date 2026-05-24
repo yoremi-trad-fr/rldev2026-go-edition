@@ -6,6 +6,7 @@ import (
 
 	"github.com/yoremi/rldev-go/pkg/texttransforms"
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
+	"github.com/yoremi/rldev-go/rlc/pkg/codegen"
 	"github.com/yoremi/rldev-go/rlc/pkg/ini"
 	"github.com/yoremi/rldev-go/rlc/pkg/kfn"
 	"github.com/yoremi/rldev-go/rlc/pkg/memory"
@@ -275,6 +276,168 @@ func TestNormalizeCondParamNestedNot(t *testing.T) {
 	cmp := out.Expr.(ast.CmpExpr)
 	if _, ok := cmp.LHS.(ast.CmpExpr); !ok {
 		t.Fatalf("nested ! should lower directly to a comparison, got %T", cmp.LHS)
+	}
+}
+
+func TestNormalizeCondParamBareExprBecomesBooleanCompare(t *testing.T) {
+	loc := ast.Loc{File: "t", Line: 1}
+	param := ast.SimpleParam{Loc: loc, Expr: ast.IntVar{
+		Loc:   loc,
+		Bank:  5,
+		Index: ast.IntLit{Loc: loc, Val: 1013},
+	}}
+	out := normalizeCondParam(param).(ast.SimpleParam)
+	cmp, ok := out.Expr.(ast.CmpExpr)
+	if !ok {
+		t.Fatalf("bare condition should become comparison, got %T", out.Expr)
+	}
+	if cmp.Op != ast.CmpNeq {
+		t.Fatalf("condition op = %v, want !=", cmp.Op)
+	}
+	if rhs, ok := cmp.RHS.(ast.IntLit); !ok || rhs.Val != 0 {
+		t.Fatalf("condition rhs = %#v, want 0", cmp.RHS)
+	}
+	if _, ok := cmp.LHS.(ast.IntVar); !ok {
+		t.Fatalf("condition lhs = %T, want IntVar", cmp.LHS)
+	}
+}
+
+func TestConditionalParamSetOnlyConditionTags(t *testing.T) {
+	fd := &kfn.FuncDef{Prototypes: []kfn.Prototype{{
+		Defined: true,
+		Params: []kfn.Parameter{
+			{Type: kfn.PStrC, Flags: []kfn.ParamFlag{kfn.FUncount, kfn.FTagged}, Tag: "filename"},
+			{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FUncount, kfn.FTagged}, Tag: "condition"},
+			{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FUncount, kfn.FTagged}, Tag: "conditional"},
+		},
+	}}}
+	uncounted := uncountParamSet(fd, 0, 3)
+	for i, got := range uncounted {
+		if !got {
+			t.Fatalf("uncount param %d = false, want true", i)
+		}
+	}
+	conds := conditionalParamSet(fd, 0, 3)
+	if conds[0] {
+		t.Fatal("uncounted filename parameter should not be normalized as a condition")
+	}
+	if !conds[1] || !conds[2] {
+		t.Fatalf("condition tags = %v, want only condition/conditional true", conds)
+	}
+}
+
+func TestExplicitReturnParamChoosesFullOverload(t *testing.T) {
+	c := newComp()
+	registerItoa(c)
+	loc := ast.Loc{File: "t", Line: 1}
+	c.Parse([]ast.Stmt{ast.FuncCallStmt{
+		Loc:   loc,
+		Ident: "itoa",
+		Params: []ast.Param{
+			ast.SimpleParam{Loc: loc, Expr: ast.IntVar{Loc: loc, Bank: 5, Index: ast.IntLit{Loc: loc, Val: 3}}},
+			ast.SimpleParam{Loc: loc, Expr: ast.StrVar{Loc: loc, Bank: 18, Index: ast.IntLit{Loc: loc, Val: 0}}},
+			ast.SimpleParam{Loc: loc, Expr: ast.IntLit{Loc: loc, Val: 2}},
+		},
+	}})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	if findCodeIR(c, codegen.EncodeOpcode(1, 10, 17, 3, 1)) < 0 {
+		t.Fatal("itoa with explicit return parameter should use overload 1")
+	}
+}
+
+func TestLegacyRealLiveItoaLengthUsesOverloadZero(t *testing.T) {
+	c := newComp()
+	c.Reg.Version = kfn.Version{1, 2, 3, 5}
+	registerItoa(c)
+	loc := ast.Loc{File: "t", Line: 1}
+	c.Parse([]ast.Stmt{ast.FuncCallStmt{
+		Loc:   loc,
+		Ident: "itoa",
+		Params: []ast.Param{
+			ast.SimpleParam{Loc: loc, Expr: ast.IntVar{Loc: loc, Bank: 5, Index: ast.IntLit{Loc: loc, Val: 100}}},
+			ast.SimpleParam{Loc: loc, Expr: ast.StrVar{Loc: loc, Bank: 18, Index: ast.IntLit{Loc: loc, Val: 1}}},
+			ast.SimpleParam{Loc: loc, Expr: ast.IntLit{Loc: loc, Val: 4}},
+		},
+	}})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	if findCodeIR(c, codegen.EncodeOpcode(1, 10, 17, 3, 0)) < 0 {
+		t.Fatal("RealLive 1.2.3 itoa length form should use legacy overload 0")
+	}
+}
+
+func TestAirRealLiveItoaAssignmentKeepsOverloadOne(t *testing.T) {
+	c := newComp()
+	c.Reg.Version = kfn.Version{1, 2, 9, 5}
+	registerItoa(c)
+	loc := ast.Loc{File: "t", Line: 1}
+	c.Parse([]ast.Stmt{ast.AssignStmt{
+		Loc:  loc,
+		Dest: ast.StrVar{Loc: loc, Bank: 18, Index: ast.IntLit{Loc: loc, Val: 0}},
+		Op:   ast.AssignSet,
+		Expr: ast.FuncCall{
+			Loc:   loc,
+			Ident: "itoa",
+			Params: []ast.Param{
+				ast.SimpleParam{Loc: loc, Expr: ast.IntVar{Loc: loc, Bank: 5, Index: ast.IntLit{Loc: loc, Val: 3}}},
+				ast.SimpleParam{Loc: loc, Expr: ast.IntLit{Loc: loc, Val: 2}},
+			},
+		},
+	}})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	if findCodeIR(c, codegen.EncodeOpcode(1, 10, 17, 3, 1)) < 0 {
+		t.Fatal("RealLive 1.2.9 itoa assignment should keep overload 1")
+	}
+}
+
+func TestReturnAssignmentInjectsDestinationBeforeStringRewrite(t *testing.T) {
+	c := newComp()
+	registerItoa(c)
+	loc := ast.Loc{File: "t", Line: 1}
+	c.Parse([]ast.Stmt{ast.AssignStmt{
+		Loc:  loc,
+		Dest: ast.StrVar{Loc: loc, Bank: 18, Index: ast.IntLit{Loc: loc, Val: 0}},
+		Op:   ast.AssignSet,
+		Expr: ast.FuncCall{
+			Loc:   loc,
+			Ident: "itoa",
+			Params: []ast.Param{
+				ast.SimpleParam{Loc: loc, Expr: ast.IntVar{Loc: loc, Bank: 5, Index: ast.IntLit{Loc: loc, Val: 3}}},
+				ast.SimpleParam{Loc: loc, Expr: ast.IntLit{Loc: loc, Val: 2}},
+			},
+		},
+	}})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	if findCodeIR(c, codegen.EncodeOpcode(1, 10, 17, 3, 1)) < 0 {
+		t.Fatal("itoa assignment should inject destination and use overload 1")
+	}
+}
+
+func TestStrsubThreeArgUsesObservedOverload(t *testing.T) {
+	c := newComp()
+	registerStrsub(c)
+	loc := ast.Loc{File: "t", Line: 1}
+	c.Parse([]ast.Stmt{ast.FuncCallStmt{
+		Loc:   loc,
+		Ident: "strsub",
+		Params: []ast.Param{
+			ast.SimpleParam{Loc: loc, Expr: ast.StrVar{Loc: loc, Bank: 18, Index: ast.IntLit{Loc: loc, Val: 1}}},
+			ast.SimpleParam{Loc: loc, Expr: ast.StrVar{Loc: loc, Bank: 18, Index: ast.IntLit{Loc: loc, Val: 1004}}},
+			ast.SimpleParam{Loc: loc, Expr: ast.IntLit{Loc: loc, Val: 3}},
+		},
+	}})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	if findCodeIR(c, codegen.EncodeOpcode(1, 10, 5, 3, 1)) < 0 {
+		t.Fatal("three-argument strsub should use overload 1")
 	}
 }
 
@@ -605,6 +768,19 @@ func TestScanResourceControl(t *testing.T) {
 	}
 }
 
+func TestScanResourceControlPreservesParamlessSpacing(t *testing.T) {
+	src, consumed, ok := scanResourceControl([]rune(`\r  \{Misuzu}`), 0)
+	if !ok {
+		t.Fatal("resource control was not recognised")
+	}
+	if src != `\r` {
+		t.Fatalf("src: got %q", src)
+	}
+	if consumed != len(`\r`) {
+		t.Fatalf("consumed: got %d", consumed)
+	}
+}
+
 func TestCompileResTextStroutControl(t *testing.T) {
 	c := newComp()
 	c.Reg.Register(&kfn.FuncDef{
@@ -685,6 +861,164 @@ func TestCompileResTextEscapedLeadingSpace(t *testing.T) {
 	if !bytes.Contains(got, []byte("             combo")) {
 		t.Fatalf("escaped leading spaces were not preserved: % x", got)
 	}
+}
+
+func TestCompileResTextKeepsSpacesAfterParamlessControl(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "par",
+		CCStr:    "r",
+		OpType:   0,
+		OpModule: 0,
+		OpCode:   3,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+		}},
+	})
+
+	tc := &textCompiler{c: c, loc: ast.Loc{File: "t", Line: 1}}
+	tc.compileResText(`before\r  after`)
+	tc.flush()
+
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	if !bytes.Contains(got, []byte("before")) {
+		t.Fatalf("text before control was not emitted: % x", got)
+	}
+	if !bytes.Contains(got, []byte("  after")) {
+		t.Fatalf("spaces after paramless control were not preserved: % x", got)
+	}
+}
+
+func TestTextoutSuppressesLineBeforeFollowingPause(t *testing.T) {
+	c := newComp()
+	registerPause(c)
+	c.Parse([]ast.Stmt{
+		ast.ReturnStmt{
+			Loc: ast.Loc{File: "t", Line: 10},
+			Expr: ast.StrLit{Loc: ast.Loc{File: "t", Line: 10}, Tokens: []ast.StrToken{
+				ast.TextToken{Loc: ast.Loc{File: "t", Line: 10}, Text: "hello"},
+			}},
+		},
+		ast.FuncCallStmt{Loc: ast.Loc{File: "t", Line: 11}, Ident: "pause"},
+	})
+
+	pauseIdx := findCodeIR(c, codegen.EncodeOpcode(0, 0, 17, 0, 0))
+	if pauseIdx < 0 {
+		t.Fatal("pause opcode was not emitted")
+	}
+	if pauseIdx > 0 && c.Out.IR[pauseIdx-1].Type == codegen.IRLineref && c.Out.IR[pauseIdx-1].Index == 11 {
+		t.Fatalf("pause immediately after textout should not get its own line marker")
+	}
+}
+
+func TestTextoutPauseLineSuppressionClearsOnInterveningStmt(t *testing.T) {
+	c := newComp()
+	registerPause(c)
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "msgHide",
+		OpType:   0,
+		OpModule: 0,
+		OpCode:   151,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+		}},
+	})
+	c.Parse([]ast.Stmt{
+		ast.ReturnStmt{
+			Loc: ast.Loc{File: "t", Line: 10},
+			Expr: ast.StrLit{Loc: ast.Loc{File: "t", Line: 10}, Tokens: []ast.StrToken{
+				ast.TextToken{Loc: ast.Loc{File: "t", Line: 10}, Text: "hello"},
+			}},
+		},
+		ast.FuncCallStmt{Loc: ast.Loc{File: "t", Line: 11}, Ident: "msgHide"},
+		ast.FuncCallStmt{Loc: ast.Loc{File: "t", Line: 12}, Ident: "pause"},
+	})
+
+	pauseIdx := findCodeIR(c, codegen.EncodeOpcode(0, 0, 17, 0, 0))
+	if pauseIdx < 0 {
+		t.Fatal("pause opcode was not emitted")
+	}
+	if pauseIdx == 0 || c.Out.IR[pauseIdx-1].Type != codegen.IRLineref || c.Out.IR[pauseIdx-1].Index != 12 {
+		t.Fatalf("non-immediate pause should keep its line marker")
+	}
+}
+
+func registerPause(c *Compiler) {
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "pause",
+		OpType:   0,
+		OpModule: 0,
+		OpCode:   17,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+		}},
+	})
+}
+
+func registerItoa(c *Compiler) {
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "itoa",
+		OpType:   1,
+		OpModule: 10,
+		OpCode:   17,
+		Prototypes: []kfn.Prototype{
+			{
+				Defined: true,
+				Params: []kfn.Parameter{
+					{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FTagged}, Tag: "num"},
+					{Type: kfn.PStr, Flags: []kfn.ParamFlag{kfn.FReturn, kfn.FTagged}, Tag: "buf"},
+				},
+			},
+			{
+				Defined: true,
+				Params: []kfn.Parameter{
+					{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FTagged}, Tag: "num"},
+					{Type: kfn.PStr, Flags: []kfn.ParamFlag{kfn.FReturn, kfn.FTagged}, Tag: "buf"},
+					{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FTagged}, Tag: "length"},
+				},
+			},
+		},
+	})
+}
+
+func registerStrsub(c *Compiler) {
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "strsub",
+		OpType:   1,
+		OpModule: 10,
+		OpCode:   5,
+		Prototypes: []kfn.Prototype{
+			{
+				Defined: true,
+				Params: []kfn.Parameter{
+					{Type: kfn.PStr, Flags: []kfn.ParamFlag{kfn.FReturn, kfn.FTagged}, Tag: "dst"},
+					{Type: kfn.PStrC, Flags: []kfn.ParamFlag{kfn.FTagged}, Tag: "src"},
+					{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FTagged}, Tag: "offset"},
+				},
+			},
+			{
+				Defined: true,
+				Params: []kfn.Parameter{
+					{Type: kfn.PStr, Flags: []kfn.ParamFlag{kfn.FReturn, kfn.FTagged}, Tag: "dst"},
+					{Type: kfn.PStrC, Flags: []kfn.ParamFlag{kfn.FTagged}, Tag: "src"},
+					{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FTagged}, Tag: "offset"},
+					{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FTagged}, Tag: "len"},
+				},
+			},
+		},
+	})
+}
+
+func findCodeIR(c *Compiler, want []byte) int {
+	for i, ir := range c.Out.IR {
+		if ir.Type == codegen.IRCode && bytes.Equal(ir.Bytes, want) {
+			return i
+		}
+	}
+	return -1
 }
 
 func compilerOutputBytes(c *Compiler) []byte {

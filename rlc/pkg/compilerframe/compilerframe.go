@@ -49,8 +49,9 @@ type Compiler struct {
 	Ini       *ini.Table
 	State     *meta.State
 
-	breakStack    []string // break targets (label idents)
-	continueStack []string // continue targets (label idents)
+	breakStack         []string // break targets (label idents)
+	continueStack      []string // continue targets (label idents)
+	noLineForNextPause bool
 
 	Errors   []error
 	Warnings []string
@@ -108,6 +109,10 @@ func (c *Compiler) HasErrors() bool { return len(c.Errors) > 0 }
 
 // ParseElt dispatches a single statement.
 func (c *Compiler) ParseElt(stmt ast.Stmt) {
+	if c.noLineForNextPause && !isPauseStmt(stmt) {
+		c.noLineForNextPause = false
+	}
+
 	// 1. Structures: if/while/for/repeat/case/block/seq/hiding/dif/dfor
 	switch stmt.(type) {
 	case ast.IfStmt, ast.WhileStmt, ast.ForStmt, ast.RepeatStmt,
@@ -217,6 +222,17 @@ func (c *Compiler) compileTextStub(ret ast.ReturnStmt) {
 		tc.compileToken(tok)
 	}
 	tc.flush()
+	c.noLineForNextPause = true
+}
+
+func isPauseStmt(stmt ast.Stmt) bool {
+	switch s := stmt.(type) {
+	case ast.FuncCallStmt:
+		return strings.TrimPrefix(s.Ident, "\\") == "pause"
+	case ast.VarOrFuncStmt:
+		return s.Ident == "pause"
+	}
+	return false
 }
 
 // textCompiler handles the state machine for static text compilation.
@@ -646,6 +662,38 @@ func (c *Compiler) compileDeclStmt(s ast.DeclStmt) {
 //
 // Otherwise the assignment is encoded normally as `<dest> \op <expr>`.
 func (c *Compiler) compileAssign(s ast.AssignStmt) {
+	// Function return assignment must be handled before the generic
+	// string-copy rewrite. KFN `>` parameters are encoded as real opcode
+	// arguments, so `strS[0] = itoa(n, 2)` becomes `itoa(n, strS[0], 2)`.
+	if s.Op == ast.AssignSet {
+		switch rhs := s.Expr.(type) {
+		case ast.VarOrFunc:
+			if !c.Mem.Defined(rhs.Ident) {
+				if fd, ok := c.Reg.Lookup(rhs.Ident); ok && (fd.HasFlag(kfn.FlagPushStore) || funcHasReturnParam(fd)) {
+					c.compileFuncCall(ast.FuncCallStmt{
+						Loc:    s.Loc,
+						Ident:  rhs.Ident,
+						Params: nil,
+						Dest:   s.Dest,
+					})
+					return
+				}
+			}
+		case ast.FuncCall:
+			if fd, err := fn.LookupFuncDef(c.Reg, rhs.Ident, rhs.Params, false); err == nil &&
+				(fd.HasFlag(kfn.FlagPushStore) || funcHasReturnParam(fd)) {
+				c.compileFuncCall(ast.FuncCallStmt{
+					Loc:    s.Loc,
+					Ident:  rhs.Ident,
+					Params: rhs.Params,
+					Label:  rhs.Label,
+					Dest:   s.Dest,
+				})
+				return
+			}
+		}
+	}
+
 	// (1) String destination → desugar to strcpy/strcat.
 	if _, isStrVar := s.Dest.(ast.StrVar); isStrVar {
 		var fnName string
@@ -727,11 +775,34 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 		c.error(s.Loc, err.Error())
 		return
 	}
-	overload, _ := fn.ChooseOverloadByParams(fd.Prototypes, s.Params)
+	params := s.Params
+	overload, err := chooseOverloadForCall(fd, params, s.Dest != nil, c.Reg)
+	if err != nil {
+		c.error(s.Loc, err.Error())
+		return
+	}
 	if fd.SyntheticOverload != 0 {
 		// Synthetic FuncDef built from an op<...> literal: use its
 		// captured overload directly.
 		overload = fd.SyntheticOverload
+	}
+	if s.Dest != nil {
+		var injected bool
+		params, injected, err = injectReturnParam(fd, overload, params, s.Dest, s.Loc)
+		if err != nil {
+			c.error(s.Loc, err.Error())
+			return
+		}
+		if injected {
+			// Re-check overload using the encoded parameter list. This keeps
+			// argc/overload in sync with Go-disassembled sources that already
+			// contain the `>` return argument explicitly.
+			overload, err = chooseOverloadForCall(fd, params, false, c.Reg)
+			if err != nil {
+				c.error(s.Loc, err.Error())
+				return
+			}
+		}
 	}
 
 	// Determine which params carry the `<` (FUncount) flag in the
@@ -742,9 +813,9 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 	// bytecode at SEEN0414 offset 0x1eb confirms this: a goto_unless
 	// with one condition argument has argc=0 yet still carries
 	// `( $intA[1000] \= $0 )` in the parameter list.
-	uncountIdx := uncountParamSet(fd, overload, len(s.Params))
+	uncountIdx := uncountParamSet(fd, overload, len(params))
 	argc := 0
-	for i := range s.Params {
+	for i := range params {
 		if !uncountIdx[i] {
 			argc++
 		}
@@ -754,17 +825,28 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 	// to `expr == 0` so the binary `\=` operator is emitted instead of
 	// a (silently-dropped) unary `!`. OCaml expr.ml L214-236
 	// (`unary_to_logop` / `conditional_unit`) does the same lowering.
-	emitParams := make([]ast.Param, len(s.Params))
-	for i, p := range s.Params {
-		if uncountIdx[i] {
+	emitParams := make([]ast.Param, len(params))
+	condIdx := conditionalParamSet(fd, overload, len(params))
+	for i, p := range params {
+		if condIdx[i] {
 			emitParams[i] = normalizeCondParam(p)
 		} else {
 			emitParams[i] = p
 		}
 	}
 
-	// Emit opcode header
-	c.Out.EmitOpcode(s.Loc, fd.OpType, fd.OpModule, fd.OpCode, argc, overload)
+	// Emit opcode header. OCaml does not emit a fresh `#line` marker for
+	// the `pause` that immediately follows a static textout; the preceding
+	// kidoku/text line covers that whole display step. Extra debug-line
+	// markers are invisible in a normal redump but present in the bytecode,
+	// and AIR is sensitive to the larger/debug-heavier stream at route start.
+	if c.noLineForNextPause && ident == "pause" && len(params) == 0 {
+		c.Out.AddCodeRaw(s.Loc, codegen.EncodeOpcode(fd.OpType, fd.OpModule, fd.OpCode, argc, overload))
+		c.noLineForNextPause = false
+	} else {
+		c.noLineForNextPause = false
+		c.Out.EmitOpcode(s.Loc, fd.OpType, fd.OpModule, fd.OpCode, argc, overload)
+	}
 
 	// Emit params wrapped in parens. The OCaml emitter (codegen.ml
 	// `compile_arglist`) handles three Param shapes:
@@ -1360,6 +1442,196 @@ func uncountParamSet(fd *kfn.FuncDef, overload, nParams int) []bool {
 	return out
 }
 
+func chooseOverloadForCall(fd *kfn.FuncDef, params []ast.Param, hasReturnDest bool, reg *kfn.Registry) (int, error) {
+	if fd.SyntheticOverload != 0 {
+		return fd.SyntheticOverload, nil
+	}
+	var selected int
+	var err error
+	if hasReturnDest {
+		selected, err = fn.ChooseOverloadByParams(fd.Prototypes, params)
+	} else if funcHasReturnParam(fd) {
+		if overload, ok := chooseOverloadByFullParams(fd, params); ok {
+			selected = overload
+		} else {
+			selected, err = fn.ChooseOverloadByParams(fd.Prototypes, params)
+		}
+	} else {
+		selected, err = fn.ChooseOverloadByParams(fd.Prototypes, params)
+	}
+	if err != nil {
+		return 0, err
+	}
+	if overload, ok := compatibilityOverload(fd, params, hasReturnDest, selected, reg); ok {
+		return overload, nil
+	}
+	return selected, nil
+}
+
+func compatibilityOverload(fd *kfn.FuncDef, params []ast.Param, hasReturnDest bool, selected int, reg *kfn.Registry) (int, bool) {
+	if fd == nil || fd.OpType != 1 || fd.OpModule != 10 {
+		return selected, false
+	}
+	argc := len(params)
+	if hasReturnDest && funcHasReturnParam(fd) {
+		argc++
+	}
+	switch fd.OpCode {
+	case 5, 6: // strsub / strrsub
+		if argc == 3 {
+			return 1, true
+		}
+	case 14, 15, 16, 17: // itoa_ws / itoa_s / itoa_w / itoa
+		if argc == 3 {
+			v, ok := knownRegistryVersion(reg)
+			if !ok {
+				return selected, false
+			}
+			if versionAtLeast(v, kfn.Version{1, 2, 9, 0}) {
+				return 1, true
+			}
+			return 0, true
+		}
+	}
+	return selected, false
+}
+
+func knownRegistryVersion(reg *kfn.Registry) (kfn.Version, bool) {
+	if reg == nil || reg.Version == (kfn.Version{}) {
+		return kfn.Version{}, false
+	}
+	return reg.Version, true
+}
+
+func versionAtLeast(v, min kfn.Version) bool {
+	for i := range v {
+		if v[i] > min[i] {
+			return true
+		}
+		if v[i] < min[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func funcHasReturnParam(fd *kfn.FuncDef) bool {
+	if fd == nil {
+		return false
+	}
+	for _, proto := range fd.Prototypes {
+		if !proto.Defined {
+			continue
+		}
+		for _, p := range proto.Params {
+			if p.HasFlag(kfn.FReturn) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func chooseOverloadByFullParams(fd *kfn.FuncDef, params []ast.Param) (int, bool) {
+	for i, proto := range fd.Prototypes {
+		if !proto.Defined || !prototypeFullArityMatches(proto, len(params)) {
+			continue
+		}
+		if prototypeFullParamsMatch(proto, params) {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func prototypeFullArityMatches(proto kfn.Prototype, nParams int) bool {
+	min, max := 0, 0
+	arbitrary := false
+	for _, p := range proto.Params {
+		if p.HasFlag(kfn.FArgc) {
+			arbitrary = true
+		}
+		if !p.HasFlag(kfn.FOptional) {
+			min++
+		}
+		max++
+	}
+	if nParams < min {
+		return false
+	}
+	if arbitrary {
+		return true
+	}
+	return nParams <= max
+}
+
+func prototypeFullParamsMatch(proto kfn.Prototype, params []ast.Param) bool {
+	if len(proto.Params) == 0 {
+		return len(params) == 0
+	}
+	for i, param := range params {
+		defIdx := i
+		if defIdx >= len(proto.Params) {
+			defIdx = len(proto.Params) - 1
+			if !proto.Params[defIdx].HasFlag(kfn.FArgc) {
+				return false
+			}
+		}
+		sp, ok := param.(ast.SimpleParam)
+		if !ok {
+			continue
+		}
+		if msg := fn.CheckParamType(proto.Params[defIdx].Type, fn.ClassifyExpr(sp.Expr)); msg != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func injectReturnParam(fd *kfn.FuncDef, overload int, params []ast.Param, dest ast.Expr, loc ast.Loc) ([]ast.Param, bool, error) {
+	if fd == nil || overload < 0 || overload >= len(fd.Prototypes) || !fd.Prototypes[overload].Defined {
+		return params, false, nil
+	}
+	rvPos := -1
+	for i, p := range fd.Prototypes[overload].Params {
+		if p.HasFlag(kfn.FReturn) {
+			rvPos = i
+			break
+		}
+	}
+	if rvPos < 0 {
+		return params, false, nil
+	}
+	if rvPos > len(params) {
+		return nil, false, fmt.Errorf("return value for function '%s' cannot be placed at parameter %d", fd.Ident, rvPos)
+	}
+	out := make([]ast.Param, 0, len(params)+1)
+	out = append(out, params[:rvPos]...)
+	out = append(out, ast.SimpleParam{Loc: loc, Expr: dest})
+	out = append(out, params[rvPos:]...)
+	return out, true, nil
+}
+
+func conditionalParamSet(fd *kfn.FuncDef, overload, nParams int) []bool {
+	out := make([]bool, nParams)
+	if fd == nil || overload < 0 || overload >= len(fd.Prototypes) {
+		return out
+	}
+	proto := fd.Prototypes[overload]
+	if !proto.Defined {
+		return out
+	}
+	for i := 0; i < nParams && i < len(proto.Params); i++ {
+		p := proto.Params[i]
+		if !p.HasFlag(kfn.FUncount) {
+			continue
+		}
+		tag := strings.ToLower(p.Tag)
+		out[i] = tag == "condition" || tag == "conditional"
+	}
+	return out
+}
+
 // normalizeCondParam rewrites a conditional parameter so that any
 // outer unary `!` is lowered to a comparison against 0.
 //
@@ -1374,7 +1646,7 @@ func normalizeCondParam(p ast.Param) ast.Param {
 	if !ok {
 		return p
 	}
-	return ast.SimpleParam{Loc: sp.Loc, Expr: liftNot(sp.Expr)}
+	return ast.SimpleParam{Loc: sp.Loc, Expr: expr.ConditionalUnit(liftNot(sp.Expr))}
 }
 
 // liftNot recursively rewrites `!e` as `e == 0` so the binary compare
@@ -1612,11 +1884,12 @@ func scanResourceControl(r []rune, start int) (string, int, bool) {
 	for pos < len(r) && isResourceControlPart(r[pos]) {
 		pos++
 	}
+	identEnd := pos
 	for pos < len(r) && (r[pos] == ' ' || r[pos] == '\t') {
 		pos++
 	}
 	if pos >= len(r) || r[pos] != '{' {
-		return string(r[start:pos]), pos - start, true
+		return string(r[start:identEnd]), identEnd - start, true
 	}
 
 	depth := 0

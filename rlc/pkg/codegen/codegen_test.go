@@ -228,6 +228,45 @@ func TestOutputEmitResRefEscapedLeadingSpace(t *testing.T) {
 	}
 }
 
+func TestOutputEmitStringLiteralMapsInnerQuotesToSJIS(t *testing.T) {
+	o := NewOutput()
+	o.EmitExpr(ast.StrLit{Tokens: []ast.StrToken{
+		ast.TextToken{Text: `"Fuko boit du jus."Maitrise!`},
+	}})
+
+	var got []byte
+	for _, ir := range o.IR {
+		got = append(got, ir.Bytes...)
+	}
+	if got[0] != '"' || got[len(got)-1] != '"' {
+		t.Fatalf("string should keep bytecode quote wrapper, got % x", got)
+	}
+	if bytes.Count(got, []byte{'"'}) != 2 {
+		t.Fatalf("inner ASCII quote leaked into bytecode: % x", got)
+	}
+	if !bytes.Contains(got, []byte{0x81, 0x77}) || !bytes.Contains(got, []byte{0x81, 0x78}) {
+		t.Fatalf("inner quotes were not encoded as SJIS corner quotes: % x", got)
+	}
+}
+
+func TestOutputEmitStringLiteralDQuoteTokenMapsToSJIS(t *testing.T) {
+	o := NewOutput()
+	o.EmitExpr(ast.StrLit{Tokens: []ast.StrToken{
+		ast.DQuoteToken{},
+		ast.TextToken{Text: "HI"},
+		ast.DQuoteToken{},
+	}})
+
+	var got []byte
+	for _, ir := range o.IR {
+		got = append(got, ir.Bytes...)
+	}
+	want := []byte{0x81, 0x77, 'H', 'I', 0x81, 0x78}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("got % x, want % x", got, want)
+	}
+}
+
 func TestOutputEmitExprStore(t *testing.T) {
 	o := NewOutput()
 	o.EmitExpr(ast.StoreRef{})
@@ -420,5 +459,27 @@ func TestGenerateKidokuTable(t *testing.T) {
 	kidokuCount := int(binary.LittleEndian.Uint32(data[0x0c:0x10]))
 	if kidokuCount != 3 { // 1 entrypoint + 2 kidoku
 		t.Errorf("kidoku count: got %d, want 3", kidokuCount)
+	}
+}
+
+func TestGeneratePost125UsesBangOnlyForEntrypoint(t *testing.T) {
+	o := NewOutput()
+	o.AddEntrypoint(0)
+	o.AddKidoku(ast.Loc{Line: 1}, 1)
+	o.AddCode(ast.Nowhere, []byte{0x00})
+
+	opts := DefaultOptions()
+	opts.Version = kfn.Version{1, 2, 9, 5}
+	data, err := o.Generate(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bcOff := binary.LittleEndian.Uint32(data[0x20:0x24])
+	if data[bcOff] != '!' {
+		t.Fatalf("entrypoint marker = %q, want '!'", data[bcOff])
+	}
+	if data[bcOff+6] != '@' {
+		t.Fatalf("kidoku marker = %q, want '@'", data[bcOff+6])
 	}
 }

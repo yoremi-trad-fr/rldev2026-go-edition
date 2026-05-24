@@ -238,7 +238,7 @@ func compileFile(opts *Options, srcPath string) error {
 	//   2. Auto-detected from RealLive.exe / kinetic.exe / … alongside
 	//      the .org source. Mirrors OCaml main.ml L408-428.
 	//   3. Default kfn.Version{1, 2, 7, 0}.
-	// The version drives the kidoku marker character (`@` vs `!`) and
+	// The version drives the entrypoint marker character (`@` vs `!`) and
 	// version-constrained KFN overload selection.
 	var detectedVersion kfn.Version
 	if opts.TargetVersion != "" {
@@ -372,25 +372,7 @@ func compileFile(opts *Options, srcPath string) error {
 	// engine reads names as raw SJIS bytes. If the source file is in a
 	// non-SJIS encoding (UTF-8, EUC-JP…), transcode each name now.
 	if compiler.State != nil && len(compiler.State.DramatisPersonae) > 0 {
-		names := make([]string, 0, len(compiler.State.DramatisPersonae))
-		needTrans := false
-		srcEnc := strings.ToUpper(strings.ReplaceAll(opts.Encoding, "-", ""))
-		if srcEnc != "" && srcEnc != "CP932" && srcEnc != "SHIFTJIS" && srcEnc != "SJIS" && srcEnc != "SHIFT_JIS" {
-			needTrans = true
-		}
-		for _, n := range compiler.State.DramatisPersonae {
-			if needTrans {
-				sjis, err := encoding.UTF8ToSJS(n)
-				if err != nil {
-					diag.Warning(diag.Loc{}, "could not transcode #character '%s' to Shift-JIS: %v — using raw bytes", n, err)
-					names = append(names, n)
-					continue
-				}
-				names = append(names, string(sjis))
-			} else {
-				names = append(names, n)
-			}
-		}
+		names := encodeDramatisPersonae(compiler.State.DramatisPersonae)
 		genOpts.DramatisPersonae = names
 	}
 
@@ -446,6 +428,20 @@ func compileFile(opts *Options, srcPath string) error {
 	}
 
 	return nil
+}
+
+func encodeDramatisPersonae(src []string) []string {
+	names := make([]string, 0, len(src))
+	for _, n := range src {
+		sjis, err := encoding.UTF8ToSJS(n)
+		if err != nil {
+			diag.Warning(diag.Loc{}, "could not transcode #character '%s' to Shift-JIS: %v — using raw bytes", n, err)
+			names = append(names, n)
+			continue
+		}
+		names = append(names, string(sjis))
+	}
+	return names
 }
 
 // loadGameexe attempts to locate and load GAMEEXE.INI.

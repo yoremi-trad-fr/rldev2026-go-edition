@@ -87,6 +87,30 @@ func TestEmitSelectResourceStringVar(t *testing.T) {
 	}
 }
 
+func TestEmitSelectResourceUnescapesBackslashPairs(t *testing.T) {
+	out := codegen.NewOutput()
+	out.ResolveRes = func(key string) (string, bool) {
+		if key == "0045" {
+			return `R\\u{$00e9}fl\\u{$00e9}chir`, true
+		}
+		return "", false
+	}
+	params := []SelParam{{Kind: SelAlways, Expr: ast.ResRef{Key: "0045"}}}
+	if err := EmitSelect(out, ast.Loc{Line: 1}, 3, nil, ast.StoreRef{}, params); err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	for _, ir := range out.IR {
+		got = append(got, ir.Bytes...)
+	}
+	if !bytes.Contains(got, []byte(`R\u{$00e9}fl\u{$00e9}chir`)) {
+		t.Fatalf("select resource should unescape doubled backslashes, got %q", string(got))
+	}
+	if bytes.Contains(got, []byte(`R\\u`)) {
+		t.Fatalf("select resource kept doubled backslashes: %q", string(got))
+	}
+}
+
 func TestEmitSelectSeparatesLiteralItemsWithLineMarkers(t *testing.T) {
 	out := codegen.NewOutput()
 	params := []SelParam{

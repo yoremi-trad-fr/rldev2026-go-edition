@@ -3,6 +3,7 @@ setlocal EnableExtensions
 
 REM RLdev2026-Go command line tools build script.
 REM Native Windows builds produce bin\kprl16.exe, bin\rlc2026.exe, bin\rlxml.exe and bin\vaconv.exe.
+REM Windows builds also produce bin\reallive-debug-launcher-v2.exe as a 32-bit helper for RealLive.
 
 set "ROOT=%~dp0"
 set "ROOT=%ROOT:~0,-1%"
@@ -54,6 +55,11 @@ call :build 1 kprl16 ".\kprl\cmd\kprl" || goto :error
 call :build 2 rlc2026 ".\rlc\cmd\rlc" || goto :error
 call :build 3 rlxml ".\rlxml\cmd\rlxml" || goto :error
 call :build 4 vaconv ".\vaconv\cmd\vaconv" || goto :error
+if /I "%GOOS%"=="windows" (
+    call :build_debug 5 reallive-debug-launcher-v2 ".\kprl\cmd\reallive-debug-launcher" || goto :error
+) else (
+    echo [5/5] Skipping reallive-debug-launcher-v2; Windows-only helper.
+)
 
 echo.
 echo  All tools built successfully in: %OUTDIR%
@@ -63,10 +69,29 @@ echo.
 goto :end
 
 :build
-echo [%~1/4] Building %~2%EXT%...
+echo [%~1/5] Building %~2%EXT%...
 pushd "%ROOT%"
 go build -trimpath -o "%OUTDIR%\%~2%EXT%" %~3
 set "ERR=%ERRORLEVEL%"
+popd
+if not "%ERR%"=="0" (
+    echo FAILED
+    exit /b %ERR%
+)
+echo       OK
+exit /b 0
+
+:build_debug
+echo [%~1/5] Building %~2.exe for windows/386...
+pushd "%ROOT%"
+set "OLD_GOOS=%GOOS%"
+set "OLD_GOARCH=%GOARCH%"
+set "GOOS=windows"
+set "GOARCH=386"
+go build -trimpath -o "%OUTDIR%\%~2.exe" %~3
+set "ERR=%ERRORLEVEL%"
+set "GOOS=%OLD_GOOS%"
+set "GOARCH=%OLD_GOARCH%"
 popd
 if not "%ERR%"=="0" (
     echo FAILED
@@ -83,4 +108,3 @@ echo.
 
 :end
 exit /b %BUILD_STATUS%
-

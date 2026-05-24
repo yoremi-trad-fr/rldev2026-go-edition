@@ -1,4 +1,5 @@
 # Rldev2026-Go Port Status
+Update : 24/05/2026 : AIR is now supported - Creating a list of validated features
 Update : 20/05/2026 : An initial version of the GUI has been created for Rldev2026
 
 GUI update Best console log + full .log file
@@ -8,9 +9,12 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 **Status update:** `20/05/2026`
 
 Supported VNs
-## -Clannad Full Voice (2007)
 ## -Clannad (2004)
+## -Clannad Full Voice (2007)
+## -Clannad Steam : It’s already partially implemented; the scene extraction is working fine, with just three non-blocking errors. I’ll fix those in the next few days; the build also needs testing
+## -AIR 18+ (2005)
 ---
+
 
 Planned updates to the tools: Improved .g00 compatibility, support for version 2 
 
@@ -39,14 +43,6 @@ Planned updates to the tools: Improved .g00 compatibility, support for version 2
 * Decompilation UTF8/SJIS:
 * Intermediate compilation (`.org / .ke`):
 * Final compilation:
-
----
-
-## AIR 1.02 (2005 18+)
-
-* Decompilation UTF8/SJIS: Passed
-* Intermediate compilation (`.org / .ke`): Passed
-* Final compilation: Not tested
 
 ---
 
