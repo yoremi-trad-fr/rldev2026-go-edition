@@ -365,6 +365,9 @@ func compileFile(opts *Options, srcPath string) error {
 	if detectedVersion != (kfn.Version{}) {
 		genOpts.Version = detectedVersion
 	}
+	if iniTable != nil {
+		genOpts.KidokuType = iniTable.GetInt("KIDOKU_TYPE", 0)
+	}
 	genOpts.DebugInfo = opts.DebugInfo
 	if compiler.State != nil {
 		genOpts.Val0x2C = compiler.State.Val0x2C

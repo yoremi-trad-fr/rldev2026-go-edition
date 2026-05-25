@@ -89,7 +89,7 @@
   onMount(async () => {
     EventsOn('log', (msg) => addLine(msg));
     addLine('RLdev 2026 - Go édition');
-    addLine('Prêt. Place les binaires dans ./bin : kprl16.exe, rlc2026.exe, vaconv.exe, rlxml.exe.');
+    addLine('Prêt. Place les binaires dans ./bin : kprl16, rlc2026, vaconv, rlxml (ou .exe sous Windows).');
     const kfn = await DefaultKFN();
     if (kfn && !rlKfnFile) {
       rlKfnFile = kfn;
@@ -125,7 +125,7 @@
     if (f) rlGameexe = f;
   }
   async function browseRlInterpreter() {
-    const f = await SelectFile('Select RealLive.exe', '*.exe;*.EXE', 'RealLive interpreter');
+    const f = await SelectFile('Select RealLive / Steam .exe', '*.exe;*.EXE', 'RealLive-compatible interpreter');
     if (f) rlInterpreter = f;
   }
   async function browseRlOutputDir() {
@@ -259,7 +259,7 @@
         {/if}
         <div class="form-group"><label>KFN file :</label><div class="form-row"><input type="text" bind:value={rlKfnFile} readonly placeholder="Auto : ./KFN/reallive.kfn" /><button class="btn" on:click={browseRlKfn}>Select</button></div></div>
         <div class="form-group"><label>GAMEEXE.INI (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlGameexe} readonly /><button class="btn" on:click={browseRlGameexe}>Select</button></div></div>
-        <div class="form-group"><label>RealLive.exe (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlInterpreter} readonly /><button class="btn" on:click={browseRlInterpreter}>Select</button></div><div class="form-hint">Détection de version PE / overloads KFN si disponible.</div></div>
+        <div class="form-group"><label>Interpréteur RealLive / Steam (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlInterpreter} readonly /><button class="btn" on:click={browseRlInterpreter}>Select</button></div><div class="form-hint">Auto si GAMEEXE.INI pointe vers un dossier contenant RealLive.exe ou SiglusEngine_Steam.exe.</div></div>
         <div class="form-group"><label>Encodage source :</label><div class="form-row"><select bind:value={rlEncoding}><option value="UTF-8">UTF-8</option><option value="CP932">CP932 / Shift-JIS</option><option value="EUC-JP">EUC-JP</option></select></div></div>
         <div class="form-group"><label>Transformation sortie :</label><div class="form-row"><select bind:value={rlOutputTransform}><option value="WESTERN">WESTERN / CP1252</option><option value="NONE">NONE / Japonais</option><option value="CHINESE">CHINESE</option><option value="KOREAN">KOREAN</option></select></div></div>
         <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlForceTransform} /> Force transform</label></div></div>

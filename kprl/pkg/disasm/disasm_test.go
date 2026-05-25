@@ -107,6 +107,28 @@ func TestReaderAtEnd(t *testing.T) {
 	}
 }
 
+func TestReadCommandPreservesFF01ControlTextout(t *testing.T) {
+	data := []byte{0xff, 0x01, 0x00, 0x00}
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	result := &DisassemblyResult{}
+	opts := DefaultOptions()
+	opts.ControlCodes = true
+
+	if err := readCommand(r, &bytecode.FileHeader{}, result, opts); err != nil {
+		t.Fatalf("readCommand() error: %v", err)
+	}
+	if len(result.Commands) != 1 {
+		t.Fatalf("commands = %d, want 1", len(result.Commands))
+	}
+	got, ok := result.Commands[0].Kepago[0].(ElemString)
+	if !ok || got.Value != "raw #ff #01 endraw" {
+		t.Fatalf("command = %#v, want raw #ff #01 endraw", result.Commands[0].Kepago)
+	}
+	if r.Pos() != 2 {
+		t.Fatalf("reader pos = %d, want 2", r.Pos())
+	}
+}
+
 func TestIsShiftJISLead(t *testing.T) {
 	// Valid lead bytes
 	for _, b := range []byte{0x81, 0x9f, 0xe0, 0xef, 0xf0, 0xfc} {

@@ -1,4 +1,4 @@
-module rldev2026go
+module rldev2026go-linux
 
 go 1.23
 

@@ -7,6 +7,7 @@
   </tr>
 </table>
 
+Update : 25/05/2026 : Oni uta + Royal Nekomimi Academy + Clannad Steam (2015) now supported
 Update : 24/05/2026 : AIR is now supported - Creating a list of validated features
 
 Update : 20/05/2026 : An initial version of the GUI has been created for Rldev2026
@@ -38,7 +39,7 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### -Clannad (2004)
 ### -Clannad Full Voice (2007)
-### -Clannad Steam (2015) : debug in progress....
+### -Clannad Steam (2015) 
 ### -AIR 18+ (2005)
 ### -Oni Uta (not tested, Kotsuider contribution)
 ### -Royal Nekomimi Academy (not tested, CarouselAether contribution)

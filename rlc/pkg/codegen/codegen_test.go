@@ -403,6 +403,47 @@ func TestOutputEmitAssignment(t *testing.T) {
 	}
 }
 
+func TestOutputEmitStringAssignmentSeparatesUnquotedLiteral(t *testing.T) {
+	o := NewOutput()
+	o.EmitAssignment(ast.Nowhere,
+		ast.StrVar{Bank: 18, Index: ast.IntLit{Val: 1004}},
+		ast.AssignSet,
+		ast.StrLit{Tokens: []ast.StrToken{ast.TextToken{Text: "SDTA0414"}}},
+	)
+
+	var got []byte
+	for _, ir := range o.IR {
+		got = append(got, ir.Bytes...)
+	}
+	want := append([]byte{'$', 18, '['}, EncodeInt32(1004)...)
+	want = append(want, ']', '\\', AssignCode(ast.AssignSet), ',')
+	want = append(want, []byte("SDTA0414")...)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("string assignment bytes: got % x, want % x", got, want)
+	}
+}
+
+func TestOutputEmitStringAssignmentDoesNotSeparateQuotedLiteral(t *testing.T) {
+	o := NewOutput()
+	o.EmitAssignment(ast.Nowhere,
+		ast.StrVar{Bank: 18, Index: ast.IntLit{Val: 1004}},
+		ast.AssignSet,
+		ast.StrLit{Tokens: []ast.StrToken{ast.TextToken{Text: "Girl"}}},
+	)
+
+	var got []byte
+	for _, ir := range o.IR {
+		got = append(got, ir.Bytes...)
+	}
+	want := append([]byte{'$', 18, '['}, EncodeInt32(1004)...)
+	want = append(want, ']', '\\', AssignCode(ast.AssignSet), '"')
+	want = append(want, []byte("Girl")...)
+	want = append(want, '"')
+	if !bytes.Equal(got, want) {
+		t.Fatalf("quoted string assignment bytes: got % x, want % x", got, want)
+	}
+}
+
 func TestOutputEmitOpcode(t *testing.T) {
 	o := NewOutput()
 	o.EmitOpcode(ast.Nowhere, 0, 1, 0, 0, 0)
@@ -565,6 +606,22 @@ func TestGeneratePost125UsesBangOnlyForEntrypoint(t *testing.T) {
 	}
 	if data[bcOff+6] != '@' {
 		t.Fatalf("kidoku marker = %q, want '@'", data[bcOff+6])
+	}
+}
+
+func TestGenerateDefaultVersionUsesBangEntrypoint(t *testing.T) {
+	o := NewOutput()
+	o.AddEntrypoint(0)
+	o.AddCode(ast.Nowhere, []byte{0x00})
+
+	data, err := o.Generate(DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bcOff := binary.LittleEndian.Uint32(data[0x20:0x24])
+	if data[bcOff] != '!' {
+		t.Fatalf("default entrypoint marker = %q, want '!'", data[bcOff])
 	}
 }
 

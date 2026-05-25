@@ -533,6 +533,123 @@ func TestStrsubThreeArgUsesObservedOverload(t *testing.T) {
 	}
 }
 
+func registerSetLocalNameForTest(c *Compiler) {
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "SetLocalName",
+		OpType:   1,
+		OpModule: 13,
+		OpCode:   11,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+			Params: []kfn.Parameter{
+				{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FTagged}, Tag: "index"},
+				{Type: kfn.PStrC, Flags: []kfn.ParamFlag{kfn.FTagged}, Tag: "name"},
+			},
+		}},
+	})
+}
+
+func TestFunctionCallSeparatesIntThenUnquotedStringParam(t *testing.T) {
+	c := newComp()
+	registerSetLocalNameForTest(c)
+	loc := ast.Loc{File: "t", Line: 1}
+	name := "《渚の名前》"
+	c.Parse([]ast.Stmt{ast.FuncCallStmt{
+		Loc:   loc,
+		Ident: "SetLocalName",
+		Params: []ast.Param{
+			ast.SimpleParam{Loc: loc, Expr: ast.IntLit{Loc: loc, Val: 0}},
+			ast.SimpleParam{Loc: loc, Expr: ast.StrLit{Loc: loc, Tokens: []ast.StrToken{
+				ast.TextToken{Loc: loc, Text: name},
+			}}},
+		},
+	}})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	encodedName, err := encoding.UTF8ToSJS(name)
+	if err != nil {
+		t.Fatalf("encode name: %v", err)
+	}
+	args := append([]byte{'('}, codegen.EncodeInt32(0)...)
+	args = append(args, ',')
+	args = append(args, encodedName...)
+	args = append(args, ')')
+	want := append(codegen.EncodeOpcode(1, 13, 11, 2, 0), args...)
+	got := compilerOutputBytes(c)
+	if !bytes.Contains(got, want) {
+		t.Fatalf("SetLocalName unquoted args missing separator:\n got  % x\n want % x", got, want)
+	}
+}
+
+func TestFunctionCallDoesNotSeparateQuotedStringParam(t *testing.T) {
+	c := newComp()
+	registerSetLocalNameForTest(c)
+	loc := ast.Loc{File: "t", Line: 1}
+	c.Parse([]ast.Stmt{ast.FuncCallStmt{
+		Loc:   loc,
+		Ident: "SetLocalName",
+		Params: []ast.Param{
+			ast.SimpleParam{Loc: loc, Expr: ast.IntLit{Loc: loc, Val: 0}},
+			ast.SimpleParam{Loc: loc, Expr: ast.StrLit{Loc: loc, Tokens: []ast.StrToken{
+				ast.TextToken{Loc: loc, Text: "Girl"},
+			}}},
+		},
+	}})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	want := append(codegen.EncodeOpcode(1, 13, 11, 2, 0), []byte{'(', '$', 0xff, 0, 0, 0, 0, '"', 'G', 'i', 'r', 'l', '"', ')'}...)
+	if !bytes.Contains(got, want) {
+		t.Fatalf("SetLocalName quoted args changed:\n got  % x\n want % x", got, want)
+	}
+	forbidden := append(codegen.EncodeOpcode(1, 13, 11, 2, 0), []byte{'(', '$', 0xff, 0, 0, 0, 0, ',', '"', 'G', 'i', 'r', 'l', '"', ')'}...)
+	if bytes.Contains(got, forbidden) {
+		t.Fatalf("SetLocalName quoted args should not have separator:\n got       % x\n forbidden % x", got, forbidden)
+	}
+}
+
+func TestFunctionCallSeparatesStringVarThenUnquotedStringParam(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "CompareForTest",
+		OpType:   1,
+		OpModule: 10,
+		OpCode:   4,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+			Params: []kfn.Parameter{
+				{Type: kfn.PStrC, Flags: []kfn.ParamFlag{kfn.FTagged}, Tag: "lhs"},
+				{Type: kfn.PStrC, Flags: []kfn.ParamFlag{kfn.FTagged}, Tag: "rhs"},
+			},
+		}},
+	})
+	loc := ast.Loc{File: "t", Line: 1}
+	c.Parse([]ast.Stmt{ast.FuncCallStmt{
+		Loc:   loc,
+		Ident: "CompareForTest",
+		Params: []ast.Param{
+			ast.SimpleParam{Loc: loc, Expr: ast.StrVar{Loc: loc, Bank: 11, Index: ast.IntLit{Loc: loc, Val: 1}}},
+			ast.SimpleParam{Loc: loc, Expr: ast.StrLit{Loc: loc, Tokens: []ast.StrToken{
+				ast.TextToken{Loc: loc, Text: "A"},
+			}}},
+		},
+	}})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	strVar := append([]byte{'$', 11, '['}, codegen.EncodeInt32(1)...)
+	strVar = append(strVar, ']')
+	wantArgs := append([]byte{'('}, strVar...)
+	wantArgs = append(wantArgs, ',', 'A', ')')
+	want := append(codegen.EncodeOpcode(1, 10, 4, 2, 0), wantArgs...)
+	got := compilerOutputBytes(c)
+	if !bytes.Contains(got, want) {
+		t.Fatalf("string-var + unquoted string args missing separator:\n got  % x\n want % x", got, want)
+	}
+}
+
 // --- Compile-time structures ---
 
 func TestDIfTrue(t *testing.T) {
@@ -1013,6 +1130,29 @@ func TestCompileResTextRawByteEscapes(t *testing.T) {
 	got := compilerOutputBytes(c)
 	if !bytes.Equal(got, []byte{0x84, 0x02}) {
 		t.Fatalf("raw byte escapes: got % x, want 84 02", got)
+	}
+}
+
+func TestTextStubResourceRawByteEscapesSkipEmptyQuoteRun(t *testing.T) {
+	c := newComp()
+	c.Out.SuppressAutoKidoku = true
+	c.Out.ResolveRes = func(key string) (string, bool) {
+		if key == "0000" {
+			return `\x{84}\x{02}`, true
+		}
+		return "", false
+	}
+	c.ParseElt(ast.ReturnStmt{
+		Loc:  ast.Loc{File: "t", Line: 1},
+		Expr: ast.ResRef{Loc: ast.Loc{File: "t", Line: 1}, Key: "0000"},
+	})
+
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	if !bytes.Equal(got, []byte{0x84, 0x02}) {
+		t.Fatalf("resource raw byte escapes: got % x, want 84 02", got)
 	}
 }
 

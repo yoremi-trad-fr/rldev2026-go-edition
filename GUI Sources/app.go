@@ -386,7 +386,7 @@ func (a *App) RldevDisassemble(seenFile, kfnFile, encoding, gameID, outputDir st
 		return a.failIf(err)
 	}
 
-	args := []string{"-d", "-e", encoding, "-o", outputDir}
+	args := []string{"-d", "-g", "-e", encoding, "-o", outputDir}
 	a.log("KFN: " + kfnFile)
 	args = append(args, "-kfn", kfnFile)
 	if gameID != "" {

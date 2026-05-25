@@ -1041,16 +1041,10 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 	// screen.
 	if len(emitParams) > 0 {
 		c.Out.AddCodeRaw(s.Loc, []byte{'('})
-		// Track whether the previous emitted parameter was a string
-		// literal. OCaml funcAsm.ml L82-89 (`Literal`) inserts an ASCII
-		// `,` between two consecutive string args, because string args
-		// in the bytecode have no explicit delimiter: they are just a
-		// run of ASCII / SJIS bytes terminated by the next non-string
-		// byte. Without the separator, `(50, '???', 'STT_LUM00')` is
-		// emitted as `(50 ???STT_LUM00)` and the engine reads it as a
-		// single concatenated filename `???STT_LUM00.g00`, producing a
-		// "file not found" popup on launch (Clannad SEEN9032 objOfFileAnm).
-		prevWasString := false
+		// Track whether at least one parameter has already been emitted.
+		// Unquoted string arguments have no self-delimiting marker, so
+		// OCaml emits an ASCII comma before a later unquoted string.
+		prevParam := emittedParamNone
 		for _, p := range emitParams {
 			switch pp := p.(type) {
 			case ast.SimpleParam:
@@ -1075,19 +1069,18 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 					}
 					inner = pe.Expr
 				}
-				isString := isStringExpr(inner)
-				if prevWasString && isString {
+				if needsCommaBeforeStringParam(c.Out, prevParam, inner) {
 					c.Out.AddCodeRaw(s.Loc, []byte{','})
 				}
 				c.Out.EmitExprRaw(inner)
-				prevWasString = isString
+				prevParam = classifyEmittedParam(inner)
 			case ast.ComplexParam:
 				c.Out.AddCodeRaw(s.Loc, []byte{'('})
 				for _, e := range pp.Exprs {
 					c.Out.EmitExprRaw(e)
 				}
 				c.Out.AddCodeRaw(s.Loc, []byte{')'})
-				prevWasString = false
+				prevParam = emittedParamOther
 			case ast.SpecialParam:
 				// 0x61 tag followed by either a parenthesised parameter
 				// block (`__special[N]`) or inline bare params
@@ -1102,7 +1095,11 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 				if !pp.NoParens {
 					c.Out.AddCodeRaw(s.Loc, []byte{')'})
 				}
-				prevWasString = false
+				if pp.NoParens {
+					prevParam = emittedParamSpecialNoParens
+				} else {
+					prevParam = emittedParamOther
+				}
 			}
 		}
 		c.Out.AddCodeRaw(s.Loc, []byte{')'})
@@ -1876,21 +1873,40 @@ func liftNotInExpr(e ast.Expr) ast.Expr {
 	return e
 }
 
-// isStringExpr reports whether the given expression compiles to a
-// "string-shaped" run of bytes in the bytecode (i.e. ASCII / SJIS text
-// rather than an integer-mode `$type[idx]` form). Used by
-// compileFuncCall to decide when to insert an ASCII `,` separator
-// between consecutive string args — see OCaml funcAsm.ml L82-89.
-func isStringExpr(e ast.Expr) bool {
-	switch ex := e.(type) {
-	case ast.StrLit:
-		return true
-	case ast.ResRef:
-		return true
-	case ast.ParenExpr:
-		return isStringExpr(ex.Expr)
+type emittedParamKind int
+
+const (
+	emittedParamNone emittedParamKind = iota
+	emittedParamOther
+	emittedParamInteger
+	emittedParamStringLiteral
+	emittedParamSpecialNoParens
+)
+
+func needsCommaBeforeStringParam(out *codegen.Output, prev emittedParamKind, e ast.Expr) bool {
+	switch prev {
+	case emittedParamNone:
+		return false
+	case emittedParamStringLiteral, emittedParamSpecialNoParens:
+		_, ok := out.EncodeStringExpr(e)
+		return ok
+	default:
+		return out.StringExprNeedsSeparator(e)
 	}
-	return false
+}
+
+func classifyEmittedParam(e ast.Expr) emittedParamKind {
+	switch e.(type) {
+	case ast.StrLit, ast.ResRef:
+		return emittedParamStringLiteral
+	}
+	switch fn.ClassifyExpr(e) {
+	case fn.ETInt:
+		return emittedParamInteger
+	case fn.ETLiteral:
+		return emittedParamStringLiteral
+	}
+	return emittedParamOther
 }
 
 // compileResText lexes a `.utf` resource string (the raw text the
@@ -1922,7 +1938,9 @@ func (tc *textCompiler) compileResText(s string) {
 		if c == '\\' && i+1 < len(r) {
 			if value, consumed, ok := scanRawByteEscape(r, i); ok {
 				flushText()
-				tc.setQuotes(false)
+				if !tc.cancelInitialEmptyQuoteRun() {
+					tc.setQuotes(false)
+				}
 				tc.buf = append(tc.buf, value)
 				i += consumed
 				continue

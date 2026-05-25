@@ -1060,6 +1060,35 @@ func (o *Output) encodeStrLit(s ast.StrLit) ([]byte, error) {
 	return buf, nil
 }
 
+// EncodeStringExpr serialises an expression that occupies a string argument
+// slot. It is used by the compiler frame to decide whether the following bytes
+// are self-delimiting (quoted) or need an explicit separator.
+func (o *Output) EncodeStringExpr(e ast.Expr) ([]byte, bool) {
+	switch x := e.(type) {
+	case ast.StrLit:
+		b, err := o.encodeStrLit(x)
+		return b, err == nil
+	case ast.ResRef:
+		if o.ResolveRes != nil {
+			if raw, ok := o.ResolveRes(x.Key); ok {
+				b, err := o.encodeResourceText(x.Loc, raw)
+				return b, err == nil
+			}
+		}
+	case ast.ParenExpr:
+		return o.EncodeStringExpr(x.Expr)
+	}
+	return nil, false
+}
+
+// StringExprNeedsSeparator reports whether a string expression starts with
+// unquoted bytes and therefore needs a comma when it follows an operator or an
+// integer-like argument.
+func (o *Output) StringExprNeedsSeparator(e ast.Expr) bool {
+	b, ok := o.EncodeStringExpr(e)
+	return ok && len(b) > 0 && b[0] != '"'
+}
+
 func hasUnsafeUnquotedByte(b []byte) bool {
 	for i := 0; i < len(b); i++ {
 		c := b[i]
@@ -1088,6 +1117,9 @@ func (o *Output) EmitAssignment(loc ast.Loc, dest ast.Expr, op ast.AssignOp, exp
 	o.maybeLine(loc)
 	o.EmitExprRaw(dest)
 	o.AddCodeRaw(loc, []byte{'\\', AssignCode(op)})
+	if o.StringExprNeedsSeparator(expr) {
+		o.AddCodeRaw(loc, []byte{','})
+	}
 	o.EmitExprRaw(expr)
 }
 
@@ -1127,6 +1159,7 @@ func DefaultOptions() GenerateOptions {
 		CompilerVersion: 10002,
 		Compress:        true,
 		DebugInfo:       false,
+		Version:         kfn.Version{1, 2, 7, 0},
 		KidokuType:      0,
 	}
 }

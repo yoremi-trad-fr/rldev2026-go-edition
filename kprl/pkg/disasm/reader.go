@@ -2591,6 +2591,13 @@ textoutLoop:
 	// add_textout_fails fully, but we can avoid the most visible
 	// regression: textouts that contain only escape sequences for
 	// control bytes (`\x{NN}` chains) carry no readable content.
+	if raw, ok := rawControlTextout(textStr); ok {
+		cmd.CType = "raw"
+		cmd.Kepago = []CommandElem{ElemString{Value: raw}}
+		result.Commands = append(result.Commands, cmd)
+		return nil
+	}
+
 	if isOnlyControlEscapes(textStr) {
 		// Drop entirely; matches the most common OCaml outcome here.
 		return nil
@@ -2643,6 +2650,16 @@ textoutLoop:
 		result.Commands = append(result.Commands, cmd)
 	}
 	return nil
+}
+
+func rawControlTextout(s string) (string, bool) {
+	// Clannad Steam SEEN9600 contains isolated FF 01 textout bytes between
+	// gosub_with calls and halt markers. They are not display text, but
+	// dropping them changes the bytecode at a FARCALL target.
+	if s == "\\x{ff}\\x{01}" || (len(s) == 2 && s[0] == 0xff && s[1] == 0x01) {
+		return "raw #ff #01 endraw", true
+	}
+	return "", false
 }
 
 // seenEndPrefix is the SJIS encoding of "ＳｅｅｎＥｎｄ" (14 bytes).

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -105,15 +106,18 @@ func (a *App) binDir() (string, error) {
 
 func (a *App) toolPath(toolName string) (string, error) {
 	allowed := map[string]string{
-		"kprl":   "kprl16.exe",
-		"rlc":    "rlc2026.exe",
-		"vaconv": "vaconv.exe",
-		"rlxml":  "rlxml.exe",
+		"kprl":   "kprl16",
+		"rlc":    "rlc2026",
+		"vaconv": "vaconv",
+		"rlxml":  "rlxml",
 	}
 
 	exeName, ok := allowed[toolName]
 	if !ok {
 		return "", fmt.Errorf("outil non pris en charge: %s", toolName)
+	}
+	if runtime.GOOS == "windows" {
+		exeName += ".exe"
 	}
 
 	binDir, err := a.binDir()
@@ -165,6 +169,61 @@ func (a *App) findKFN() string {
 
 func (a *App) DefaultKFN() string {
 	return a.findKFN()
+}
+
+var realLiveInterpreterCandidates = []string{
+	"RealLive.exe",
+	"RealLiveEn.exe",
+	"Kinetic.exe",
+	"kinetic.exe",
+	"AVG2000.exe",
+	"avg2000.exe",
+	"SiglusEngine.exe",
+	"siglusengine.exe",
+	"SiglusEngine_Steam.exe",
+	"siglusengine_steam.exe",
+	"reallive.exe",
+}
+
+func findInterpreterInDir(dir string) string {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return ""
+	}
+	for _, name := range realLiveInterpreterCandidates {
+		path := filepath.Join(dir, name)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path
+		}
+	}
+	return ""
+}
+
+func (a *App) resolveInterpreter(gameexe, interpreter string) string {
+	interpreter = strings.TrimSpace(interpreter)
+	if interpreter != "" {
+		return interpreter
+	}
+
+	gameexe = strings.TrimSpace(gameexe)
+	if gameexe == "" {
+		return ""
+	}
+
+	dir := gameexe
+	if info, err := os.Stat(gameexe); err == nil {
+		if !info.IsDir() {
+			dir = filepath.Dir(gameexe)
+		}
+	} else if filepath.Ext(gameexe) != "" {
+		dir = filepath.Dir(gameexe)
+	}
+
+	if found := findInterpreterInDir(dir); found != "" {
+		a.logOK("Interpreteur detecte: " + found)
+		return found
+	}
+	return ""
 }
 
 func (a *App) runTool(toolName string, args ...string) error {
@@ -331,7 +390,7 @@ func (a *App) RldevDisassemble(seenFile, kfnFile, encoding, gameID, outputDir st
 		return a.failIf(err)
 	}
 
-	args := []string{"-d", "-e", encoding, "-o", outputDir}
+	args := []string{"-d", "-g", "-e", encoding, "-o", outputDir}
 	a.log("KFN: " + kfnFile)
 	args = append(args, "-kfn", kfnFile)
 	if gameID != "" {
@@ -436,6 +495,7 @@ func (a *App) RldevCompile(orgFile, kfnFile, gameexe, interpreter, encoding, out
 	if err := required("KFN", kfnFile); err != nil {
 		return a.failIf(err)
 	}
+	interpreter = a.resolveInterpreter(gameexe, interpreter)
 
 	args := []string{"-v", "-e", encoding, "-d", outputDir}
 	args = appendTransformArgs(args, outputTransform, forceTransform)
@@ -478,6 +538,7 @@ func (a *App) RldevCompileBatch(inputDir, kfnFile, gameexe, interpreter, encodin
 	if err := required("KFN", kfnFile); err != nil {
 		return a.failIf(err)
 	}
+	interpreter = a.resolveInterpreter(gameexe, interpreter)
 
 	entries, err := os.ReadDir(inputDir)
 	if err != nil {
