@@ -25,6 +25,7 @@
   let consoleEl;
 
   let rlSeenFile = '';
+  let rlTemplateSeenFile = '';
   let rlOrgFile = '';
   let rlOrgDir = '';
   let rlCompileBatch = false;
@@ -33,8 +34,8 @@
   let rlInterpreter = '';
   let rlOutputDir = '';
   let rlEncoding = 'UTF-8';
-  let rlOutputTransform = 'WESTERN';
-  let rlForceTransform = true;
+  let rlOutputTransform = 'NONE';
+  let rlForceTransform = false;
   let rlGameId = '';
   let rlG00File = '';
   let rlPngFile = '';
@@ -107,6 +108,10 @@
     const f = await SelectSaveFile('Save SEEN.txt as', 'SEEN.TXT', '*.txt;*.TXT', 'SEEN archives');
     if (f) rlSeenFile = f;
   }
+  async function browseRlTemplateSeen() {
+    const f = await SelectFile('Select original/template SEEN.txt', '*.txt;*.TXT', 'SEEN archives');
+    if (f) rlTemplateSeenFile = f;
+  }
   async function browseRlOrg() {
     if (rlCompileBatch) {
       const d = await SelectDirectory('Select folder with .org / .ke files');
@@ -125,7 +130,7 @@
     if (f) rlGameexe = f;
   }
   async function browseRlInterpreter() {
-    const f = await SelectFile('Select RealLive.exe', '*.exe;*.EXE', 'RealLive interpreter');
+    const f = await SelectFile('Select RealLive / Steam .exe', '*.exe;*.EXE', 'RealLive-compatible interpreter');
     if (f) rlInterpreter = f;
   }
   async function browseRlOutputDir() {
@@ -163,7 +168,7 @@
     run(() => RldevExtract(rlSeenFile, rlOutputDir));
   }
   function startRlArchive() {
-    run(() => RldevArchive(rlSeenFile, rlOutputDir));
+    run(() => RldevArchive(rlSeenFile, rlOutputDir, rlTemplateSeenFile));
   }
   function startRlList() {
     run(() => RldevList(rlSeenFile));
@@ -240,6 +245,7 @@
         <div class="form-title">4 — Rebuild SEEN.txt</div>
         <div class="form-hint" style="margin-bottom:10px">Assemble des fichiers .TXT compilés dans une archive SEEN.txt.</div>
         <div class="form-group"><label>Input folder (*.TXT) :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
+        <div class="form-group"><label>Original/template SEEN.txt :</label><div class="form-row"><input type="text" bind:value={rlTemplateSeenFile} readonly placeholder="Optionnel, requis pour Clannad Steam" /><button class="btn" on:click={browseRlTemplateSeen}>Select</button></div></div>
         <div class="form-group"><label>Output SEEN.txt :</label><div class="form-row"><input type="text" bind:value={rlSeenFile} readonly /><button class="btn" on:click={browseRlSeenSave}>Select</button></div></div>
         <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startRlArchive} disabled={!rlSeenFile || !rlOutputDir}>Rebuild Archive</button>{/if}</div>
 
@@ -259,9 +265,9 @@
         {/if}
         <div class="form-group"><label>KFN file :</label><div class="form-row"><input type="text" bind:value={rlKfnFile} readonly placeholder="Auto : ./KFN/reallive.kfn" /><button class="btn" on:click={browseRlKfn}>Select</button></div></div>
         <div class="form-group"><label>GAMEEXE.INI (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlGameexe} readonly /><button class="btn" on:click={browseRlGameexe}>Select</button></div></div>
-        <div class="form-group"><label>RealLive.exe (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlInterpreter} readonly /><button class="btn" on:click={browseRlInterpreter}>Select</button></div><div class="form-hint">Détection de version PE / overloads KFN si disponible.</div></div>
+        <div class="form-group"><label>Interpréteur RealLive / Steam (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlInterpreter} readonly /><button class="btn" on:click={browseRlInterpreter}>Select</button></div><div class="form-hint">Auto si GAMEEXE.INI pointe vers un dossier contenant RealLive.exe ou SiglusEngine_Steam.exe.</div></div>
         <div class="form-group"><label>Encodage source :</label><div class="form-row"><select bind:value={rlEncoding}><option value="UTF-8">UTF-8</option><option value="CP932">CP932 / Shift-JIS</option><option value="EUC-JP">EUC-JP</option></select></div></div>
-        <div class="form-group"><label>Transformation sortie :</label><div class="form-row"><select bind:value={rlOutputTransform}><option value="WESTERN">WESTERN / CP1252</option><option value="NONE">NONE / Japonais</option><option value="CHINESE">CHINESE</option><option value="KOREAN">KOREAN</option></select></div></div>
+        <div class="form-group"><label>Transformation sortie :</label><div class="form-row"><select bind:value={rlOutputTransform}><option value="NONE">NONE / CP932 original</option><option value="WESTERN">WESTERN / CP1252</option><option value="CHINESE">CHINESE</option><option value="KOREAN">KOREAN</option></select></div></div>
         <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlForceTransform} /> Force transform</label></div></div>
         <div class="form-group"><label>Output folder :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
         <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startRlCompile} disabled={(rlCompileBatch ? !rlOrgDir : !rlOrgFile) || !rlKfnFile || !rlOutputDir}>Compile</button>{/if}</div>

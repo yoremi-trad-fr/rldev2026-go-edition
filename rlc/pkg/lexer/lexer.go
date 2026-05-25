@@ -30,6 +30,16 @@ type Lexer struct {
 	file   string
 	tokens []token.Token
 	idx    int // current read position in tokens
+
+	// kprl emits "{- kidoku NNN -}" annotation comments on their own
+	// source line. They describe bytecode already reconstructed by rlc,
+	// so their trailing newline must not advance the logical line number.
+	suppressNextNewline bool
+
+	// #line in kprl output represents the current RealLive debug line,
+	// not a C-preprocessor style source mapping. Keep it sticky until the
+	// next #line so several bytecode commands can share the same debug line.
+	stickyLine bool
 }
 
 // New creates a Lexer from source text.
@@ -480,11 +490,25 @@ func (l *Lexer) scanIdentOrKeyword() {
 
 	// #line directive: adjust line number
 	if word == "#line" {
+		directiveLine := l.line
 		l.skipInlineSpace()
 		if l.pos < len(l.src) && l.src[l.pos] >= '0' && l.src[l.pos] <= '9' {
 			ns := l.collectWhile(func(r rune) bool { return r >= '0' && r <= '9' })
 			n, _ := strconv.Atoi(ns)
+			l.tokens = append(l.tokens, token.Token{
+				Type:   token.DWITHEXPR,
+				StrVal: "line",
+				Line:   directiveLine,
+				File:   l.file,
+			})
+			l.tokens = append(l.tokens, token.Token{
+				Type:   token.INTEGER,
+				IntVal: int32(n),
+				Line:   directiveLine,
+				File:   l.file,
+			})
 			l.line = n
+			l.stickyLine = true
 		}
 		return
 	}
@@ -501,8 +525,27 @@ func (l *Lexer) scanIdentOrKeyword() {
 		return
 	}
 
+	// The disassembler falls back to VARxx for integer banks that do
+	// not have a named int*/str* prefix. Keep that spelling
+	// recompilable so old/new scripts can round-trip unchanged.
+	if bank, ok := parseFallbackVarBank(word); ok {
+		l.emitIntStr(token.VAR, bank, word)
+		return
+	}
+
 	// Default: identifier
 	l.emitStr(token.IDENT, word)
+}
+
+func parseFallbackVarBank(word string) (int32, bool) {
+	if len(word) != 5 || !strings.HasPrefix(word, "VAR") {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(word[3:], 16, 8)
+	if err != nil {
+		return 0, false
+	}
+	return int32(n), true
 }
 
 // --- Whitespace and comments ---
@@ -514,10 +557,21 @@ func (l *Lexer) skipWhitespace() {
 			l.pos++
 		} else if c == '\n' {
 			l.pos++
-			l.line++
+			if l.suppressNextNewline {
+				l.suppressNextNewline = false
+			} else {
+				l.bumpLine()
+			}
 		} else {
+			l.suppressNextNewline = false
 			break
 		}
+	}
+}
+
+func (l *Lexer) bumpLine() {
+	if !l.stickyLine {
+		l.line++
 	}
 }
 
@@ -534,7 +588,7 @@ func (l *Lexer) skipLineComment() {
 	}
 	if l.pos < len(l.src) {
 		l.pos++ // skip \n
-		l.line++
+		l.bumpLine()
 	}
 }
 
@@ -648,13 +702,37 @@ func (l *Lexer) scanResRef() bool {
 
 func (l *Lexer) skipBlockComment() {
 	l.pos += 2 // skip {-
+	start := l.pos
+	sawNewline := false
 	for l.pos < len(l.src) {
 		if l.src[l.pos] == '-' && l.pos+1 < len(l.src) && l.src[l.pos+1] == '}' {
+			content := strings.TrimSpace(string(l.src[start:l.pos]))
+			if !sawNewline {
+				fields := strings.Fields(content)
+				if len(fields) == 2 && fields[0] == "kidoku" {
+					if n, err := strconv.Atoi(fields[1]); err == nil {
+						l.tokens = append(l.tokens, token.Token{
+							Type:   token.DWITHEXPR,
+							StrVal: "kidoku",
+							Line:   l.line,
+							File:   l.file,
+						})
+						l.tokens = append(l.tokens, token.Token{
+							Type:   token.INTEGER,
+							IntVal: int32(n),
+							Line:   l.line,
+							File:   l.file,
+						})
+						l.suppressNextNewline = true
+					}
+				}
+			}
 			l.pos += 2
 			return
 		}
 		if l.src[l.pos] == '\n' {
-			l.line++
+			sawNewline = true
+			l.bumpLine()
 		}
 		l.pos++
 	}
@@ -672,7 +750,7 @@ func (l *Lexer) skipCBlockComment() {
 			return
 		}
 		if l.src[l.pos] == '\n' {
-			l.line++
+			l.bumpLine()
 		}
 		l.pos++
 	}
@@ -848,6 +926,7 @@ var keywords = map[string]kwEntry{
 	"select_s2":          {token.SELECT, 2, "select_s2"},
 	"select_s":           {token.SELECT, 3, "select_s"},
 	"select_w2":          {token.SELECT, 10, "select_w2"},
+	"select_cancel":      {token.SELECT, 10, "select_cancel"},
 	"select_msgcancel":   {token.SELECT, 11, "select_msgcancel"},
 	"select_btncancel":   {token.SELECT, 12, "select_btncancel"},
 	"select_btnwkcancel": {token.SELECT, 13, "select_btnwkcancel"},

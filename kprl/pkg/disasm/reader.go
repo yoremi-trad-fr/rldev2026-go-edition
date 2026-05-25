@@ -1253,7 +1253,7 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 		//   overload 1: full form "strcpy(a, b, n)" / "strcat(a, b, n)"
 		return readStrAssign(r, result, &cmd, op, opts)
 
-	case op.Type == 0 && op.Module == 2:
+	case op.Type == 0 && op.Module == 2 && isSelectBlockFunction(op.Function):
 		// Select-family opcodes (module 2 = Sel in reallive.kfn).
 		// Function table: 0=select_w, 1=select, 2=select_s2, 3=select_s,
 		// 10=select_cancel, 11=select_msgcancel, 12=select_btncancel,
@@ -1277,12 +1277,7 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 		// `{...}` block properly, dispatching each item through
 		// GetDataSep so the `###PRINT(` marker is recognised inside.
 		//
-		// OCaml reference: read_select (disassembler.ml L1870). This
-		// is a pragmatic subset: it skips the per-item condition
-		// parser (colour/title/hide/blank/cursor) and just reads
-		// each item as a plain string. Conditions aren't used by
-		// Clannad and the rare cases that need them will simply
-		// produce a slightly degraded but still recompilable .org.
+		// OCaml reference: read_select (disassembler.ml L1870).
 		return readSelect(r, result, &cmd, op, argc, opts)
 	}
 
@@ -1644,6 +1639,15 @@ func readSelect(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, a
 			continue
 		}
 
+		cond := ""
+		if b, err := r.Peek(); err == nil && b == '(' {
+			cond, err = readSelectCond(r)
+			if err != nil {
+				items = append(items, fmt.Sprintf("/* read error: %v */", err))
+				break
+			}
+		}
+
 		// Read the item — get_data dispatches to readStringUnquot
 		// for bare strings and the ###PRINT( marker.
 		s, err := r.GetDataSep(opts.SeparateStrings)
@@ -1652,7 +1656,7 @@ func readSelect(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, a
 			items = append(items, fmt.Sprintf("/* read error: %v */", err))
 			break
 		}
-		items = append(items, s)
+		items = append(items, cond+s)
 	}
 
 	skipDebugInfo(r)
@@ -1660,18 +1664,121 @@ func readSelect(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, a
 		return err
 	}
 
-	sb.WriteString("(")
+	hasConds := false
+	for _, it := range items {
+		if strings.Contains(it, ": ") {
+			hasConds = true
+			break
+		}
+	}
+
+	if hasConds {
+		sb.WriteString("(\n    ")
+	} else {
+		sb.WriteString("(")
+	}
 	for i, it := range items {
 		if i > 0 {
-			sb.WriteString(", ")
+			if hasConds {
+				sb.WriteString(",\n    ")
+			} else {
+				sb.WriteString(", ")
+			}
 		}
 		sb.WriteString(it)
 	}
-	sb.WriteString(")")
+	if hasConds {
+		sb.WriteString("\n)")
+	} else {
+		sb.WriteString(")")
+	}
 
 	cmd.Kepago = []CommandElem{ElemString{Value: sb.String()}}
 	result.Commands = append(result.Commands, cmd_unhide(*cmd))
 	return nil
+}
+
+func readSelectCond(r *Reader) (string, error) {
+	if err := r.Expect('(', "readSelect/cond-open"); err != nil {
+		return "", err
+	}
+
+	var parts []string
+	for {
+		b, err := r.Peek()
+		if err != nil {
+			return "", err
+		}
+		if b == ')' {
+			break
+		}
+
+		cond := ""
+		if b == '(' {
+			r.Next()
+			expr, err := r.GetExpression()
+			if err != nil {
+				return "", fmt.Errorf("readSelect/cond-expr: %w", err)
+			}
+			if err := r.Expect(')', "readSelect/cond-expr-close"); err != nil {
+				return "", err
+			}
+			cond = " if " + expr
+		}
+
+		effectByte, err := r.Next()
+		if err != nil {
+			return "", err
+		}
+		effect, wantsArg, ok := selectEffect(effectByte)
+		if !ok {
+			return "", fmt.Errorf("unknown function %q in readSelect", rune(effectByte))
+		}
+
+		arg := ""
+		if wantsArg {
+			if p, err := r.Peek(); err == nil && p != ')' && (p < '0' || p > '9') {
+				expr, err := r.GetExpression()
+				if err != nil {
+					return "", fmt.Errorf("readSelect/cond-arg: %w", err)
+				}
+				arg = "(" + expr + ")"
+			}
+		}
+
+		parts = append(parts, effect+arg+cond)
+	}
+
+	if err := r.Expect(')', "readSelect/cond-close"); err != nil {
+		return "", err
+	}
+	return strings.Join(parts, "; ") + ": ", nil
+}
+
+func selectEffect(b byte) (name string, wantsArg bool, ok bool) {
+	switch b {
+	case '0':
+		return "colour", true, true
+	case '1':
+		return "title", true, true
+	case '2':
+		return "hide", false, true
+	case '3':
+		return "blank", false, true
+	case '4':
+		return "cursor", true, true
+	default:
+		return "", false, false
+	}
+}
+
+func isSelectBlockFunction(fn int) bool {
+	switch fn {
+	case 0, 1, 2, 3, 10, 11, 12, 13:
+		return true
+	default:
+		return false
+	}
 }
 
 // selectName returns the textual name for a Select-family op.Function.

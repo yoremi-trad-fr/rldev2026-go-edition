@@ -206,6 +206,37 @@ func TestParseSpecialParam(t *testing.T) {
 	if sp.Tag != 4 || len(sp.Exprs) != 3 {
 		t.Fatalf("special param: tag=%d exprs=%d", sp.Tag, len(sp.Exprs))
 	}
+	if sp.NoParens {
+		t.Fatal("__special form should keep parenthesised bytecode")
+	}
+}
+
+func TestParseAngleSpecialParam(t *testing.T) {
+	sf := parse("farcall_with (9600, 0, special<0>(41400000), special<0>(0))")
+	if len(sf.Stmts) != 1 {
+		t.Fatalf("got %d stmts", len(sf.Stmts))
+	}
+	fc, ok := sf.Stmts[0].(ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("got %T", sf.Stmts[0])
+	}
+	if len(fc.Params) != 4 {
+		t.Fatalf("params: got %d", len(fc.Params))
+	}
+	first, ok := fc.Params[2].(ast.SpecialParam)
+	if !ok {
+		t.Fatalf("third param: got %T", fc.Params[2])
+	}
+	second, ok := fc.Params[3].(ast.SpecialParam)
+	if !ok {
+		t.Fatalf("fourth param: got %T", fc.Params[3])
+	}
+	if first.Tag != 0 || second.Tag != 0 || len(first.Exprs) != 1 || len(second.Exprs) != 1 {
+		t.Fatalf("special params: %#v %#v", first, second)
+	}
+	if !first.NoParens || !second.NoParens {
+		t.Fatalf("angle special params should use inline NoParens form: %#v %#v", first, second)
+	}
 }
 
 func TestParseTopLevelControlCode(t *testing.T) {
@@ -539,6 +570,38 @@ func TestParseSelect(t *testing.T) {
 	}
 	if len(ss.Params) != 2 {
 		t.Errorf("params: got %d", len(ss.Params))
+	}
+}
+
+func TestParseConditionalSelect(t *testing.T) {
+	sf := parse(`select_cancel[4](
+    title(155) if intA[0] == 0; colour(156) if intA[0] == 1; blank if intA[1] > 9: #res<0004>
+)`)
+	ss, ok := sf.Stmts[0].(ast.SelectStmt)
+	if !ok {
+		t.Fatalf("got %T", sf.Stmts[0])
+	}
+	if ss.Opcode != 10 {
+		t.Fatalf("opcode = %d, want 10", ss.Opcode)
+	}
+	if _, ok := ss.Window.(ast.IntLit); !ok {
+		t.Fatalf("window = %T, want IntLit", ss.Window)
+	}
+	if len(ss.Params) != 1 {
+		t.Fatalf("params = %d, want 1", len(ss.Params))
+	}
+	param, ok := ss.Params[0].(ast.CondSelParam)
+	if !ok {
+		t.Fatalf("param = %T, want CondSelParam", ss.Params[0])
+	}
+	if len(param.Conds) != 3 {
+		t.Fatalf("conds = %d, want 3", len(param.Conds))
+	}
+	if param.Conds[0].Ident != "title" || param.Conds[0].Arg == nil || param.Conds[0].Cond == nil {
+		t.Fatalf("first condition not parsed completely: %#v", param.Conds[0])
+	}
+	if param.Conds[2].Ident != "blank" || param.Conds[2].Arg != nil || param.Conds[2].Cond == nil {
+		t.Fatalf("blank condition not parsed correctly: %#v", param.Conds[2])
 	}
 }
 

@@ -4,26 +4,27 @@
 //
 // Compiler directives are #-prefixed statements that control compilation:
 //
-//   #define sym = expr      — define a macro
-//   #const sym = expr       — define a constant (evaluated at compile time)
-//   #inline sym(params) body — define an inline expansion
-//   #undef sym              — remove a symbol
-//   #set sym = expr         — mutate an existing symbol
-//   #target RealLive        — set target engine
-//   #version 1.2.7.0        — set target version
-//   #warn "msg"             — emit a warning
-//   #error "msg"            — emit an error
-//   #print "msg"            — print a message
-//   #resource "file"        — load resource strings
-//   #entrypoint N           — register an entrypoint
-//   #file "name"            — set output filename
-//   #character "name"       — add to dramatis personae
-//   #kidoku_type N           — set kidoku marker type
-//   #val_0x2c N              — set header field
+//	#define sym = expr      — define a macro
+//	#const sym = expr       — define a constant (evaluated at compile time)
+//	#inline sym(params) body — define an inline expansion
+//	#undef sym              — remove a symbol
+//	#set sym = expr         — mutate an existing symbol
+//	#target RealLive        — set target engine
+//	#version 1.2.7.0        — set target version
+//	#warn "msg"             — emit a warning
+//	#error "msg"            — emit an error
+//	#print "msg"            — print a message
+//	#resource "file"        — load resource strings
+//	#entrypoint N           — register an entrypoint
+//	#file "name"            — set output filename
+//	#character "name"       — add to dramatis personae
+//	#kidoku_type N           — set kidoku marker type
+//	#val_0x2c N              — set header field
 package directive
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -316,14 +317,20 @@ func (c *Compiler) loadResourceFile(loc ast.Loc, path string) error {
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
-		raw := scanner.Bytes()
+		raw := bytes.TrimSuffix(scanner.Bytes(), []byte{'\r'})
 
-		// Decode line per source encoding into UTF-8 Go string.
+		if key, body, ok := parseRawResourceEntry(raw, c.SourceEnc); ok {
+			if c.State != nil {
+				c.State.SetResource(key, body, ast.Loc{File: path, Line: lineNo})
+			}
+			continue
+		}
+
+		// Decode non-resource lines per source encoding into UTF-8 Go string.
 		text, err := decodeBytes(raw, c.SourceEnc)
 		if err != nil {
 			continue
 		}
-		text = strings.TrimRight(text, "\r")
 
 		trimmed := strings.TrimSpace(text)
 		if trimmed == "" {
@@ -361,6 +368,93 @@ func (c *Compiler) loadResourceFile(loc ast.Loc, path string) error {
 		}
 	}
 	return scanner.Err()
+}
+
+func parseRawResourceEntry(raw []byte, encName string) (key string, body string, ok bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.HasPrefix(trimmed, []byte("//")) ||
+		bytes.HasPrefix(trimmed, []byte("#character")) ||
+		bytes.HasPrefix(trimmed, []byte("#resource")) {
+		return "", "", false
+	}
+	if len(raw) == 0 || raw[0] != '<' {
+		return "", "", false
+	}
+	end := bytes.IndexByte(raw, '>')
+	if end <= 0 {
+		return "", "", false
+	}
+	bodyBytes := raw[end+1:]
+	if len(bodyBytes) > 0 && (bodyBytes[0] == ' ' || bodyBytes[0] == '\t') {
+		bodyBytes = bodyBytes[1:]
+	}
+	return string(raw[1:end]), decodeResourceBody(bodyBytes, encName), true
+}
+
+func decodeResourceBody(data []byte, encName string) string {
+	switch strings.ToUpper(strings.ReplaceAll(encName, "_", "-")) {
+	case "CP932", "SHIFT-JIS", "SJIS", "SHIFTJIS":
+		return decodeShiftJISResourceBody(data)
+	case "", "UTF-8", "UTF8":
+		return string(data)
+	default:
+		text, err := decodeBytes(data, encName)
+		if err != nil {
+			return string(data)
+		}
+		return text
+	}
+}
+
+func decodeShiftJISResourceBody(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	var out strings.Builder
+	for i := 0; i < len(data); {
+		c := data[i]
+		switch {
+		case c >= 0x20 && c < 0x7f:
+			out.WriteByte(c)
+			i++
+		case isShiftJISLead(c):
+			if i+1 < len(data) && isShiftJISTrail(data[i+1]) {
+				if s, err := encoding.SJSToUTF8(data[i : i+2]); err == nil {
+					out.WriteString(s)
+				} else {
+					writeRawByteEscape(&out, c)
+					writeRawByteEscape(&out, data[i+1])
+				}
+				i += 2
+			} else {
+				writeRawByteEscape(&out, c)
+				i++
+			}
+		case c >= 0xa1 && c <= 0xdf:
+			if s, err := encoding.SJSToUTF8(data[i : i+1]); err == nil {
+				out.WriteString(s)
+			} else {
+				writeRawByteEscape(&out, c)
+			}
+			i++
+		default:
+			writeRawByteEscape(&out, c)
+			i++
+		}
+	}
+	return out.String()
+}
+
+func writeRawByteEscape(out *strings.Builder, b byte) {
+	fmt.Fprintf(out, "\\x{%02x}", b)
+}
+
+func isShiftJISLead(b byte) bool {
+	return (b >= 0x81 && b <= 0x9f) || (b >= 0xe0 && b <= 0xef) || (b >= 0xf0 && b <= 0xfc)
+}
+
+func isShiftJISTrail(b byte) bool {
+	return (b >= 0x40 && b <= 0x7e) || (b >= 0x80 && b <= 0xfc)
 }
 
 // decodeBytes decodes raw bytes into a Go (UTF-8) string according to

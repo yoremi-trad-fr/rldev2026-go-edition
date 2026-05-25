@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/yoremi/rldev-go/pkg/encoding"
 	"github.com/yoremi/rldev-go/pkg/texttransforms"
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
 	"github.com/yoremi/rldev-go/rlc/pkg/codegen"
@@ -79,6 +80,97 @@ func TestParseDirective(t *testing.T) {
 	c.Parse([]ast.Stmt{ast.DefineStmt{Ident: "X", Value: ast.IntLit{Val: 42}}})
 	if !c.Mem.Defined("X") {
 		t.Error("X not defined")
+	}
+}
+
+func TestParseLineDirectiveEmitsForcedLineRef(t *testing.T) {
+	c := newComp()
+	c.Parse([]ast.Stmt{
+		ast.DirectiveStmt{Name: "line", Value: ast.IntLit{Val: 128}},
+		ast.HaltStmt{Loc: ast.Loc{Line: 128}},
+	})
+
+	if len(c.Out.IR) < 2 {
+		t.Fatalf("IR length = %d, want at least 2", len(c.Out.IR))
+	}
+	if c.Out.IR[0].Type != codegen.IRLineref || c.Out.IR[0].Index != 128 {
+		t.Fatalf("first IR = %#v, want forced line 128", c.Out.IR[0])
+	}
+	if c.Out.IR[1].Type != codegen.IRCode || !bytes.Equal(c.Out.IR[1].Bytes, []byte{0x00}) {
+		t.Fatalf("second IR = %#v, want halt code", c.Out.IR[1])
+	}
+}
+
+func TestParseStandaloneKidokuDirectiveEmitsMarker(t *testing.T) {
+	c := newComp()
+	c.Parse([]ast.Stmt{
+		ast.DirectiveStmt{Loc: ast.Loc{File: "t", Line: 22}, Name: "line", Value: ast.IntLit{Val: 23}},
+		ast.DirectiveStmt{Loc: ast.Loc{File: "t", Line: 23}, Name: "kidoku", Value: ast.IntLit{Val: 1}},
+		ast.DirectiveStmt{Loc: ast.Loc{File: "t", Line: 23}, Name: "line", Value: ast.IntLit{Val: 24}},
+		ast.HaltStmt{Loc: ast.Loc{File: "t", Line: 24}},
+	})
+
+	kidoku := kidokuIRs(c)
+	if len(kidoku) != 1 {
+		t.Fatalf("kidoku count = %d, want 1", len(kidoku))
+	}
+	if kidoku[0].Index != 23 {
+		t.Fatalf("kidoku line = %d, want 23", kidoku[0].Index)
+	}
+	kidokuPos := -1
+	for i, ir := range c.Out.IR {
+		if ir.Type == codegen.IRKidoku {
+			kidokuPos = i
+			break
+		}
+	}
+	if kidokuPos < 0 || kidokuPos+1 >= len(c.Out.IR) ||
+		c.Out.IR[kidokuPos+1].Type != codegen.IRCode ||
+		!bytes.Equal(c.Out.IR[kidokuPos+1].Bytes, []byte{'"', '"'}) {
+		t.Fatalf("standalone kidoku should emit an empty text run after the marker: IR=%#v", c.Out.IR)
+	}
+}
+
+func TestParseKidokuDirectiveBeforeTextoutDoesNotDuplicate(t *testing.T) {
+	c := newComp()
+	c.Parse([]ast.Stmt{
+		ast.DirectiveStmt{Loc: ast.Loc{File: "t", Line: 41}, Name: "line", Value: ast.IntLit{Val: 42}},
+		ast.DirectiveStmt{Loc: ast.Loc{File: "t", Line: 42}, Name: "kidoku", Value: ast.IntLit{Val: 1}},
+		ast.ReturnStmt{
+			Loc: ast.Loc{File: "t", Line: 42},
+			Expr: ast.StrLit{Loc: ast.Loc{File: "t", Line: 42}, Tokens: []ast.StrToken{
+				ast.TextToken{Loc: ast.Loc{File: "t", Line: 42}, Text: "hello"},
+			}},
+		},
+	})
+
+	kidoku := kidokuIRs(c)
+	if len(kidoku) != 1 {
+		t.Fatalf("kidoku count = %d, want 1", len(kidoku))
+	}
+	if kidoku[0].Index != 42 {
+		t.Fatalf("kidoku line = %d, want 42", kidoku[0].Index)
+	}
+}
+
+func TestParseExplicitKidokuModeSuppressesUnannotatedTextout(t *testing.T) {
+	c := newComp()
+	c.Parse([]ast.Stmt{
+		ast.DirectiveStmt{Loc: ast.Loc{File: "t", Line: 23}, Name: "kidoku", Value: ast.IntLit{Val: 1}},
+		ast.ReturnStmt{
+			Loc: ast.Loc{File: "t", Line: 56},
+			Expr: ast.StrLit{Loc: ast.Loc{File: "t", Line: 56}, Tokens: []ast.StrToken{
+				ast.TextToken{Loc: ast.Loc{File: "t", Line: 56}, Text: "no marker here"},
+			}},
+		},
+	})
+
+	kidoku := kidokuIRs(c)
+	if len(kidoku) != 1 {
+		t.Fatalf("kidoku count = %d, want only the explicit marker", len(kidoku))
+	}
+	if kidoku[0].Index != 23 {
+		t.Fatalf("kidoku line = %d, want 23", kidoku[0].Index)
 	}
 }
 
@@ -616,6 +708,52 @@ func TestTextStubSpeaker(t *testing.T) {
 	}
 }
 
+func TestTextStubSpeakerKeepsDefaultQuoteRun(t *testing.T) {
+	c := newComp()
+	c.ParseElt(ast.ReturnStmt{
+		Loc: ast.Loc{Line: 1},
+		Expr: ast.StrLit{Tokens: []ast.StrToken{
+			ast.SpeakerToken{},
+			ast.TextToken{Text: "Tomoya"},
+			ast.RCurToken{},
+			ast.TextToken{Text: "Hello!"},
+		}},
+	})
+	if c.HasErrors() {
+		t.Fatalf("errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	want := []byte{'"', '"', 0x81, 0x79, '"', 'T', 'o', 'm', 'o', 'y', 'a', '"', 0x81, 0x7a, '"', 'H', 'e', 'l', 'l', 'o', '!', '"'}
+	if !bytes.Contains(got, want) {
+		t.Fatalf("speaker line bytes: got % x, want contains % x", got, want)
+	}
+}
+
+func TestTextStubNativeSpeakerTagsSkipEmptyQuoteRun(t *testing.T) {
+	c := newComp()
+	c.Out.NativeSpeakerTags = true
+	c.ParseElt(ast.ReturnStmt{
+		Loc: ast.Loc{Line: 1},
+		Expr: ast.StrLit{Tokens: []ast.StrToken{
+			ast.SpeakerToken{},
+			ast.TextToken{Text: "Tomoya"},
+			ast.RCurToken{},
+			ast.TextToken{Text: "Hello!"},
+		}},
+	})
+	if c.HasErrors() {
+		t.Fatalf("errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	if bytes.Contains(got, []byte{'"', '"', 0x81, 0x79}) {
+		t.Fatalf("native speaker line started with an empty quote run: % x", got)
+	}
+	want := []byte{0x81, 0x79, 'T', 'o', 'm', 'o', 'y', 'a', 0x81, 0x7a, '"', 'H', 'e', 'l', 'l', 'o', '!', '"'}
+	if !bytes.Contains(got, want) {
+		t.Fatalf("native speaker line bytes: got % x, want contains % x", got, want)
+	}
+}
+
 func TestTextStubSpace(t *testing.T) {
 	c := newComp()
 	c.ParseElt(ast.ReturnStmt{
@@ -863,6 +1001,94 @@ func TestCompileResTextEscapedLeadingSpace(t *testing.T) {
 	}
 }
 
+func TestCompileResTextRawByteEscapes(t *testing.T) {
+	c := newComp()
+	tc := &textCompiler{c: c, loc: ast.Loc{File: "t", Line: 1}}
+	tc.compileResText(`\x{84}\x{02}`)
+	tc.flush()
+
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	if !bytes.Equal(got, []byte{0x84, 0x02}) {
+		t.Fatalf("raw byte escapes: got % x, want 84 02", got)
+	}
+}
+
+func TestCompileResTextSpeakerNameUsesWesternTransformByDefault(t *testing.T) {
+	prev := texttransforms.GetMode()
+	prevForce := texttransforms.ForceEncode
+	texttransforms.SetMode(texttransforms.EncWestern)
+	texttransforms.ForceEncode = true
+	defer func() {
+		texttransforms.SetMode(prev)
+		texttransforms.ForceEncode = prevForce
+	}()
+
+	c := newComp()
+	c.Out.ResolveRes = func(key string) (string, bool) {
+		if key == "0000" {
+			return `\{Père}Salut`, true
+		}
+		return "", false
+	}
+	c.ParseElt(ast.ReturnStmt{
+		Loc:  ast.Loc{File: "t", Line: 1},
+		Expr: ast.ResRef{Key: "0000"},
+	})
+
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	want := []byte{'"', '"', 0x81, 0x79, '"', 'P', 0xc9, 'r', 'e', '"', 0x81, 0x7a, '"', 'S', 'a', 'l', 'u', 't', '"'}
+	if !bytes.Contains(got, want) {
+		t.Fatalf("speaker name should use Western transform by default: got % x, want contains % x", got, want)
+	}
+}
+
+func TestCompileResTextNativeSpeakerTagsBypassWesternTransform(t *testing.T) {
+	prev := texttransforms.GetMode()
+	prevForce := texttransforms.ForceEncode
+	texttransforms.SetMode(texttransforms.EncWestern)
+	texttransforms.ForceEncode = true
+	defer func() {
+		texttransforms.SetMode(prev)
+		texttransforms.ForceEncode = prevForce
+	}()
+
+	c := newComp()
+	c.Out.NativeSpeakerTags = true
+	c.Out.ResolveRes = func(key string) (string, bool) {
+		if key == "0000" {
+			return `\{声}*Sigh*`, true
+		}
+		return "", false
+	}
+	c.ParseElt(ast.ReturnStmt{
+		Loc:  ast.Loc{File: "t", Line: 1},
+		Expr: ast.ResRef{Key: "0000"},
+	})
+
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	wantName, err := encoding.UTF8ToSJS(string(rune(0x58f0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := compilerOutputBytes(c)
+	want := append([]byte{0x81, 0x79}, wantName...)
+	want = append(want, 0x81, 0x7a, '"', '*', 'S', 'i', 'g', 'h', '*', '"')
+	if !bytes.Contains(got, want) {
+		t.Fatalf("native speaker text bytes: got % x, want contains % x", got, want)
+	}
+	if bytes.Contains(got, []byte{'"', '"', 0x81, 0x79}) {
+		t.Fatalf("native speaker line started with an empty quote run: % x", got)
+	}
+}
+
 func TestCompileResTextKeepsSpacesAfterParamlessControl(t *testing.T) {
 	c := newComp()
 	c.Reg.Register(&kfn.FuncDef{
@@ -1027,6 +1253,106 @@ func compilerOutputBytes(c *Compiler) []byte {
 		got = append(got, ir.Bytes...)
 	}
 	return got
+}
+
+func kidokuIRs(c *Compiler) []codegen.IR {
+	var got []codegen.IR
+	for _, ir := range c.Out.IR {
+		if ir.Type == codegen.IRKidoku {
+			got = append(got, ir)
+		}
+	}
+	return got
+}
+
+func registerFarcallWith(c *Compiler) {
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "farcall_with",
+		Flags:    []kfn.FuncFlag{kfn.FlagPushStore, kfn.FlagIsCall},
+		OpType:   0,
+		OpModule: 1,
+		OpCode:   18,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+			Params: []kfn.Parameter{
+				{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FUncount, kfn.FTagged}, Tag: "scenario"},
+				{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FUncount, kfn.FTagged}, Tag: "entrypoint"},
+				{Type: kfn.PSpecial, Flags: []kfn.ParamFlag{kfn.FArgc}},
+			},
+		}},
+	})
+}
+
+func TestAngleSpecialParamEmitsInlineNoParens(t *testing.T) {
+	c := newComp()
+	registerFarcallWith(c)
+	c.ParseElt(ast.FuncCallStmt{
+		Loc:   ast.Loc{Line: 1},
+		Ident: "farcall_with",
+		Params: []ast.Param{
+			ast.SimpleParam{Expr: ast.IntLit{Val: 9600}},
+			ast.SimpleParam{Expr: ast.IntLit{Val: 0}},
+			ast.SpecialParam{Tag: 0, Exprs: []ast.Expr{ast.IntLit{Val: 41400000}}, NoParens: true},
+			ast.SpecialParam{Tag: 0, Exprs: []ast.Expr{ast.IntLit{Val: 0}}, NoParens: true},
+		},
+	})
+	if c.HasErrors() {
+		t.Fatalf("errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	want := []byte{
+		0x23, 0x00, 0x01, 0x12, 0x00, 0x02, 0x00, 0x00,
+		'(',
+		0x24, 0xff, 0x80, 0x25, 0x00, 0x00,
+		0x24, 0xff, 0x00, 0x00, 0x00, 0x00,
+		0x61, 0x00, 0x24, 0xff, 0xc0, 0xb6, 0x77, 0x02,
+		0x61, 0x00, 0x24, 0xff, 0x00, 0x00, 0x00, 0x00,
+		')',
+	}
+	if !bytes.Contains(got, want) {
+		t.Fatalf("farcall special params should be inline:\n got  % x\n want % x", got, want)
+	}
+	if bytes.Contains(got, []byte{0x61, 0x00, '('}) {
+		t.Fatalf("inline special was emitted as parenthesised __special form: % x", got)
+	}
+}
+
+func TestBracketSpecialParamKeepsParens(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "grpMulti",
+		OpType:   1,
+		OpModule: 70,
+		OpCode:   75,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+			Params: []kfn.Parameter{
+				{Type: kfn.PStrC},
+				{Type: kfn.PIntC},
+				{Type: kfn.PSpecial, Flags: []kfn.ParamFlag{kfn.FArgc}},
+			},
+		}},
+	})
+	c.ParseElt(ast.FuncCallStmt{
+		Loc:   ast.Loc{Line: 1},
+		Ident: "grpMulti",
+		Params: []ast.Param{
+			ast.SimpleParam{Expr: ast.StrLit{Tokens: []ast.StrToken{ast.TextToken{Text: "KURO"}}}},
+			ast.SimpleParam{Expr: ast.IntLit{Val: 4}},
+			ast.SpecialParam{Tag: 4, Exprs: []ast.Expr{
+				ast.StrLit{Tokens: []ast.StrToken{ast.TextToken{Text: "CGKY12"}}},
+				ast.IntLit{Val: 0},
+				ast.IntLit{Val: 0},
+			}},
+		},
+	})
+	if c.HasErrors() {
+		t.Fatalf("errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	if !bytes.Contains(got, []byte{0x61, 0x04, '('}) {
+		t.Fatalf("__special form lost its parameter list parens: % x", got)
+	}
 }
 
 func TestTextStubNilExpr(t *testing.T) {

@@ -9,13 +9,14 @@
 // Each line starts with # followed by a key and optional = value list.
 //
 // Keys support dotted paths with numeric and text segments:
-//   #IDENT = value
-//   #IDENT.NNN = value
-//   #IDENT.NNN.TEXT = value
-//   #IDENT.NNN.NNN.TEXT = value
-//   #IDENT.NNN.NNN.TEXT.NNN = value   (rldev2026 fix: Tomoyo After Steam)
-//   #IDENT.NNN.TEXT.TEXT.TEXT = value  (rldev2026 fix: Clannad Side Stories)
-//   etc.
+//
+//	#IDENT = value
+//	#IDENT.NNN = value
+//	#IDENT.NNN.TEXT = value
+//	#IDENT.NNN.NNN.TEXT = value
+//	#IDENT.NNN.NNN.TEXT.NNN = value   (rldev2026 fix: Tomoyo After Steam)
+//	#IDENT.NNN.TEXT.TEXT.TEXT = value  (rldev2026 fix: Clannad Side Stories)
+//	etc.
 //
 // Values: integers, quoted strings, U (enabled), N (disabled), ranges (1,2,3)
 package ini
@@ -37,19 +38,19 @@ type ValueKind int
 
 const (
 	VDefined ValueKind = iota // key exists with no value
-	VEnabled                   // U (true) or N (false)
-	VInteger                   // integer value
-	VString                    // quoted string
-	VRange                     // (int, int, ...) range
+	VEnabled                  // U (true) or N (false)
+	VInteger                  // integer value
+	VString                   // quoted string
+	VRange                    // (int, int, ...) range
 )
 
 // Value is one element of an INI definition's value list.
 type Value struct {
-	Kind    ValueKind
-	Bool    bool    // for VEnabled
-	Int     int32   // for VInteger
-	Str     string  // for VString
-	Ints    []int32 // for VRange
+	Kind ValueKind
+	Bool bool    // for VEnabled
+	Int  int32   // for VInteger
+	Str  string  // for VString
+	Ints []int32 // for VRange
 }
 
 // ============================================================
@@ -58,7 +59,8 @@ type Value struct {
 
 // Table holds all parsed GAMEEXE.INI definitions.
 type Table struct {
-	defs map[string][]Value
+	defs     map[string][]Value
+	hasNamae bool
 }
 
 // NewTable creates an empty definition table.
@@ -126,6 +128,9 @@ func (t *Table) Keys() []string {
 // Count returns the number of defined keys.
 func (t *Table) Count() int { return len(t.defs) }
 
+// HasNamae reports whether GAMEEXE.INI contained at least one #NAMAE entry.
+func (t *Table) HasNamae() bool { return t != nil && t.hasNamae }
+
 // ============================================================
 // INI file parser (from iniLexer.mll + iniParser.mly)
 // ============================================================
@@ -160,9 +165,24 @@ type iniTokType int
 
 const (
 	iTEOF iniTokType = iota
-	iTHash; iTEq; iTCm; iTCo; iTLp; iTRp; iTHy; iTDot
-	iTINT; iTDOTINT; iTIDENT; iTDOTIDENT; iTSTRING; iTUN
-	iTSHAKE; iTDSTRACK; iTCDTRACK; iTNAMAE
+	iTHash
+	iTEq
+	iTCm
+	iTCo
+	iTLp
+	iTRp
+	iTHy
+	iTDot
+	iTINT
+	iTDOTINT
+	iTIDENT
+	iTDOTIDENT
+	iTSTRING
+	iTUN
+	iTSHAKE
+	iTDSTRACK
+	iTCDTRACK
+	iTNAMAE
 )
 
 type iniTok struct {
@@ -182,23 +202,41 @@ func (l *iniLexer) next() iniTok {
 	for l.pos < len(l.src) {
 		c := l.src[l.pos]
 		// Whitespace
-		if c == ' ' || c == '\t' { l.pos++; continue }
-		if c == '\r' { l.pos++; continue }
-		if c == '\n' { l.pos++; l.line++; continue }
+		if c == ' ' || c == '\t' {
+			l.pos++
+			continue
+		}
+		if c == '\r' {
+			l.pos++
+			continue
+		}
+		if c == '\n' {
+			l.pos++
+			l.line++
+			continue
+		}
 		// Comment: ; until end of line
 		if c == ';' {
-			for l.pos < len(l.src) && l.src[l.pos] != '\n' { l.pos++ }
+			for l.pos < len(l.src) && l.src[l.pos] != '\n' {
+				l.pos++
+			}
 			continue
 		}
 		// Single-char tokens
 		l.pos++
 		switch c {
-		case '#': return iniTok{typ: iTHash}
-		case '=': return iniTok{typ: iTEq}
-		case ',': return iniTok{typ: iTCm}
-		case ':': return iniTok{typ: iTCo}
-		case '(': return iniTok{typ: iTLp}
-		case ')': return iniTok{typ: iTRp}
+		case '#':
+			return iniTok{typ: iTHash}
+		case '=':
+			return iniTok{typ: iTEq}
+		case ',':
+			return iniTok{typ: iTCm}
+		case ':':
+			return iniTok{typ: iTCo}
+		case '(':
+			return iniTok{typ: iTLp}
+		case ')':
+			return iniTok{typ: iTRp}
 		case '-':
 			// Could be minus sign before number, or standalone hyphen
 			if l.pos < len(l.src) && l.src[l.pos] >= '0' && l.src[l.pos] <= '9' {
@@ -249,23 +287,33 @@ func (l *iniLexer) next() iniTok {
 
 func (l *iniLexer) scanNumber() iniTok {
 	start := l.pos
-	if l.pos < len(l.src) && l.src[l.pos] == '-' { l.pos++ }
-	for l.pos < len(l.src) && l.src[l.pos] >= '0' && l.src[l.pos] <= '9' { l.pos++ }
+	if l.pos < len(l.src) && l.src[l.pos] == '-' {
+		l.pos++
+	}
+	for l.pos < len(l.src) && l.src[l.pos] >= '0' && l.src[l.pos] <= '9' {
+		l.pos++
+	}
 	n, _ := strconv.ParseInt(string(l.src[start:l.pos]), 10, 32)
 	return iniTok{typ: iTINT, num: int32(n)}
 }
 
 func (l *iniLexer) scanDotNumber() iniTok {
 	start := l.pos
-	if l.pos < len(l.src) && l.src[l.pos] == '-' { l.pos++ }
-	for l.pos < len(l.src) && l.src[l.pos] >= '0' && l.src[l.pos] <= '9' { l.pos++ }
+	if l.pos < len(l.src) && l.src[l.pos] == '-' {
+		l.pos++
+	}
+	for l.pos < len(l.src) && l.src[l.pos] >= '0' && l.src[l.pos] <= '9' {
+		l.pos++
+	}
 	n, _ := strconv.Atoi(string(l.src[start:l.pos]))
 	return iniTok{typ: iTDOTINT, num: int32(n)}
 }
 
 func (l *iniLexer) scanIdent() iniTok {
 	start := l.pos
-	for l.pos < len(l.src) && isIDChar(l.src[l.pos]) { l.pos++ }
+	for l.pos < len(l.src) && isIDChar(l.src[l.pos]) {
+		l.pos++
+	}
 	word := string(l.src[start:l.pos])
 	switch word {
 	case "SHAKE", "SHAKEZOOM":
@@ -282,15 +330,21 @@ func (l *iniLexer) scanIdent() iniTok {
 
 func (l *iniLexer) scanDotIdent() iniTok {
 	start := l.pos
-	for l.pos < len(l.src) && isIDChar(l.src[l.pos]) { l.pos++ }
+	for l.pos < len(l.src) && isIDChar(l.src[l.pos]) {
+		l.pos++
+	}
 	return iniTok{typ: iTDOTIDENT, str: string(l.src[start:l.pos])}
 }
 
 func (l *iniLexer) scanString() iniTok {
 	start := l.pos
-	for l.pos < len(l.src) && l.src[l.pos] != '"' { l.pos++ }
+	for l.pos < len(l.src) && l.src[l.pos] != '"' {
+		l.pos++
+	}
 	s := string(l.src[start:l.pos])
-	if l.pos < len(l.src) { l.pos++ } // skip closing "
+	if l.pos < len(l.src) {
+		l.pos++
+	} // skip closing "
 	return iniTok{typ: iTSTRING, str: s}
 }
 
@@ -324,7 +378,10 @@ func (p *iniParser) expect(t iniTokType) iniTok {
 }
 
 func (p *iniParser) match(t iniTokType) bool {
-	if p.cur.typ == t { p.advance(); return true }
+	if p.cur.typ == t {
+		p.advance()
+		return true
+	}
 	return false
 }
 
@@ -360,7 +417,9 @@ func (p *iniParser) parseDefinition() {
 		p.parseKeyDef()
 	default:
 		// Skip to next # or EOF
-		for p.cur.typ != iTHash && p.cur.typ != iTEOF { p.advance() }
+		for p.cur.typ != iTHash && p.cur.typ != iTEOF {
+			p.advance()
+		}
 	}
 }
 
@@ -448,17 +507,24 @@ func (p *iniParser) parseDSTrack() {
 	p.advance() // skip DSTRACK
 	// DSTRACK = int int INT = STRING = STRING
 	// Skip everything until next # or EOF
-	for p.cur.typ != iTHash && p.cur.typ != iTEOF { p.advance() }
+	for p.cur.typ != iTHash && p.cur.typ != iTEOF {
+		p.advance()
+	}
 }
 
 func (p *iniParser) parseCDTrack() {
 	p.advance()
-	for p.cur.typ != iTHash && p.cur.typ != iTEOF { p.advance() }
+	for p.cur.typ != iTHash && p.cur.typ != iTEOF {
+		p.advance()
+	}
 }
 
 func (p *iniParser) parseNamae() {
+	p.table.hasNamae = true
 	p.advance()
-	for p.cur.typ != iTHash && p.cur.typ != iTEOF { p.advance() }
+	for p.cur.typ != iTHash && p.cur.typ != iTEOF {
+		p.advance()
+	}
 }
 
 func (p *iniParser) parseParameters() []Value {
@@ -467,12 +533,16 @@ func (p *iniParser) parseParameters() []Value {
 		return vals
 	}
 	v, ok := p.parseValue()
-	if !ok { return vals }
+	if !ok {
+		return vals
+	}
 	vals = append(vals, v)
 	for p.cur.typ == iTCm || p.cur.typ == iTCo || p.cur.typ == iTEq {
 		p.advance() // skip separator
 		v, ok = p.parseValue()
-		if !ok { break }
+		if !ok {
+			break
+		}
 		vals = append(vals, v)
 	}
 	return vals

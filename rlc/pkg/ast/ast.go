@@ -8,10 +8,11 @@
 //   - Rich string tokens: embedded formatting codes in string literals
 //
 // Go interfaces replace OCaml's polymorphic variants:
-//   Expr     — expression nodes
-//   Stmt     — statement nodes
-//   Param    — function call parameters
-//   StrToken — rich string tokens (defined in token package)
+//
+//	Expr     — expression nodes
+//	Stmt     — statement nodes
+//	Param    — function call parameters
+//	StrToken — rich string tokens (defined in token package)
 package ast
 
 import "fmt"
@@ -99,11 +100,11 @@ type CmpOp int
 
 const (
 	CmpEqu CmpOp = iota // ==
-	CmpNeq               // !=
-	CmpLtn               // <
-	CmpLte               // <=
-	CmpGtn               // >
-	CmpGte               // >=
+	CmpNeq              // !=
+	CmpLtn              // <
+	CmpLte              // <=
+	CmpGtn              // >
+	CmpGte              // >=
 )
 
 var cmpSymbol = [...]string{"==", "!=", "<", "<=", ">", ">="}
@@ -115,7 +116,7 @@ type ChainOp int
 
 const (
 	ChainAnd ChainOp = iota // &&
-	ChainOr                  // ||
+	ChainOr                 // ||
 )
 
 var chainSymbol = [...]string{"&&", "||"}
@@ -161,9 +162,9 @@ type StoreRef struct {
 
 // IntVar is an integer variable access: intA[expr], intB[expr], etc.
 type IntVar struct {
-	Loc     Loc
-	Bank    int  // register bank (0x00=A, 0x01=B, ... 0x0b=L, etc.)
-	Index   Expr // array index expression
+	Loc   Loc
+	Bank  int  // register bank (0x00=A, 0x01=B, ... 0x0b=L, etc.)
+	Index Expr // array index expression
 }
 
 // StrVar is a string variable access: strS[expr], strK[expr], strM[expr].
@@ -333,7 +334,7 @@ type NameToken struct {
 
 type GlossToken struct {
 	Loc      Loc
-	IsRuby   bool      // false=\g, true=\ruby
+	IsRuby   bool       // false=\g, true=\ruby
 	Base     []StrToken // base text tokens
 	GlossKey string     // resource key (if =<key>)
 	Gloss    []StrToken // inline gloss tokens (if ={...})
@@ -361,23 +362,23 @@ type RewriteToken struct {
 	Key int
 }
 
-func (TextToken) strToken()    {}
-func (SpaceToken) strToken()   {}
-func (DQuoteToken) strToken()  {}
-func (RCurToken) strToken()    {}
-func (LLenticToken) strToken() {}
-func (RLenticToken) strToken() {}
-func (AsteriskToken) strToken(){}
-func (PercentToken) strToken() {}
-func (HyphenToken) strToken()  {}
-func (SpeakerToken) strToken() {}
-func (DeleteToken) strToken()  {}
-func (NameToken) strToken()    {}
-func (GlossToken) strToken()   {}
-func (CodeToken) strToken()    {}
-func (AddToken) strToken()     {}
-func (ResRefToken) strToken()  {}
-func (RewriteToken) strToken() {}
+func (TextToken) strToken()     {}
+func (SpaceToken) strToken()    {}
+func (DQuoteToken) strToken()   {}
+func (RCurToken) strToken()     {}
+func (LLenticToken) strToken()  {}
+func (RLenticToken) strToken()  {}
+func (AsteriskToken) strToken() {}
+func (PercentToken) strToken()  {}
+func (HyphenToken) strToken()   {}
+func (SpeakerToken) strToken()  {}
+func (DeleteToken) strToken()   {}
+func (NameToken) strToken()     {}
+func (GlossToken) strToken()    {}
+func (CodeToken) strToken()     {}
+func (AddToken) strToken()      {}
+func (ResRefToken) strToken()   {}
+func (RewriteToken) strToken()  {}
 
 // ============================================================
 // Parameters
@@ -402,9 +403,10 @@ type ComplexParam struct {
 
 // SpecialParam is a tagged special parameter.
 type SpecialParam struct {
-	Loc   Loc
-	Tag   int
-	Exprs []Expr
+	Loc      Loc
+	Tag      int
+	Exprs    []Expr
+	NoParens bool
 }
 
 func (SimpleParam) paramNode()  {}
@@ -436,10 +438,10 @@ func (CondSelParam) selParamNode()   {}
 
 // SelCond is one condition in a conditional select parameter.
 type SelCond struct {
-	Loc   Loc
-	Ident string
-	Arg   Expr // optional argument
-	Cond  Expr // optional if-condition
+	Loc    Loc
+	Ident  string
+	Arg    Expr // optional argument
+	Cond   Expr // optional if-condition
 	IsFlag bool // true if just a flag (no arg/cond)
 }
 
@@ -482,7 +484,7 @@ type ReturnStmt struct {
 
 type AssignStmt struct {
 	Loc  Loc
-	Dest Expr     // must be assignable (Store, IVar, SVar, Deref, VarOrFunc)
+	Dest Expr // must be assignable (Store, IVar, SVar, Deref, VarOrFunc)
 	Op   AssignOp
 	Expr Expr
 }
@@ -491,18 +493,18 @@ type AssignStmt struct {
 
 type FuncCallStmt struct {
 	Loc    Loc
-	Dest   Expr    // optional assignment target (nil = ignored)
+	Dest   Expr // optional assignment target (nil = ignored)
 	Ident  string
 	Params []Param
-	Label  *Label  // optional goto target
+	Label  *Label // optional goto target
 }
 
 type SelectStmt struct {
 	Loc    Loc
-	Dest   Expr     // assignment target (store or variable)
-	Ident  string   // select variant name
-	Opcode int      // select opcode
-	Window Expr     // optional window expression
+	Dest   Expr   // assignment target (store or variable)
+	Ident  string // select variant name
+	Opcode int    // select opcode
+	Window Expr   // optional window expression
 	Params []SelParam
 }
 
@@ -522,18 +524,18 @@ type GotoCaseStmt struct {
 
 type GotoCaseArm struct {
 	IsDefault bool
-	Expr      Expr  // nil for default
+	Expr      Expr // nil for default
 	Label     Label
 }
 
 type UnknownOpStmt struct {
-	Loc       Loc
-	OpIdent   string
-	OpType    int
-	OpModule  int
-	OpCode    int
-	Overload  int
-	Params    []Param
+	Loc      Loc
+	OpIdent  string
+	OpType   int
+	OpModule int
+	OpCode   int
+	Overload int
+	Params   []Param
 }
 
 type VarOrFuncStmt struct {
@@ -611,10 +613,10 @@ type HidingStmt struct {
 // --- Declarations ---
 
 type DeclStmt struct {
-	Loc   Loc
-	Type  DeclType
-	Dirs  []DeclDir
-	Vars  []VarDecl
+	Loc  Loc
+	Type DeclType
+	Dirs []DeclDir
+	Vars []VarDecl
 }
 
 type DeclType struct {
@@ -634,11 +636,11 @@ const (
 type VarDecl struct {
 	Loc       Loc
 	Ident     string
-	ArraySize Expr      // nil=scalar, non-nil=array with optional size
-	AutoArray bool      // [] without size
-	Init      Expr      // scalar initializer
-	ArrayInit []Expr    // array initializer {v1, v2, ...}
-	AddrFrom  Expr      // -> from.to mapping
+	ArraySize Expr   // nil=scalar, non-nil=array with optional size
+	AutoArray bool   // [] without size
+	Init      Expr   // scalar initializer
+	ArrayInit []Expr // array initializer {v1, v2, ...}
+	AddrFrom  Expr   // -> from.to mapping
 	AddrTo    Expr
 }
 
@@ -690,8 +692,8 @@ type DVersionStmt struct {
 
 type DirectiveStmt struct {
 	Loc   Loc
-	Name  string             // "file", "resource", "entrypoint", etc.
-	Kind  DirectiveArgKind   // Int, Str, None
+	Name  string           // "file", "resource", "entrypoint", etc.
+	Kind  DirectiveArgKind // Int, Str, None
 	Value Expr
 }
 
@@ -843,28 +845,94 @@ type SourceFile struct {
 // Matches OCaml's variable_name function.
 func VariableName(bank int) string {
 	switch bank {
-	case 0x00: return "intA";   case 0x01: return "intB"
-	case 0x02: return "intC";   case 0x03: return "intD"
-	case 0x04: return "intE";   case 0x05: return "intF"
-	case 0x06: return "intG";   case 0x19: return "intZ"
-	case 0x0a: return "strK";   case 0x0b: return "intL"
-	case 0x0c: return "strM";   case 0x12: return "strS"
-	case 0x1a: return "intAb";  case 0x1b: return "intBb"
-	case 0x1c: return "intCb";  case 0x1d: return "intDb"
-	case 0x1e: return "intEb";  case 0x1f: return "intFb"
-	case 0x20: return "intGb";  case 0x33: return "intZb"
-	case 0x34: return "intA2b"; case 0x35: return "intB2b"
-	case 0x36: return "intC2b"; case 0x37: return "intD2b"
-	case 0x38: return "intE2b"; case 0x39: return "intF2b"
-	case 0x3a: return "intG2b"; case 0x4d: return "intZ2b"
-	case 0x4e: return "intA4b"; case 0x4f: return "intB4b"
-	case 0x50: return "intC4b"; case 0x51: return "intD4b"
-	case 0x52: return "intE4b"; case 0x53: return "intF4b"
-	case 0x54: return "intG4b"; case 0x67: return "intZ4b"
-	case 0x68: return "intA8b"; case 0x69: return "intB8b"
-	case 0x6a: return "intC8b"; case 0x6b: return "intD8b"
-	case 0x6c: return "intE8b"; case 0x6d: return "intF8b"
-	case 0x6e: return "intG8b"; case 0x81: return "intZ8b"
+	case 0x00:
+		return "intA"
+	case 0x01:
+		return "intB"
+	case 0x02:
+		return "intC"
+	case 0x03:
+		return "intD"
+	case 0x04:
+		return "intE"
+	case 0x05:
+		return "intF"
+	case 0x06:
+		return "intG"
+	case 0x19:
+		return "intZ"
+	case 0x0a:
+		return "strK"
+	case 0x0b:
+		return "intL"
+	case 0x0c:
+		return "strM"
+	case 0x12:
+		return "strS"
+	case 0x1a:
+		return "intAb"
+	case 0x1b:
+		return "intBb"
+	case 0x1c:
+		return "intCb"
+	case 0x1d:
+		return "intDb"
+	case 0x1e:
+		return "intEb"
+	case 0x1f:
+		return "intFb"
+	case 0x20:
+		return "intGb"
+	case 0x33:
+		return "intZb"
+	case 0x34:
+		return "intA2b"
+	case 0x35:
+		return "intB2b"
+	case 0x36:
+		return "intC2b"
+	case 0x37:
+		return "intD2b"
+	case 0x38:
+		return "intE2b"
+	case 0x39:
+		return "intF2b"
+	case 0x3a:
+		return "intG2b"
+	case 0x4d:
+		return "intZ2b"
+	case 0x4e:
+		return "intA4b"
+	case 0x4f:
+		return "intB4b"
+	case 0x50:
+		return "intC4b"
+	case 0x51:
+		return "intD4b"
+	case 0x52:
+		return "intE4b"
+	case 0x53:
+		return "intF4b"
+	case 0x54:
+		return "intG4b"
+	case 0x67:
+		return "intZ4b"
+	case 0x68:
+		return "intA8b"
+	case 0x69:
+		return "intB8b"
+	case 0x6a:
+		return "intC8b"
+	case 0x6b:
+		return "intD8b"
+	case 0x6c:
+		return "intE8b"
+	case 0x6d:
+		return "intF8b"
+	case 0x6e:
+		return "intG8b"
+	case 0x81:
+		return "intZ8b"
 	}
 	return fmt.Sprintf("var_%02x", bank)
 }
@@ -916,10 +984,14 @@ func TypeOf(e Expr) ExprType {
 // DeclDirString returns the string representation of a declaration directive.
 func DeclDirString(d DeclDir) string {
 	switch d {
-	case DirZero:  return "zero"
-	case DirBlock: return "block"
-	case DirExt:   return "ext"
-	case DirLabel: return "labelled"
+	case DirZero:
+		return "zero"
+	case DirBlock:
+		return "block"
+	case DirExt:
+		return "ext"
+	case DirLabel:
+		return "labelled"
 	}
 	return "?"
 }

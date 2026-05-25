@@ -574,15 +574,40 @@ func (p *Parser) parseSelParamList() []ast.SelParam {
 
 func (p *Parser) parseSelParam() ast.SelParam {
 	loc := p.loc()
-	expr := p.parseExpr()
-	if p.cur.Type != token.COLON {
-		return ast.AlwaysSelParam{Loc: loc, Expr: expr}
+	if p.cur.Type == token.IDENT && isSelectEffect(p.cur.StrVal) {
+		conds := []ast.SelCond{p.parseSelCond()}
+		for p.match(token.SEMI) {
+			conds = append(conds, p.parseSelCond())
+		}
+		p.expect(token.COLON)
+		return ast.CondSelParam{Loc: loc, Conds: conds, Expr: p.parseExpr()}
 	}
-	// conditional: conds : expr
-	// Not fully implemented — return as always for simplicity
-	p.advance()
-	val := p.parseExpr()
-	return ast.AlwaysSelParam{Loc: loc, Expr: val}
+	return ast.AlwaysSelParam{Loc: loc, Expr: p.parseExpr()}
+}
+
+func (p *Parser) parseSelCond() ast.SelCond {
+	loc := p.loc()
+	name := p.expect(token.IDENT).StrVal
+	cond := ast.SelCond{Loc: loc, Ident: name, IsFlag: true}
+	if p.match(token.LPAR) {
+		cond.Arg = p.parseExpr()
+		cond.IsFlag = false
+		p.expect(token.RPAR)
+	}
+	if p.match(token.IF) {
+		cond.Cond = p.parseExpr()
+		cond.IsFlag = false
+	}
+	return cond
+}
+
+func isSelectEffect(name string) bool {
+	switch name {
+	case "colour", "title", "grey", "hide", "blank", "cursor":
+		return true
+	default:
+		return false
+	}
 }
 
 // ============================================================
@@ -1252,6 +1277,9 @@ func (p *Parser) parseBraceParamList() []ast.Param {
 
 func (p *Parser) parseParam() ast.Param {
 	loc := p.loc()
+	if sp, ok := p.parseAngleSpecialParam(loc); ok {
+		return sp
+	}
 	if p.cur.Type == token.LCUR {
 		p.advance()
 		var exprs []ast.Expr
@@ -1298,6 +1326,31 @@ func (p *Parser) parseParam() ast.Param {
 		return sp
 	}
 	return ast.SimpleParam{Loc: loc, Expr: expr}
+}
+
+func (p *Parser) parseAngleSpecialParam(loc ast.Loc) (ast.SpecialParam, bool) {
+	if p.cur.Type != token.IDENT || p.cur.StrVal != "special" {
+		return ast.SpecialParam{}, false
+	}
+
+	p.advance()
+	p.expect(token.LTN)
+	tagTok := p.expect(token.INTEGER)
+	p.expect(token.GTN)
+
+	out := ast.SpecialParam{Loc: loc, Tag: int(tagTok.IntVal), NoParens: true}
+	if p.match(token.LPAR) {
+		if p.cur.Type != token.RPAR {
+			for {
+				out.Exprs = append(out.Exprs, p.parseExpr())
+				if !p.match(token.COMMA) {
+					break
+				}
+			}
+		}
+		p.expect(token.RPAR)
+	}
+	return out, true
 }
 
 func isExprStart(t token.Type) bool {

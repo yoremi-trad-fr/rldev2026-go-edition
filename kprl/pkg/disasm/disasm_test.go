@@ -2,10 +2,14 @@ package disasm
 
 import (
 	"encoding/binary"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/yoremi/rldev-go/pkg/binarray"
+	"github.com/yoremi/rldev-go/pkg/bytecode"
+	"github.com/yoremi/rldev-go/pkg/encoding"
 	"github.com/yoremi/rldev-go/pkg/metadata"
 	"github.com/yoremi/rldev-go/pkg/texttransforms"
 )
@@ -187,6 +191,25 @@ func TestFuncRegistryLookup(t *testing.T) {
 	}
 }
 
+func TestReadSelectCond(t *testing.T) {
+	data := []byte{
+		'(',
+		'(', '$', 0xff, 1, 0, 0, 0, ')',
+		'1', '$', 0xff, 155, 0, 0, 0,
+		'2',
+		')',
+	}
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	got, err := readSelectCond(r)
+	if err != nil {
+		t.Fatalf("readSelectCond: %v", err)
+	}
+	want := "title(155) if 1; hide: "
+	if got != want {
+		t.Fatalf("readSelectCond = %q, want %q", got, want)
+	}
+}
+
 func TestDefaultOptions(t *testing.T) {
 	opts := DefaultOptions()
 	if !opts.SeparateStrings {
@@ -231,6 +254,31 @@ func TestWriterConvertTextUsesWesternTransform(t *testing.T) {
 	want := "Je déteste"
 	if got != want {
 		t.Fatalf("convertText() = %q, want %q", got, want)
+	}
+}
+
+func TestWriterEmitsVal0x2CDirective(t *testing.T) {
+	dir := t.TempDir()
+	opts := DefaultOptions()
+	opts.SeparateStrings = false
+	w := NewWriter(dir, opts)
+
+	result := &DisassemblyResult{
+		Mode: ModeRealLive,
+		Header: bytecode.FileHeader{
+			Int0x2C: 9,
+		},
+	}
+	if err := w.WriteSource("SEEN0414.TXT", result); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "SEEN0414.org"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "#val_0x2c 9") {
+		t.Fatalf("writer did not emit #val_0x2c directive:\n%s", string(data))
 	}
 }
 
@@ -292,5 +340,48 @@ func TestEscapeResourceLineText(t *testing.T) {
 		if got := escapeResourceLineText(input); got != want {
 			t.Fatalf("escapeResourceLineText(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestEscapeUnsafeResourceBytes(t *testing.T) {
+	tests := map[string]string{
+		"plain":                        "plain",
+		string([]byte{0x82, 0xa0}):     string([]byte{0x82, 0xa0}),
+		string([]byte{0x84, 0x02}):     `\x{84}\x{02}`,
+		string([]byte{'A', 0x01, 'B'}): `A\x{01}B`,
+		string([]byte{0x84, '0', 'A'}): `\x{84}0A`,
+	}
+	for input, want := range tests {
+		if got := escapeUnsafeResourceBytes(input); got != want {
+			t.Fatalf("escapeUnsafeResourceBytes(% x) = %q, want %q", []byte(input), got, want)
+		}
+	}
+}
+
+func TestConvertTextSpeakerNameBypassesTransform(t *testing.T) {
+	name, err := encoding.UTF8ToSJS(string(rune(0x58f0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := NewWriter("", Options{Encoding: "UTF-8"})
+	got := w.convertText(`\{`+string(name)+`}*Sigh*`, texttransforms.EncWestern)
+	if got != `\{`+string(rune(0x58f0))+`}*Sigh*` {
+		t.Fatalf("speaker name transform = %q", got)
+	}
+}
+
+func TestConvertTextSpeakerNameWithBraceTrailByte(t *testing.T) {
+	name := "美佐枝"
+	sjsName, err := encoding.UTF8ToSJS(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sjsName) == 0 || sjsName[len(sjsName)-1] != '}' {
+		t.Fatalf("test fixture must end with byte 0x7d, got % x", sjsName)
+	}
+	w := NewWriter("", Options{Encoding: "UTF-8"})
+	got := w.convertText(`\{`+string(sjsName)+`}text`, texttransforms.EncWestern)
+	if got != `\{`+name+`}text` {
+		t.Fatalf("speaker close inside SJIS trail byte: got %q", got)
 	}
 }

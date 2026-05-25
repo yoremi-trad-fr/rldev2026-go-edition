@@ -189,6 +189,7 @@ func TestLexVariables(t *testing.T) {
 		{"strK", token.SVAR, 0x0a}, {"strM", token.SVAR, 0x0c}, {"strS", token.SVAR, 0x12},
 		{"store", token.REG, 0xc8},
 		{"intAb", token.VAR, 0x1a}, {"intZ8b", token.VAR, 0x81},
+		{"VAR07", token.VAR, 0x07}, {"VAR0a", token.VAR, 0x0a},
 	}
 	for _, tt := range tests {
 		l := New(tt.src, "test")
@@ -212,6 +213,7 @@ func TestLexGotoSelect(t *testing.T) {
 		{"select", token.SELECT, 1},
 		{"select_w", token.SELECT, 0},
 		{"select_s", token.SELECT, 3},
+		{"select_cancel", token.SELECT, 10},
 		{"select_btncancel", token.SELECT, 12},
 	}
 	for _, tt := range tests {
@@ -309,6 +311,82 @@ func TestLexLineTracking(t *testing.T) {
 	tok3 := l.Next()
 	if tok3.Line != 3 {
 		t.Errorf("line 3: got %d", tok3.Line)
+	}
+}
+
+func TestLexLineDirectiveAppliesToNextToken(t *testing.T) {
+	l := New("#line 128\nfarcall_with", "test")
+	tok := l.Next()
+	if tok.Type != token.DWITHEXPR || tok.StrVal != "line" {
+		t.Fatalf("directive token: got %s %q, want DWITHEXPR line", tok.Type, tok.StrVal)
+	}
+	tok = l.Next()
+	if tok.Type != token.INTEGER || tok.IntVal != 128 {
+		t.Fatalf("directive value: got %s %d, want INTEGER 128", tok.Type, tok.IntVal)
+	}
+	tok = l.Next()
+	if tok.Type != token.IDENT || tok.StrVal != "farcall_with" {
+		t.Fatalf("token: got %s %q, want IDENT farcall_with", tok.Type, tok.StrVal)
+	}
+	if tok.Line != 128 {
+		t.Fatalf("#line target: got line %d, want 128", tok.Line)
+	}
+}
+
+func TestLexLineDirectiveIsStickyUntilNextLineDirective(t *testing.T) {
+	l := New("#line 314\n#res<0093>\nfarcall\n{- kidoku 094 -}\n#res<0094>\n#line 315\npause", "test")
+	for i := 0; i < 2; i++ {
+		l.Next()
+	}
+	for _, want := range []struct {
+		typ token.Type
+		str string
+	}{
+		{token.DRES, "0093"},
+		{token.IDENT, "farcall"},
+		{token.DWITHEXPR, "kidoku"},
+		{token.INTEGER, ""},
+		{token.DRES, "0094"},
+	} {
+		tok := l.Next()
+		if tok.Type != want.typ {
+			t.Fatalf("token type = %s, want %s", tok.Type, want.typ)
+		}
+		if want.str != "" && tok.StrVal != want.str {
+			t.Fatalf("token str = %q, want %q", tok.StrVal, want.str)
+		}
+		if tok.Line != 314 {
+			t.Fatalf("sticky #line: token %#v has line %d, want 314", tok, tok.Line)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		l.Next()
+	}
+	tok := l.Next()
+	if tok.Type != token.IDENT || tok.StrVal != "pause" || tok.Line != 315 {
+		t.Fatalf("next #line did not take over: got %#v", tok)
+	}
+}
+
+func TestLexKidokuCommentDoesNotAdvanceLogicalLine(t *testing.T) {
+	l := New("#line 129\n{- kidoku 028 -}\n#res<0027>", "test")
+	for i := 0; i < 2; i++ {
+		l.Next()
+	}
+	tok := l.Next()
+	if tok.Type != token.DWITHEXPR || tok.StrVal != "kidoku" {
+		t.Fatalf("kidoku directive: got %s %q, want DWITHEXPR kidoku", tok.Type, tok.StrVal)
+	}
+	tok = l.Next()
+	if tok.Type != token.INTEGER || tok.IntVal != 28 {
+		t.Fatalf("kidoku value: got %s %d, want INTEGER 28", tok.Type, tok.IntVal)
+	}
+	tok = l.Next()
+	if tok.Type != token.DRES || tok.StrVal != "0027" {
+		t.Fatalf("token: got %s %q, want DRES 0027", tok.Type, tok.StrVal)
+	}
+	if tok.Line != 129 {
+		t.Fatalf("kidoku annotation should not advance logical line: got %d, want 129", tok.Line)
 	}
 }
 

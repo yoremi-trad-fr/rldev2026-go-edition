@@ -129,10 +129,10 @@ func SetEncoding(name string) error {
 // ============================================================
 
 var (
-	badMu       sync.Mutex
-	badSet      = map[rune]bool{} // dedupe across the same compile unit
-	badOrder    []rune            // insertion-ordered list returned by BadRunes
-	complained  bool
+	badMu      sync.Mutex
+	badSet     = map[rune]bool{} // dedupe across the same compile unit
+	badOrder   []rune            // insertion-ordered list returned by BadRunes
+	complained bool
 )
 
 // noteBadRune records r as unmappable. Safe to call from any
@@ -336,6 +336,11 @@ func encodeWestern(t text.Text) ([]byte, error) {
 		}
 
 		if wc < 0 || wc > 0xFF {
+			sjsBytes, err := encoding.UTF8ToSJS(string([]rune{ch}))
+			if err == nil && len(sjsBytes) > 0 && sjsBytes[0] != 0x89 {
+				b = append(b, sjsBytes...)
+				continue
+			}
 			noteBadRune(ch)
 			if ForceEncode {
 				wc = 0x20
@@ -369,10 +374,15 @@ func decodeWestern(data []byte) (text.Text, error) {
 		case c <= 0x7F:
 			buf.AddRune(rune(c))
 			i++
-		case c == 0x81 || c == 0x82:
-			// SJIS double-byte passthrough
+		case c != 0x89 && isShiftJISLeadByte(c):
+			// SJIS double-byte passthrough for native Japanese kept inside
+			// Western-transformed scripts. 0x89 remains reserved as the
+			// CP1252 extension prefix used by the Western mapping itself.
 			if i+1 >= len(data) {
 				return nil, fmt.Errorf("decode_cp1252: truncated SJIS at %d", i)
+			}
+			if !isShiftJISTrailByte(data[i+1]) {
+				return nil, fmt.Errorf("decode_cp1252: invalid SJIS trail 0x%02X at %d", data[i+1], i+1)
 			}
 			sjsData := data[i : i+2]
 			t := text.OfSJS(sjsData)
@@ -402,6 +412,14 @@ func decodeWestern(data []byte) (text.Text, error) {
 		}
 	}
 	return buf.Contents(), nil
+}
+
+func isShiftJISLeadByte(b byte) bool {
+	return (b >= 0x81 && b <= 0x9f) || (b >= 0xe0 && b <= 0xef) || (b >= 0xf0 && b <= 0xfc)
+}
+
+func isShiftJISTrailByte(b byte) bool {
+	return (b >= 0x40 && b <= 0x7e) || (b >= 0x80 && b <= 0xfc)
 }
 
 // ============================================================

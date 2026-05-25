@@ -62,16 +62,24 @@ var (
 			0xe4, 0xab, 0xa2, 0xc9, 0xec, 0x39, 0x36, 0x62,
 			0xc9, 0x03, 0xba, 0x6d, 0x2e, 0x9c, 0xf2, 0x64}},
 	}
+
+	// KeyONIUTA is the Oni Uta encryption key.
+	KeyONIUTA = []XORSubkey{
+		{Offset: 256, Length: 257, Data: [16]byte{
+			0xad, 0x2b, 0xfe, 0x3e, 0xe8, 0x3a, 0x3b, 0x19,
+			0x82, 0x0d, 0xfa, 0x3b, 0x25, 0x01, 0xb5, 0xb5}},
+	}
 )
 
 // KnownGames maps game identifiers to their predefined keys.
 var KnownGames = map[string][]XORSubkey{
-	"CFV":  KeyCFV,
-	"LB":   KeyLB,
-	"LBEX": KeyLBEX,
-	"LBME": KeyLBEX, // Memorial Edition uses same keys as EX
-	"FIVE": KeyFIVE,
-	"SNOW": KeySNOW,
+	"CFV":    KeyCFV,
+	"LB":     KeyLB,
+	"LBEX":   KeyLBEX,
+	"LBME":   KeyLBEX, // Memorial Edition uses same keys as EX
+	"FIVE":   KeyFIVE,
+	"SNOW":   KeySNOW,
+	"ONIUTA": KeyONIUTA,
 }
 
 // SetKeyFromHex parses a 32-character hex string into a 16-byte XOR key.

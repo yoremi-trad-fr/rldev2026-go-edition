@@ -160,8 +160,8 @@ func parseFlags(args []string) (*Options, error) {
 	// Target
 	fs.StringVar(&opts.Target, "target", "", "target engine: RealLive|AVG2000|Kinetic")
 	fs.StringVar(&opts.TargetVersion, "target-version", "", "target version (e.g. 1.2.7.0)")
-	fs.StringVar(&opts.Interpreter, "I", "", "path to RealLive.exe (extract PE interpreter version)")
-	fs.StringVar(&opts.Interpreter, "interpreter", "", "path to RealLive.exe (alias for -I)")
+	fs.StringVar(&opts.Interpreter, "I", "", "path to RealLive-compatible executable (extract PE interpreter version)")
+	fs.StringVar(&opts.Interpreter, "interpreter", "", "path to RealLive-compatible executable (alias for -I)")
 
 	// Compilation
 	fs.IntVar(&opts.StartLine, "start-line", opts.StartLine, "start line for partial compilation")
@@ -235,7 +235,7 @@ func compileFile(opts *Options, srcPath string) error {
 
 	// 2a. Resolve interpreter version. Priority:
 	//   1. Explicit --target-version on command line (wins).
-	//   2. Auto-detected from RealLive.exe / kinetic.exe / … alongside
+	//   2. Auto-detected from a RealLive-compatible executable alongside
 	//      the .org source. Mirrors OCaml main.ml L408-428.
 	//   3. Default kfn.Version{1, 2, 7, 0}.
 	// The version drives the entrypoint marker character (`@` vs `!`) and
@@ -366,6 +366,9 @@ func compileFile(opts *Options, srcPath string) error {
 		genOpts.Version = detectedVersion
 	}
 	genOpts.DebugInfo = opts.DebugInfo
+	if compiler.State != nil {
+		genOpts.Val0x2C = compiler.State.Val0x2C
+	}
 	// Collect the dramatis personae names gathered during directive
 	// processing (#character 'name'). They must be written into the
 	// bytecode header in the target encoding (Shift-JIS / CP932): the
@@ -813,7 +816,7 @@ func pe_versionFromExe(path string) (kfn.Version, error) {
 }
 
 // autoDetectVersion looks for a RealLive.exe / RealLiveEn.exe /
-// kinetic.exe / avg2000.exe / siglusengine.exe next to the source
+// kinetic.exe / avg2000.exe / SiglusEngine*.exe next to the source
 // .org file (and one directory up), and extracts the interpreter
 // version via pe_versionFromExe. Mirrors OCaml main.ml L408-428.
 //
@@ -821,7 +824,8 @@ func pe_versionFromExe(path string) (kfn.Version, error) {
 // callers should then leave the version at the user-supplied default.
 func autoDetectVersion(srcPath string) (kfn.Version, string, error) {
 	candidates := []string{"RealLive.exe", "RealLiveEn.exe", "Kinetic.exe", "kinetic.exe",
-		"AVG2000.exe", "avg2000.exe", "SiglusEngine.exe", "siglusengine.exe", "reallive.exe"}
+		"AVG2000.exe", "avg2000.exe", "SiglusEngine.exe", "siglusengine.exe",
+		"SiglusEngine_Steam.exe", "siglusengine_steam.exe", "reallive.exe"}
 	dirs := []string{filepath.Dir(srcPath), filepath.Join(filepath.Dir(srcPath), "..")}
 	for _, dir := range dirs {
 		for _, name := range candidates {

@@ -110,7 +110,9 @@ func EmitSelect(out *codegen.Output, loc ast.Loc, opcode int, window ast.Expr, d
 	}
 
 	// Emit kidoku + opcode header
-	out.AddKidoku(loc, loc.Line)
+	if !out.SuppressAutoKidoku {
+		out.AddKidoku(loc, loc.Line)
+	}
 	out.EmitOpcode(loc, 0, SelectModule, opcode, len(params), 0)
 
 	// Emit optional window expression

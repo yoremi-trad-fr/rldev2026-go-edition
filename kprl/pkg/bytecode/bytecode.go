@@ -121,30 +121,61 @@ func ReadFileHeader(arr *binarray.Buffer, archived bool) (FileHeader, error) {
 	}
 
 	switch magic {
-	case magicKP2K, magicRD2K, magicCC01:
-		// AVG2000 / V1 format
-		hdr.HeaderVersion = HeaderV1
-		hdr.DataOffset = 0x1cc + int(arr.GetInt(0x20))*4
-		hdr.UncompressedSize = int(arr.GetInt(0x24))
-		hdr.Int0x2C = int(arr.GetInt(0x28))
+	case magicKP2K, magicRD2K:
+		fillHeaderV1(arr, &hdr)
 
-	case magicKPRL, magicRDRL, magicKPRM, magicRDRM, magicD001:
-		// RealLive / V2 format
-		hdr.HeaderVersion = HeaderV2
-		hdr.DataOffset = int(arr.GetInt(0x20))
-		hdr.UncompressedSize = int(arr.GetInt(0x24))
-		compSize := int(arr.GetInt(0x28))
-		if compSize > 0 {
-			hdr.CompressedSize = compSize
-			hdr.IsCompressed = true
+	case magicCC01:
+		if looksLikeRawV2Header(arr) {
+			fillHeaderV2(arr, &hdr)
+		} else {
+			fillHeaderV1(arr, &hdr)
 		}
-		hdr.Int0x2C = int(arr.GetInt(0x2c))
+
+	case magicKPRL, magicRDRL, magicKPRM, magicRDRM, magicD001, magicB801:
+		fillHeaderV2(arr, &hdr)
 
 	default:
 		return FileHeader{}, fmt.Errorf("unsupported header format: %q", magic)
 	}
 
 	return hdr, nil
+}
+
+func fillHeaderV1(arr *binarray.Buffer, hdr *FileHeader) {
+	// AVG2000 / V1 format
+	hdr.HeaderVersion = HeaderV1
+	hdr.DataOffset = 0x1cc + int(arr.GetInt(0x20))*4
+	hdr.UncompressedSize = int(arr.GetInt(0x24))
+	hdr.Int0x2C = int(arr.GetInt(0x28))
+}
+
+func fillHeaderV2(arr *binarray.Buffer, hdr *FileHeader) {
+	// RealLive / V2 format
+	hdr.HeaderVersion = HeaderV2
+	hdr.DataOffset = int(arr.GetInt(0x20))
+	hdr.UncompressedSize = int(arr.GetInt(0x24))
+	compSize := int(arr.GetInt(0x28))
+	if compSize > 0 {
+		hdr.CompressedSize = compSize
+		hdr.IsCompressed = true
+	}
+	hdr.Int0x2C = int(arr.GetInt(0x2c))
+}
+
+func looksLikeRawV2Header(arr *binarray.Buffer) bool {
+	if arr.Len() < 0x2c {
+		return false
+	}
+	dataOffset := int(arr.GetInt(0x20))
+	if dataOffset < 0x1b8 || dataOffset > arr.Len() {
+		return false
+	}
+	uncompressedSize := int(arr.GetInt(0x24))
+	compressedSize := int(arr.GetInt(0x28))
+	if compressedSize > 0 {
+		return dataOffset+compressedSize <= arr.Len()
+	}
+	return uncompressedSize >= 0 && dataOffset+uncompressedSize <= arr.Len()
 }
 
 // ReadFullHeader reads the complete header including entry points, kidoku

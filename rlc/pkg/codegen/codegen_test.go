@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"github.com/yoremi/rldev-go/pkg/encoding"
+	"github.com/yoremi/rldev-go/pkg/texttransforms"
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
 	"github.com/yoremi/rldev-go/rlc/pkg/kfn"
 )
@@ -225,6 +227,88 @@ func TestOutputEmitResRefEscapedLeadingSpace(t *testing.T) {
 	}
 	if !bytes.Contains(got, []byte("   text")) {
 		t.Fatalf("escaped leading spaces were not preserved: %q", string(got))
+	}
+}
+
+func TestOutputEmitResRefRawByteEscapes(t *testing.T) {
+	o := NewOutput()
+	o.ResolveRes = func(key string) (string, bool) {
+		if key == "0000" {
+			return `\x{84}\x{02}`, true
+		}
+		return "", false
+	}
+	o.EmitExpr(ast.ResRef{Key: "0000"})
+
+	var got []byte
+	for _, ir := range o.IR {
+		got = append(got, ir.Bytes...)
+	}
+	if !bytes.Equal(got, []byte{0x84, 0x02}) {
+		t.Fatalf("raw resource bytes: got % x, want 84 02", got)
+	}
+}
+
+func TestOutputEmitResRefSpeakerNameUsesWesternTransformByDefault(t *testing.T) {
+	prev := texttransforms.GetMode()
+	prevForce := texttransforms.ForceEncode
+	texttransforms.SetMode(texttransforms.EncWestern)
+	texttransforms.ForceEncode = true
+	defer func() {
+		texttransforms.SetMode(prev)
+		texttransforms.ForceEncode = prevForce
+	}()
+
+	o := NewOutput()
+	o.ResolveRes = func(key string) (string, bool) {
+		if key == "0000" {
+			return `\{Père}Salut`, true
+		}
+		return "", false
+	}
+	o.EmitExpr(ast.ResRef{Key: "0000"})
+
+	var got []byte
+	for _, ir := range o.IR {
+		got = append(got, ir.Bytes...)
+	}
+	if !bytes.Contains(got, []byte{'P', 0xc9, 'r', 'e'}) {
+		t.Fatalf("speaker name should use Western transform by default: got % x", got)
+	}
+}
+
+func TestOutputEmitResRefNativeSpeakerTagsBypassWesternTransform(t *testing.T) {
+	prev := texttransforms.GetMode()
+	prevForce := texttransforms.ForceEncode
+	texttransforms.SetMode(texttransforms.EncWestern)
+	texttransforms.ForceEncode = true
+	defer func() {
+		texttransforms.SetMode(prev)
+		texttransforms.ForceEncode = prevForce
+	}()
+
+	o := NewOutput()
+	o.NativeSpeakerTags = true
+	o.ResolveRes = func(key string) (string, bool) {
+		if key == "0000" {
+			return `\{声}*Sigh*`, true
+		}
+		return "", false
+	}
+	o.EmitExpr(ast.ResRef{Key: "0000"})
+
+	var got []byte
+	for _, ir := range o.IR {
+		got = append(got, ir.Bytes...)
+	}
+	wantName, err := encoding.UTF8ToSJS(string(rune(0x58f0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append([]byte{0x81, 0x79}, wantName...)
+	want = append(want, 0x81, 0x7a, '"', '*', 'S', 'i', 'g', 'h', '*', '"')
+	if !bytes.Equal(got, want) {
+		t.Fatalf("speaker resource bytes: got % x, want % x", got, want)
 	}
 }
 
@@ -481,5 +565,25 @@ func TestGeneratePost125UsesBangOnlyForEntrypoint(t *testing.T) {
 	}
 	if data[bcOff+6] != '@' {
 		t.Fatalf("kidoku marker = %q, want '@'", data[bcOff+6])
+	}
+}
+
+func TestGeneratePreservesRealLiveVal0x2C(t *testing.T) {
+	o := NewOutput()
+	o.AddEntrypoint(0)
+	o.AddCode(ast.Nowhere, []byte{0x00})
+
+	opts := DefaultOptions()
+	opts.Val0x2C = 9
+	data, err := o.Generate(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := binary.LittleEndian.Uint32(data[0x2c:0x30]); got != 9 {
+		t.Fatalf("0x2c = %d, want 9", got)
+	}
+	if got := binary.LittleEndian.Uint32(data[0x30:0x34]); got != 12 {
+		t.Fatalf("0x30 = %d, want 12", got)
 	}
 }

@@ -23,9 +23,11 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/yoremi/rldev-go/pkg/diag"
+	"github.com/yoremi/rldev-go/pkg/encoding"
 	"github.com/yoremi/rldev-go/pkg/text"
 	"github.com/yoremi/rldev-go/pkg/texttransforms"
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
@@ -183,12 +185,25 @@ type Output struct {
 	labels   map[string]bool // tracks defined label names (for duplicate detection)
 	lastLine int
 
+	// SuppressAutoKidoku disables compiler-inserted read markers for
+	// text/select statements while still allowing explicit AddKidoku calls.
+	// kprl -g sources carry "{- kidoku NNN -}" annotations for the exact
+	// original markers; in that mode adding implicit markers changes the
+	// kidoku table and can desynchronise RealLive debug flow.
+	SuppressAutoKidoku bool
+
 	// ResolveRes, when non-nil, is invoked to resolve a `#res<KEY>`
 	// reference to its expanded string. The compiler frame wires this
 	// to State.Resources after parsing the source. Returning ok=false
 	// causes EmitExpr to emit a textual fallback that the engine will
 	// reject but won't desync the reader.
 	ResolveRes func(key string) (string, bool)
+
+	// NativeSpeakerTags preserves speaker-tag keys as raw CP932 and avoids
+	// quote transitions around them. This is for CLANNAD Steam's GAMEEXE
+	// #NAMAE table, where the bytecode tag is a lookup key rather than a
+	// display name.
+	NativeSpeakerTags bool
 }
 
 // NewOutput creates a fresh IR output buffer.
@@ -549,9 +564,9 @@ func exprLoc(e ast.Expr) ast.Loc {
 //
 // Critical difference vs compile_stub (textout.ml): to_string does NOT
 // emit a leading quote, and it does NOT wrap the whole sequence in
-// quotes. It only inserts `"` around \{Speaker} / } RCur transitions,
-// because those need to switch the engine's quote state. Plain text and
-// lenticulars are emitted as raw SJIS bytes — no surrounding quotes.
+// quotes. Speaker names normally use the active transform like ordinary
+// text. When NativeSpeakerTags is enabled for GAMEEXE #NAMAE scripts, the
+// speaker-name key is kept as raw CP932 so it can match the INI table.
 //
 // Examples (Clannad bytecode):
 //
@@ -559,7 +574,7 @@ func exprLoc(e ast.Expr) ast.Loc {
 //	  →  ( SJIS-bytes )      no quotes
 //
 //	`SetLocalName(0, #res<0001>)` where res = "\{美佐枝}「お…」"
-//	  →  ( "" 81 79 " SJIS " 81 7a " 81 75 SJIS 81 76 " )
+//	  →  transformed text unless NativeSpeakerTags is enabled
 //
 // The previous implementation called setQuotes(true) at the start,
 // producing `( "SJIS" )` for the simple case — the engine sees an
@@ -587,6 +602,7 @@ func (o *Output) encodeResourceText(loc ast.Loc, text string) ([]byte, error) {
 
 	var buf []byte
 	quoted := false
+	inSpeakerName := false
 	setQuotes := func(q bool) {
 		if quoted != q {
 			quoted = q
@@ -597,16 +613,24 @@ func (o *Output) encodeResourceText(loc ast.Loc, text string) ([]byte, error) {
 	for _, tk := range tokens {
 		switch tk.kind {
 		case rtText:
-			b, err := o.encodeText(loc, tk.text)
+			var b []byte
+			var err error
+			if inSpeakerName && o.NativeSpeakerTags {
+				b, err = encodeNativeCP932(loc, tk.text)
+			} else {
+				b, err = o.encodeText(loc, tk.text)
+			}
 			if err != nil {
 				return nil, err
 			}
-			if hasUnsafeUnquotedByte(b) {
+			if !(inSpeakerName && o.NativeSpeakerTags) && hasUnsafeUnquotedByte(b) {
 				setQuotes(true)
 			}
 			buf = append(buf, b...)
 		case rtSpace:
-			setQuotes(true)
+			if !(inSpeakerName && o.NativeSpeakerTags) {
+				setQuotes(true)
+			}
 			for i := 0; i < tk.count; i++ {
 				buf = append(buf, ' ')
 			}
@@ -618,10 +642,12 @@ func (o *Output) encodeResourceText(loc ast.Loc, text string) ([]byte, error) {
 			// switches out of any text-quoting state it was in.
 			setQuotes(false)
 			buf = append(buf, 0x81, 0x79)
+			inSpeakerName = true
 		case rtRCur:
 			// } closes the speaker block. Same quote-state transition.
 			setQuotes(false)
 			buf = append(buf, 0x81, 0x7a)
+			inSpeakerName = false
 		case rtLLentic:
 			buf = append(buf, 0x81, 0x79)
 		case rtRLentic:
@@ -646,6 +672,9 @@ func (o *Output) encodeResourceText(loc ast.Loc, text string) ([]byte, error) {
 			if tk.hasIndex {
 				buf = append(buf, 0x82, byte(tk.index)+0x4f)
 			}
+		case rtRawByte:
+			setQuotes(false)
+			buf = append(buf, tk.raw)
 		}
 	}
 
@@ -658,6 +687,33 @@ func (o *Output) encodeResourceText(loc ast.Loc, text string) ([]byte, error) {
 		return []byte{'"', '"'}, nil
 	}
 	return buf, nil
+}
+
+func encodeNativeCP932(loc ast.Loc, s string) ([]byte, error) {
+	b, err := encoding.UTF8ToSJS(s)
+	if err == nil {
+		return b, nil
+	}
+	var result []byte
+	for _, r := range s {
+		if r <= 0x7f {
+			result = append(result, byte(r))
+			continue
+		}
+		sb, encErr := encoding.UTF8ToSJS(string(r))
+		if encErr != nil {
+			diag.Warning(diag.Loc{File: loc.File, Line: loc.Line},
+				"cannot represent U+%04X %q in RealLive bytecode with native CP932 speaker-name encoding",
+				r, string(r))
+			if texttransforms.ForceEncode {
+				result = append(result, ' ')
+				continue
+			}
+			return nil, encErr
+		}
+		result = append(result, sb...)
+	}
+	return result, nil
 }
 
 // rtKind / rtToken are a minimal token representation used by
@@ -681,6 +737,7 @@ const (
 	rtPercent
 	rtHyphen
 	rtName
+	rtRawByte
 )
 
 type rtToken struct {
@@ -691,6 +748,7 @@ type rtToken struct {
 	letters  string // for rtName: 1-2 uppercase letters A..Z
 	hasIndex bool   // for rtName
 	index    int    // for rtName: 0..9
+	raw      byte   // for rtRawByte
 }
 
 // lexResourceText breaks a resource string into tokens consumable by
@@ -729,6 +787,15 @@ func lexResourceText(s string) ([]rtToken, error) {
 		// Backslash escapes: \{ \l \m
 		if c == '\\' && i+1 < len(r) {
 			next := r[i+1]
+			if next == 'x' {
+				raw, consumed, ok := parseRawByteEscape(r, i)
+				if ok {
+					flush()
+					out = append(out, rtToken{kind: rtRawByte, raw: raw})
+					i += consumed
+					continue
+				}
+			}
 			switch next {
 			case '{':
 				flush()
@@ -798,6 +865,25 @@ func lexResourceText(s string) ([]rtToken, error) {
 	}
 	flush()
 	return out, nil
+}
+
+func parseRawByteEscape(r []rune, start int) (byte, int, bool) {
+	if start+3 >= len(r) || r[start] != '\\' || r[start+1] != 'x' || r[start+2] != '{' {
+		return 0, 0, false
+	}
+	pos := start + 3
+	hexStart := pos
+	for pos < len(r) && r[pos] != '}' {
+		pos++
+	}
+	if pos >= len(r) || pos == hexStart {
+		return 0, 0, false
+	}
+	value, err := strconv.ParseUint(string(r[hexStart:pos]), 16, 8)
+	if err != nil {
+		return 0, 0, false
+	}
+	return byte(value), pos - start + 1, true
 }
 
 func isResourceControlStart(r rune) bool {
@@ -1023,6 +1109,7 @@ type GenerateOptions struct {
 	Metadata        []byte // optional metadata bytes
 	Version         kfn.Version
 	KidokuType      int // 0=auto, 1=@, 2=!
+	Val0x2C         int // RealLive #Z-1 header field; #Z-2 is derived
 
 	// DramatisPersonae is the list of #character names collected during
 	// directive processing. When DebugInfo is true and Target is
@@ -1247,10 +1334,9 @@ func buildRealLive(bytecode []byte, bytecodeLen, compressedLen int, entrypoints 
 	putInt32(file, 0x24, bytecodeLen)      // bytecode length
 	putInt32(file, 0x28, compressedLen)    // compressed length
 	// val_0x2c (#Z-1) defaults to 0; 0x30 (#Z-2) = val_0x2c + 3.
-	// OCaml bytecodeGen.ml L54-55. Although the engine itself doesn't
-	// check these fields, OCaml output sets them and certain tools may.
-	putInt32(file, 0x2c, 0)
-	putInt32(file, 0x30, 3)
+	// OCaml bytecodeGen.ml L54-55.
+	putInt32(file, 0x2c, opts.Val0x2C)
+	putInt32(file, 0x30, opts.Val0x2C+3)
 
 	// Entrypoints at 0x34 (up to 100 × 4 bytes)
 	for i := 0; i < len(entrypoints) && i < 100; i++ {
@@ -1296,6 +1382,8 @@ func buildAVG2000(bytecode []byte, bytecodeLen int, entrypoints []int, kidokuTab
 
 	putInt32(file, 0x20, len(kidokuTable))
 	putInt32(file, 0x24, bytecodeLen)
+	putInt32(file, 0x28, opts.Val0x2C)
+	putInt32(file, 0x2c, opts.Val0x2C+5)
 
 	// Entrypoints at 0x30
 	for i := 0; i < len(entrypoints) && i < 100; i++ {

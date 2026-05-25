@@ -32,9 +32,13 @@ func newCompiler() *Compiler {
 func TestDefine(t *testing.T) {
 	c := newCompiler()
 	c.Compile(ast.DefineStmt{Ident: "MAX", Value: ast.IntLit{Val: 100}})
-	if !c.Mem.Defined("MAX") { t.Error("MAX not defined") }
+	if !c.Mem.Defined("MAX") {
+		t.Error("MAX not defined")
+	}
 	sym, _ := c.Mem.Get("MAX")
-	if sym.Kind != memory.KindMacro { t.Error("should be macro") }
+	if sym.Kind != memory.KindMacro {
+		t.Error("should be macro")
+	}
 }
 
 // ============================================================
@@ -45,7 +49,9 @@ func TestConstInt(t *testing.T) {
 	c := newCompiler()
 	c.Compile(ast.DConstStmt{Ident: "PI", Kind: ast.KindConst, Value: ast.IntLit{Val: 3}})
 	sym, ok := c.Mem.Get("PI")
-	if !ok { t.Fatal("PI not defined") }
+	if !ok {
+		t.Fatal("PI not defined")
+	}
 	if sym.Kind != memory.KindInteger || sym.IntVal != 3 {
 		t.Errorf("PI: kind=%d val=%d", sym.Kind, sym.IntVal)
 	}
@@ -57,7 +63,9 @@ func TestConstExpr(t *testing.T) {
 	c.Compile(ast.DConstStmt{Ident: "X", Kind: ast.KindConst,
 		Value: ast.BinOp{LHS: ast.IntLit{Val: 10}, Op: ast.OpAdd, RHS: ast.IntLit{Val: 20}}})
 	sym, _ := c.Mem.Get("X")
-	if sym.IntVal != 30 { t.Errorf("X: %d, want 30", sym.IntVal) }
+	if sym.IntVal != 30 {
+		t.Errorf("X: %d, want 30", sym.IntVal)
+	}
 }
 
 // ============================================================
@@ -72,8 +80,12 @@ func TestInline(t *testing.T) {
 		Body:   ast.HaltStmt{},
 	})
 	sym, ok := c.Mem.Get("myfunc")
-	if !ok { t.Fatal("myfunc not defined") }
-	if sym.Kind != memory.KindInline { t.Error("should be inline") }
+	if !ok {
+		t.Fatal("myfunc not defined")
+	}
+	if sym.Kind != memory.KindInline {
+		t.Error("should be inline")
+	}
 }
 
 // ============================================================
@@ -84,13 +96,17 @@ func TestUndef(t *testing.T) {
 	c := newCompiler()
 	c.Mem.Define("X", memory.Symbol{Kind: memory.KindInteger, IntVal: 1})
 	c.Compile(ast.DUndefStmt{Idents: []string{"X"}})
-	if c.Mem.Defined("X") { t.Error("X should be undefined") }
+	if c.Mem.Defined("X") {
+		t.Error("X should be undefined")
+	}
 }
 
 func TestUndefNotFound(t *testing.T) {
 	c := newCompiler()
 	c.Compile(ast.DUndefStmt{Loc: ast.Loc{File: "test", Line: 1}, Idents: []string{"NOPE"}})
-	if len(c.Errors) == 0 { t.Error("expected error for undefined") }
+	if len(c.Errors) == 0 {
+		t.Error("expected error for undefined")
+	}
 }
 
 // ============================================================
@@ -102,13 +118,17 @@ func TestSet(t *testing.T) {
 	c.Mem.Define("X", memory.Symbol{Kind: memory.KindInteger, IntVal: 1})
 	c.Compile(ast.DSetStmt{Ident: "X", Value: ast.IntLit{Val: 42}, ReadOnly: true})
 	sym, _ := c.Mem.Get("X")
-	if sym.IntVal != 42 { t.Errorf("X after set: %d", sym.IntVal) }
+	if sym.IntVal != 42 {
+		t.Errorf("X after set: %d", sym.IntVal)
+	}
 }
 
 func TestSetUndefined(t *testing.T) {
 	c := newCompiler()
 	c.Compile(ast.DSetStmt{Loc: ast.Loc{File: "test", Line: 1}, Ident: "NOPE", Value: ast.IntLit{Val: 1}})
-	if len(c.Errors) == 0 { t.Error("expected error") }
+	if len(c.Errors) == 0 {
+		t.Error("expected error")
+	}
 }
 
 // ============================================================
@@ -118,7 +138,9 @@ func TestSetUndefined(t *testing.T) {
 func TestTarget(t *testing.T) {
 	c := newCompiler()
 	c.Compile(ast.DTargetStmt{Target: "AVG2000"})
-	if *c.Target != kfn.TargetAVG2000 { t.Errorf("target: %v", *c.Target) }
+	if *c.Target != kfn.TargetAVG2000 {
+		t.Errorf("target: %v", *c.Target)
+	}
 }
 
 func TestTargetForced(t *testing.T) {
@@ -126,8 +148,12 @@ func TestTargetForced(t *testing.T) {
 	c.TargetForced = true
 	*c.Target = kfn.TargetRealLive
 	c.Compile(ast.DTargetStmt{Target: "AVG2000"})
-	if *c.Target != kfn.TargetRealLive { t.Error("forced target should not change") }
-	if len(c.Warnings) == 0 { t.Error("expected warning") }
+	if *c.Target != kfn.TargetRealLive {
+		t.Error("forced target should not change")
+	}
+	if len(c.Warnings) == 0 {
+		t.Error("expected warning")
+	}
 }
 
 // ============================================================
@@ -154,7 +180,9 @@ func TestDirectiveWarn(t *testing.T) {
 	c.Compile(ast.DirectiveStmt{Name: "warn", Value: ast.StrLit{
 		Tokens: []ast.StrToken{ast.TextToken{Text: "test warning"}},
 	}})
-	if len(c.Warnings) == 0 { t.Error("expected warning") }
+	if len(c.Warnings) == 0 {
+		t.Error("expected warning")
+	}
 }
 
 func TestDirectiveError(t *testing.T) {
@@ -162,27 +190,35 @@ func TestDirectiveError(t *testing.T) {
 	c.Compile(ast.DirectiveStmt{Name: "error", Value: ast.StrLit{
 		Tokens: []ast.StrToken{ast.TextToken{Text: "test error"}},
 	}})
-	if len(c.Errors) == 0 { t.Error("expected error") }
+	if len(c.Errors) == 0 {
+		t.Error("expected error")
+	}
 }
 
 func TestDirectiveEntrypoint(t *testing.T) {
 	c := newCompiler()
 	c.Compile(ast.DirectiveStmt{Name: "entrypoint", Value: ast.IntLit{Val: 5}})
 	// Should have added an entrypoint to the output
-	if c.Output.Length() == 0 { t.Error("expected entrypoint in output") }
+	if c.Output.Length() == 0 {
+		t.Error("expected entrypoint in output")
+	}
 }
 
 func TestDirectiveEntrypointInvalid(t *testing.T) {
 	c := newCompiler()
 	c.Compile(ast.DirectiveStmt{Loc: ast.Loc{File: "test", Line: 1},
 		Name: "entrypoint", Value: ast.IntLit{Val: 200}})
-	if len(c.Errors) == 0 { t.Error("expected error for invalid entrypoint") }
+	if len(c.Errors) == 0 {
+		t.Error("expected error for invalid entrypoint")
+	}
 }
 
 func TestDirectiveVal0x2c(t *testing.T) {
 	c := newCompiler()
 	c.Compile(ast.DirectiveStmt{Name: "val_0x2c", Value: ast.IntLit{Val: 42}})
-	if c.State.Val0x2C != 42 { t.Errorf("val_0x2c: %d", c.State.Val0x2C) }
+	if c.State.Val0x2C != 42 {
+		t.Errorf("val_0x2c: %d", c.State.Val0x2C)
+	}
 }
 
 func TestDirectiveCharacter(t *testing.T) {
@@ -198,7 +234,9 @@ func TestDirectiveCharacter(t *testing.T) {
 func TestDirectiveKidokuType(t *testing.T) {
 	c := newCompiler()
 	c.Compile(ast.DirectiveStmt{Name: "kidoku_type", Value: ast.IntLit{Val: 2}})
-	if c.Ini.GetInt("KIDOKU_TYPE", 0) != 2 { t.Error("kidoku_type") }
+	if c.Ini.GetInt("KIDOKU_TYPE", 0) != 2 {
+		t.Error("kidoku_type")
+	}
 }
 
 func TestDirectiveFile(t *testing.T) {
@@ -206,7 +244,9 @@ func TestDirectiveFile(t *testing.T) {
 	c.Compile(ast.DirectiveStmt{Name: "file", Value: ast.StrLit{
 		Tokens: []ast.StrToken{ast.TextToken{Text: "SEEN0001"}},
 	}})
-	if c.OutFile != "SEEN0001" { t.Errorf("file: %q", c.OutFile) }
+	if c.OutFile != "SEEN0001" {
+		t.Errorf("file: %q", c.OutFile)
+	}
 }
 
 func TestDirectiveFileNotOverwrite(t *testing.T) {
@@ -215,5 +255,22 @@ func TestDirectiveFileNotOverwrite(t *testing.T) {
 	c.Compile(ast.DirectiveStmt{Name: "file", Value: ast.StrLit{
 		Tokens: []ast.StrToken{ast.TextToken{Text: "new"}},
 	}})
-	if c.OutFile != "existing" { t.Error("should not overwrite existing filename") }
+	if c.OutFile != "existing" {
+		t.Error("should not overwrite existing filename")
+	}
+}
+
+func TestDecodeShiftJISResourceBodyEscapesRawBytes(t *testing.T) {
+	got := decodeShiftJISResourceBody([]byte{0x84, 0x02})
+	if got != `\x{84}\x{02}` {
+		t.Fatalf("decodeShiftJISResourceBody raw bytes = %q", got)
+	}
+}
+
+func TestDecodeShiftJISResourceBodyKeepsValidText(t *testing.T) {
+	got := decodeShiftJISResourceBody([]byte{0x82, 0xa0, 'A'})
+	want := string(rune(0x3042)) + "A"
+	if got != want {
+		t.Fatalf("decodeShiftJISResourceBody valid text = %q", got)
+	}
 }

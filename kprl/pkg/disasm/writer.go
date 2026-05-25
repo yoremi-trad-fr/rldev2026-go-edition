@@ -63,11 +63,12 @@ func (w *Writer) convertText(sjisText string, transform texttransforms.EncMode) 
 	// before any encoding conversion. Otherwise SJIS-to-UTF8 sees the
 	// marker bytes as fullwidth characters (e.g. 0x81 0x96 → ＊).
 	sjisText = decodeNameMarkers(sjisText)
+	sjisText = escapeUnsafeResourceBytes(sjisText)
 
 	if isBytePreservingEncoding(w.opts.Encoding) {
 		return sjisText
 	}
-	utf8Str, err := decodeBytecodeText([]byte(sjisText), transform)
+	utf8Str, err := decodeMixedBytecodeText(sjisText, transform)
 	if err != nil {
 		return sjisText
 	}
@@ -98,6 +99,52 @@ func isBytePreservingEncoding(enc string) bool {
 	}
 }
 
+func escapeUnsafeResourceBytes(s string) string {
+	if s == "" {
+		return s
+	}
+	var b strings.Builder
+	changed := false
+	for i := 0; i < len(s); {
+		c := s[i]
+		switch {
+		case isPlainResourceByte(c):
+			b.WriteByte(c)
+			i++
+		case isShiftJISLead(c):
+			if i+1 < len(s) && isShiftJISTrail(s[i+1]) {
+				b.WriteByte(c)
+				b.WriteByte(s[i+1])
+				i += 2
+			} else {
+				fmt.Fprintf(&b, "\\x{%02x}", c)
+				changed = true
+				i++
+			}
+		case c >= 0xa1 && c <= 0xdf:
+			// Half-width katakana are valid single-byte Shift-JIS.
+			b.WriteByte(c)
+			i++
+		default:
+			fmt.Fprintf(&b, "\\x{%02x}", c)
+			changed = true
+			i++
+		}
+	}
+	if !changed {
+		return s
+	}
+	return b.String()
+}
+
+func isPlainResourceByte(b byte) bool {
+	return b >= 0x20 && b < 0x7f
+}
+
+func isShiftJISTrail(b byte) bool {
+	return (b >= 0x40 && b <= 0x7e) || (b >= 0x80 && b <= 0xfc)
+}
+
 func decodeBytecodeText(data []byte, transform texttransforms.EncMode) (string, error) {
 	if transform == texttransforms.EncNone {
 		return encoding.SJSToUTF8(data)
@@ -112,6 +159,68 @@ func decodeBytecodeText(data []byte, transform texttransforms.EncMode) (string, 
 		return "", err
 	}
 	return text.ToUTF8(decoded), nil
+}
+
+func decodeMixedBytecodeText(s string, transform texttransforms.EncMode) (string, error) {
+	var out strings.Builder
+	for len(s) > 0 {
+		start := strings.Index(s, `\{`)
+		if start < 0 {
+			decoded, err := decodeBytecodeText([]byte(s), transform)
+			if err != nil {
+				return "", err
+			}
+			out.WriteString(decoded)
+			break
+		}
+		if start > 0 {
+			decoded, err := decodeBytecodeText([]byte(s[:start]), transform)
+			if err != nil {
+				return "", err
+			}
+			out.WriteString(decoded)
+		}
+		out.WriteString(`\{`)
+		s = s[start+2:]
+		end := findSpeakerCloseByte(s)
+		if end < 0 {
+			decoded, err := decodeBytecodeText([]byte(s), texttransforms.EncNone)
+			if err != nil {
+				return "", err
+			}
+			out.WriteString(decoded)
+			break
+		}
+		name, err := decodeBytecodeText([]byte(s[:end]), texttransforms.EncNone)
+		if err != nil {
+			return "", err
+		}
+		out.WriteString(name)
+		out.WriteByte('}')
+		s = s[end+1:]
+	}
+	return out.String(), nil
+}
+
+func findSpeakerCloseByte(s string) int {
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c == '\\' && i+3 < len(s) && s[i+1] == 'x' && s[i+2] == '{' {
+			if end := strings.IndexByte(s[i+3:], '}'); end >= 0 {
+				i += 3 + end + 1
+				continue
+			}
+		}
+		if c == '}' {
+			return i
+		}
+		if isShiftJISLead(c) && i+1 < len(s) && isShiftJISTrail(s[i+1]) {
+			i += 2
+			continue
+		}
+		i++
+	}
+	return -1
 }
 
 // decodeNameMarkers replaces each RealLive name-marker byte sequence in s
@@ -266,6 +375,9 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 		fmt.Fprintln(srcOut, "#target AVG2000")
 	case ModeKinetic:
 		fmt.Fprintln(srcOut, "#target Kinetic")
+	}
+	if result.Header.Int0x2C != 0 {
+		fmt.Fprintf(srcOut, "#val_0x2c %d\n", result.Header.Int0x2C)
 	}
 
 	// Write dramatis personae

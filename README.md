@@ -1,122 +1,130 @@
-# Rldev2026-Go Port Status
+### Status update: `25/05/2026`
+<table>
+  <tr>
+    <td align="center" width="100%">
+      <h2>Rldev2026-Go édition + GUI</h2>
+    </td>
+  </tr>
+</table>
+
 Update : 24/05/2026 : AIR is now supported - Creating a list of validated features
+
 Update : 20/05/2026 : An initial version of the GUI has been created for Rldev2026
 
 GUI update Best console log + full .log file
 Fixes for the -x transform not included in the GUI
 rldev2026-go now behaves in the same way as OCaml when it comes to handling encodings
 
-**Status update:** `20/05/2026`
-
-Supported VNs
-## -Clannad (2004)
-## -Clannad Full Voice (2007)
-## -Clannad Steam : It’s already partially implemented; the scene extraction is working fine, with just three non-blocking errors. I’ll fix those in the next few days; the build also needs testing
-## -AIR 18+ (2005)
----
-
-
-Planned updates to the tools: Improved .g00 compatibility, support for version 2 
-
-# To do list VN
-
-## Kanon (1999 AVG)
-
-* Decompilation UTF8/SJIS: Not implemented
-* Intermediate compilation (`.org / .ke`): Not implemented
-* Final compilation: Not implemented
+<table>
+  <tr>
+    <td align="center" width="100%">
+      <h2>Contribution en cours</h2>
+    </td>
+  </tr>
+</table>
 
 ---
 
-## Kanon (1999 18+ AVG)
 
-* Decompilation UTF8/SJIS: Not implemented
-* Intermediate compilation (`.org / .ke`): Not implemented
-* Final compilation: Not implemented
 
----
+<table>
+  <tr>
+    <td align="center" width="100%">
+      <h3>Full supported VNs</h3>
+    </td>
+  </tr>
+</table>
 
-## AIR First Press Edition (2000 18+)
 
-* Status: Not tested
+### -Clannad (2004)
+### -Clannad Full Voice (2007)
+### -Clannad Steam (2015) : debug in progress....
+### -AIR 18+ (2005)
+### -Oni Uta (not tested, Kotsuider contribution)
+### -Royal Nekomimi Academy (not tested, CarouselAether contribution)
 
-* Decompilation UTF8/SJIS:
-* Intermediate compilation (`.org / .ke`):
-* Final compilation:
+<table>
+  <tr>
+    <td align="center" width="100%">
+      <h3>Wanted</h3>
+    </td>
+  </tr>
+</table>
 
----
 
-## Little Busters! (2007)
+### Missing original ISOs: I’m looking for these ISOs for my testing. 
+#### ( If you own the physical version of the game, you could also create an ISO from it – that would be a huge help!)
+ 
+1-Tomoyo After 18+ (2005)
 
-* Status: Not tested
+2-Harmonia 2016 (non steam)
 
-* Decompilation UTF8/SJIS:
-* Intermediate compilation (`.org / .ke`):
-* Final compilation:
+3-Clannad Side Stories (non steam)
 
----
+<table>
+  <tr>
+    <td align="center" width="100%">
+      <h3>To do list VN + Others</h3>
+    </td>
+  </tr>
+</table>
 
-## Tomoyo After Memorial Edition (2010)
+### Kanon (1999 AVG)
 
-* Decompilation UTF8/SJIS: Passed
-* Intermediate compilation (`.org / .ke`):  Passed
-* Final compilation:  Failed
+### Kanon (1999 18+ AVG)
 
----
+### AIR (2000 18+)
 
-## Tomoyo After Steam Edition (2011)
+### Little Busters! (2007)
 
-* Decompilation UTF8/SJIS:  Passed
-* Intermediate compilation (`.org / .ke`):Passed
-* Final compilation:  Failed
+### Little Busters EX ! (2008)
 
----
+### Tomoyo After 18+ (2005)
 
-## Clannad Side Stories Steam Edition (2011)
+### Tomoyo After Memorial Edition (2010)
 
-* Decompilation UTF8/SJIS: Passed
-* Intermediate compilation (`.org / .ke`):  Passed
-* Final compilation:  Failed
+### Tomoyo After-Steam (2011)
 
----
+### Clannad Side Stories-Steam (2011)
 
-## Kud Wafter (2010 18+)
+### Kud Wafter (2010 18+)
 
-* Status: Not tested
+### Harmonia 2016
 
-* Decompilation UTF8/SJIS:
-* Intermediate compilation (`.org / .ke`):
-* Final compilation:
+### Harmonia 2016-Steam
 
----
-## Harmonia 2016
+### Harmonia 2021-Steam HD édition
 
-* Status: Not tested
+### Planetarian (2006)
 
-* Decompilation UTF8/SJIS:
-* Intermediate compilation (`.org / .ke`):
-* Final compilation:
----
+-Planned updates to the tools: Improved .g00 compatibility, support for version 2 + add xml injection
+-Support for GAN workflow
+-Support for Babel module (for old version of ReaLlive)
 
-## Planetarian (2006)
 
-* Status: Not tested
+<table>
+  <tr>
+    <td align="center" width="100%">
+      <h3>Project Overview</h3>
+    </td>
+  </tr>
+</table>
 
-* Decompilation UTF8/SJIS:
-* Intermediate compilation (`.org / .ke`):
-* Final compilation:
-
----
-
-# Project Overview
 
 This project is a full port of the **Rldev2026** toolchain to the **Go language**.
 
 The goal is to provide a modern and portable implementation capable of running natively on current operating systems without relying on outdated environments such as Cygwin or virtual machines.
+A GUI is available; the aim is to make it easy for anyone to work with ReaLlive engine files for fan translations
 
----
 
-# Building
+<table>
+  <tr>
+    <td align="center" width="100%">
+      <h3>Building</h3>
+    </td>
+  </tr>
+</table>
+
 
 The command line tools build natively on Windows and Linux with Go 1.22 or newer.
 
@@ -146,17 +154,23 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 OUTDIR=bin/linux-amd64 bash build-rldev.sh
 
 Windows builds embed version metadata and an application manifest into the four CLI executables.
 
----
 
-# Development Roadmap
+<table>
+  <tr>
+    <td align="center" width="100%">
+      <h3>Development Roadmap</h3>
+    </td>
+  </tr>
+</table>
 
-## Phase 1
+
+### Phase 1
 
 * Port the `rldev2026` OCaml fork to Go
 * Reach feature parity with the OCaml implementation
 * Preserve compatibility with existing workflows
 
-## Phase 2
+### Phase 2
 
 * Add support for titles released after the original OCaml Rldev implementation
 * Improve engine compatibility and tooling
@@ -164,8 +178,4 @@ Windows builds embed version metadata and an application manifest into the four 
 
 ---
 
-# Future Direction
-
-The Go implementation is intended to become the main actively maintained version of the project.
-
-The legacy OCaml version will eventually be discontinued, and future updates will focus exclusively on the Go codebase.
+### Future Direction

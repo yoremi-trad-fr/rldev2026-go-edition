@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/yoremi/rldev-go/pkg/diag"
+	"github.com/yoremi/rldev-go/pkg/encoding"
 	"github.com/yoremi/rldev-go/pkg/text"
 	"github.com/yoremi/rldev-go/pkg/texttransforms"
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
@@ -70,6 +71,7 @@ func New(reg *kfn.Registry, iniTable *ini.Table) *Compiler {
 		Intrin: intrinsic.New(mem),
 		Reg:    reg, Ini: iniTable, State: state,
 	}
+	out.NativeSpeakerTags = iniTable.HasNamae()
 	c.Directive = &directive.Compiler{
 		Mem: mem, Norm: norm, Output: out,
 		Ini: iniTable, State: state,
@@ -95,9 +97,107 @@ func (c *Compiler) Compile(stmts []ast.Stmt) {
 // Parse processes a batch of statements. Called recursively from
 // meta.State.Parse via the CompileStatements callback.
 func (c *Compiler) Parse(stmts []ast.Stmt) {
-	for _, s := range stmts {
+	if containsKidokuDirective(stmts) {
+		c.Out.SuppressAutoKidoku = true
+	}
+	for i, s := range stmts {
+		if isKidokuDirective(s) {
+			c.ParseElt(s)
+			if !nextStmtConsumesKidoku(stmts, i+1) {
+				c.Out.AddCodeRaw(s.StmtLoc(), []byte{'"', '"'})
+			}
+			continue
+		}
 		c.ParseElt(s)
 	}
+}
+
+func isDirectiveNamed(stmt ast.Stmt, name string) bool {
+	d, ok := stmt.(ast.DirectiveStmt)
+	return ok && d.Name == name
+}
+
+func isKidokuDirective(stmt ast.Stmt) bool {
+	return isDirectiveNamed(stmt, "kidoku")
+}
+
+func isLineDirective(stmt ast.Stmt) bool {
+	return isDirectiveNamed(stmt, "line")
+}
+
+func nextStmtConsumesKidoku(stmts []ast.Stmt, start int) bool {
+	for i := start; i < len(stmts); i++ {
+		if isLineDirective(stmts[i]) {
+			continue
+		}
+		switch s := stmts[i].(type) {
+		case ast.ReturnStmt:
+			return !s.Explicit && s.Expr != nil
+		case ast.SelectStmt:
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func containsKidokuDirective(stmts []ast.Stmt) bool {
+	for _, s := range stmts {
+		if stmtContainsKidokuDirective(s) {
+			return true
+		}
+	}
+	return false
+}
+
+func stmtContainsKidokuDirective(stmt ast.Stmt) bool {
+	switch s := stmt.(type) {
+	case nil:
+		return false
+	case ast.DirectiveStmt:
+		return s.Name == "kidoku"
+	case ast.IfStmt:
+		return stmtContainsKidokuDirective(s.Then) || stmtContainsKidokuDirective(s.Else)
+	case ast.WhileStmt:
+		return stmtContainsKidokuDirective(s.Body)
+	case ast.RepeatStmt:
+		return containsKidokuDirective(s.Body)
+	case ast.ForStmt:
+		return containsKidokuDirective(s.Init) ||
+			containsKidokuDirective(s.Step) ||
+			stmtContainsKidokuDirective(s.Body)
+	case ast.CaseStmt:
+		if containsKidokuDirective(s.Default) {
+			return true
+		}
+		for _, arm := range s.Arms {
+			if containsKidokuDirective(arm.Body) {
+				return true
+			}
+		}
+	case ast.BlockStmt:
+		return containsKidokuDirective(s.Stmts)
+	case ast.SeqStmt:
+		return containsKidokuDirective(s.Stmts)
+	case ast.HidingStmt:
+		return stmtContainsKidokuDirective(s.Body)
+	case ast.DInlineStmt:
+		return stmtContainsKidokuDirective(s.Body)
+	case ast.DForStmt:
+		return stmtContainsKidokuDirective(s.Body)
+	case ast.DIfStmt:
+		if containsKidokuDirective(s.Body) {
+			return true
+		}
+		switch cont := s.Cont.(type) {
+		case ast.DIfStmt:
+			return stmtContainsKidokuDirective(cont)
+		case ast.DElseStmt:
+			return containsKidokuDirective(cont.Body)
+		}
+	}
+	return false
 }
 
 // HasErrors returns true if any errors were collected.
@@ -193,7 +293,7 @@ func (c *Compiler) compileTextStub(ret ast.ReturnStmt) {
 		// full quoted/unquoted state machine that the engine expects
 		// around `\{Name}「…」`-style content. Skipping this and going
 		// through plain EmitExpr emitted the SJIS bytes with no framing
-		// quotes (no `22 22 81 79 22 …`), so the engine read the next
+		// quotes around the spoken text, so the engine read the next
 		// opcode's bytes as text and gradually desynced — manifested as
 		// the menu freezing on "Aw" with the title bar missing.
 		if rr, isRes := ret.Expr.(ast.ResRef); isRes {
@@ -203,13 +303,13 @@ func (c *Compiler) compileTextStub(ret ast.ReturnStmt) {
 			}
 		} else {
 			// Non-string non-res expression → just emit as-is
-			c.Out.AddKidoku(ret.Loc, ret.Loc.Line)
+			c.addImplicitKidoku(ret.Loc)
 			c.Out.EmitExprRaw(ret.Expr)
 			return
 		}
 	}
 
-	c.Out.AddKidoku(ret.Loc, ret.Loc.Line)
+	c.addImplicitKidoku(ret.Loc)
 	tc := &textCompiler{
 		c:              c,
 		loc:            ret.Loc,
@@ -223,6 +323,13 @@ func (c *Compiler) compileTextStub(ret ast.ReturnStmt) {
 	}
 	tc.flush()
 	c.noLineForNextPause = true
+}
+
+func (c *Compiler) addImplicitKidoku(loc ast.Loc) {
+	if c.Out.SuppressAutoKidoku {
+		return
+	}
+	c.Out.AddKidoku(loc, loc.Line)
 }
 
 func isPauseStmt(stmt ast.Stmt) bool {
@@ -243,6 +350,7 @@ type textCompiler struct {
 	buf            []byte
 	quoted         bool
 	ignoreOneSpace bool
+	inSpeakerName  bool
 }
 
 // setQuotes transitions between quoted and unquoted mode.
@@ -253,6 +361,19 @@ func (tc *textCompiler) setQuotes(q bool) {
 		tc.quoted = q
 		tc.buf = append(tc.buf, '"') // 0x22
 	}
+}
+
+func (tc *textCompiler) cancelInitialEmptyQuoteRun() bool {
+	if tc.quoted && len(tc.buf) == 1 && tc.buf[0] == '"' {
+		tc.quoted = false
+		tc.buf = tc.buf[:0]
+		return true
+	}
+	return false
+}
+
+func (tc *textCompiler) nativeSpeakerTags() bool {
+	return tc.c != nil && tc.c.Out != nil && tc.c.Out.NativeSpeakerTags
 }
 
 // flush writes accumulated buffer to codegen output and clears it.
@@ -275,8 +396,13 @@ func (tc *textCompiler) compileToken(tok ast.StrToken) {
 
 	switch t := tok.(type) {
 	case ast.TextToken:
-		tc.setQuotes(true)
-		tc.buf = append(tc.buf, tc.textToBytecode(t.Text)...)
+		if tc.inSpeakerName && tc.nativeSpeakerTags() {
+			tc.setQuotes(false)
+			tc.buf = append(tc.buf, tc.textToNativeBytecode(t.Text)...)
+		} else {
+			tc.setQuotes(true)
+			tc.buf = append(tc.buf, tc.textToBytecode(t.Text)...)
+		}
 
 	case ast.SpaceToken:
 		count := t.Count
@@ -293,13 +419,17 @@ func (tc *textCompiler) compileToken(tok ast.StrToken) {
 		tc.buf = append(tc.buf, '\\', '"') // escaped quote in text
 
 	case ast.SpeakerToken:
-		tc.setQuotes(false)
+		if !tc.nativeSpeakerTags() || !tc.cancelInitialEmptyQuoteRun() {
+			tc.setQuotes(false)
+		}
 		tc.buf = append(tc.buf, 0x81, 0x79) // 【
+		tc.inSpeakerName = true
 
 	case ast.RCurToken:
 		tc.setQuotes(false)
 		tc.buf = append(tc.buf, 0x81, 0x7A) // 】
 		tc.ignoreOneSpace = true
+		tc.inSpeakerName = false
 
 	case ast.LLenticToken:
 		tc.setQuotes(true)
@@ -403,6 +533,32 @@ func (tc *textCompiler) textToBytecode(s string) []byte {
 	}
 	if err != nil {
 		tc.c.warning(tc.loc, err.Error())
+	}
+	return result
+}
+
+func (tc *textCompiler) textToNativeBytecode(s string) []byte {
+	b, err := encoding.UTF8ToSJS(s)
+	if err == nil {
+		return b
+	}
+	var result []byte
+	for _, r := range s {
+		if r <= 0x7f {
+			result = append(result, byte(r))
+			continue
+		}
+		sb, encErr := encoding.UTF8ToSJS(string(r))
+		if encErr != nil {
+			diag.Warning(diag.Loc{File: tc.loc.File, Line: tc.loc.Line},
+				"cannot represent U+%04X %q in RealLive bytecode with native CP932 speaker-name encoding",
+				r, string(r))
+			if texttransforms.ForceEncode {
+				result = append(result, ' ')
+			}
+			continue
+		}
+		result = append(result, sb...)
 	}
 	return result
 }
@@ -514,7 +670,22 @@ func (c *Compiler) ParseNormElt(stmt ast.Stmt) {
 		c.compileDeclStmt(s)
 
 	// --- Directives ---
-	case ast.DirectiveStmt, ast.DTargetStmt, ast.DefineStmt, ast.DConstStmt,
+	case ast.DirectiveStmt:
+		if s.Name == "line" {
+			if v, ok := s.Value.(ast.IntLit); ok {
+				c.Out.AddLine(ast.Loc{File: s.Loc.File, Line: int(v.Val)})
+			} else {
+				c.warning(s.Loc, "#line expects an integer literal")
+			}
+			return
+		}
+		if s.Name == "kidoku" {
+			c.Out.AddKidoku(s.Loc, s.Loc.Line)
+			return
+		}
+		c.Directive.Compile(s)
+
+	case ast.DTargetStmt, ast.DefineStmt, ast.DConstStmt,
 		ast.DInlineStmt, ast.DUndefStmt, ast.DSetStmt, ast.DVersionStmt:
 		c.Directive.Compile(s)
 
@@ -857,11 +1028,10 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 	//                   below), then this inner `(...)`, then the
 	//                   outer `)`. This is how complex(...)+ tuples
 	//                   like `ReadExFrames((0, intC[1]))` are encoded.
-	//   SpecialParam  — emit `<0x61 tag> ( v1 v2 … )`: the special
-	//                   marker byte (0x61, ASCII 'a'), the discriminant
-	//                   byte, then a parenthesised parameter list. This
-	//                   matches OCaml's `__special[N](args)+` shape used
-	//                   by opcodes like `gosub_with`.
+	//   SpecialParam  — emit `<0x61 tag> ( v1 v2 … )` for the general
+	//                   `__special[N](args)` shape, or `<0x61 tag> v`
+	//                   for KFN `NoParens` specials represented by the
+	//                   disassembler as `special<N>(v)`.
 	//
 	// Skipping non-SimpleParam values — as the previous implementation
 	// did — strips the entire argument from the bytecode, producing
@@ -919,12 +1089,19 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 				c.Out.AddCodeRaw(s.Loc, []byte{')'})
 				prevWasString = false
 			case ast.SpecialParam:
-				// 0x61 tag ( exprs ) — OCaml special_arg / __special.
-				c.Out.AddCodeRaw(s.Loc, []byte{0x61, byte(pp.Tag), '('})
+				// 0x61 tag followed by either a parenthesised parameter
+				// block (`__special[N]`) or inline bare params
+				// (`special<N>` / OCaml NoParens).
+				c.Out.AddCodeRaw(s.Loc, []byte{0x61, byte(pp.Tag)})
+				if !pp.NoParens {
+					c.Out.AddCodeRaw(s.Loc, []byte{'('})
+				}
 				for _, e := range pp.Exprs {
 					c.Out.EmitExprRaw(e)
 				}
-				c.Out.AddCodeRaw(s.Loc, []byte{')'})
+				if !pp.NoParens {
+					c.Out.AddCodeRaw(s.Loc, []byte{')'})
+				}
 				prevWasString = false
 			}
 		}
@@ -974,8 +1151,10 @@ func (c *Compiler) compileSelect(s ast.SelectStmt) {
 		case ast.CondSelParam:
 			conds := make([]sel.SelCond, len(sp.Conds))
 			for j, sc := range sp.Conds {
-				conds[j] = sel.SelCond{Effect: sc.Ident, Expr: sc.Arg}
-				if sc.Arg != nil {
+				conds[j] = sel.SelCond{Effect: sc.Ident, Expr: sc.Arg, Cond: sc.Cond}
+				if sc.Cond != nil {
+					conds[j].Kind = sel.CondCond
+				} else if sc.Arg != nil {
 					conds[j].Kind = sel.CondNonCond
 				} else {
 					conds[j].Kind = sel.CondFlag
@@ -1721,11 +1900,12 @@ func isStringExpr(e ast.Expr) bool {
 // We can't reuse the lexResourceText helper in codegen because that
 // returns its own internal token type. We re-tokenise here so each
 // marker is dispatched to the appropriate compileToken case, ensuring
-// every `\{Name}「…」` block produced by the disassembler ends up with
-// the same bytecode pattern OCaml emits: `22 22 81 79 22 SJIS 22 81 7a
-// 22 SJIS 22`. Anything Go-specific that compileTextStub already does
-// (kidoku, ignoreOneSpace tracking, etc.) is preserved because we go
-// through the same compileToken dispatcher.
+// every `\{Name}「…」` block produced by the disassembler keeps its
+// speaker name as native CP932 while the following dialogue text still
+// gets the quoting and transform handling expected by RealLive. Anything
+// Go-specific that compileTextStub already does (kidoku,
+// ignoreOneSpace tracking, etc.) is preserved because we go through the
+// same compileToken dispatcher.
 func (tc *textCompiler) compileResText(s string) {
 	r := []rune(s)
 	i := 0
@@ -1740,6 +1920,13 @@ func (tc *textCompiler) compileResText(s string) {
 		c := r[i]
 		// Backslash escapes
 		if c == '\\' && i+1 < len(r) {
+			if value, consumed, ok := scanRawByteEscape(r, i); ok {
+				flushText()
+				tc.setQuotes(false)
+				tc.buf = append(tc.buf, value)
+				i += consumed
+				continue
+			}
 			if value, consumed, ok := scanWaitControl(r, i); ok {
 				flushText()
 				tc.compileWaitControl(value)
@@ -1839,6 +2026,26 @@ func (tc *textCompiler) compileResText(s string) {
 		}
 	}
 	flushText()
+}
+
+func scanRawByteEscape(r []rune, start int) (byte, int, bool) {
+	if start+3 >= len(r) || r[start] != '\\' || r[start+1] != 'x' || r[start+2] != '{' {
+		return 0, 0, false
+	}
+	pos := start + 3
+	hexStart := pos
+	for pos < len(r) && r[pos] != '}' {
+		pos++
+	}
+	if pos >= len(r) || pos == hexStart {
+		return 0, 0, false
+	}
+	raw := string(r[hexStart:pos])
+	value, err := strconv.ParseUint(raw, 16, 8)
+	if err != nil {
+		return 0, 0, false
+	}
+	return byte(value), pos - start + 1, true
 }
 
 func (tc *textCompiler) isKnownResourceControl(ident string) bool {

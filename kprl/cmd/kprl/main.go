@@ -49,9 +49,10 @@ var (
 
 // General options
 var (
-	verbose = flag.Int("v", 0, "verbosity level (0-2)")
-	outdir  = flag.String("o", "", "output directory")
-	gameID  = flag.String("G", "", "game ID (LB, LBEX, CFV, FIVE, SNOW)")
+	verbose         = flag.Int("v", 0, "verbosity level (0-2)")
+	outdir          = flag.String("o", "", "output directory")
+	gameID          = flag.String("G", "", "game ID (LB, LBEX, CFV, FIVE, SNOW, ONIUTA)")
+	archiveTemplate = flag.String("template", "", "template SEEN.TXT whose trailing data is preserved when rebuilding")
 )
 
 // Disassembly options
@@ -110,9 +111,10 @@ func main() {
 
 	// Resolve game keys
 	opts := kprl.Options{
-		Verbose: *verbose,
-		OutDir:  *outdir,
-		GameID:  *gameID,
+		Verbose:         *verbose,
+		OutDir:          *outdir,
+		GameID:          *gameID,
+		TemplateArchive: *archiveTemplate,
 	}
 
 	if *gameID != "" {

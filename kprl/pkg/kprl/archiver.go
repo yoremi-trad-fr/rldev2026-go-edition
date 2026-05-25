@@ -55,10 +55,11 @@ type Archive struct {
 
 // Options controls kprl operation behavior.
 type Options struct {
-	Verbose int
-	OutDir  string
-	GameID  string
-	Keys    []gamedef.XORSubkey
+	Verbose         int
+	OutDir          string
+	GameID          string
+	Keys            []gamedef.XORSubkey
+	TemplateArchive string
 }
 
 // --- Archive detection and loading ---
@@ -251,7 +252,8 @@ func Extract(fname string, ranges []int, opts Options) error {
 		outPath := filepath.Join(opts.OutDir, outName)
 
 		// Check if already uncompressed
-		if sub.Len() >= 4 && bytecode.UncompressedHeader(sub.Read(0, 4)) {
+		hdr, hdrErr := bytecode.ReadFileHeader(sub, true)
+		if hdrErr != nil || !hdr.IsCompressed {
 			if opts.Verbose > 0 {
 				fmt.Printf("Ignoring SEEN%04d.TXT (not compressed)\n", i)
 			}
@@ -269,7 +271,6 @@ func Extract(fname string, ranges []int, opts Options) error {
 		}
 
 		// Write uncompressed header magic
-		hdr, _ := bytecode.ReadFileHeader(sub, true)
 		ucMagic := getUncompressedMagic(hdr)
 		decompressed.Write(0, ucMagic)
 
@@ -336,6 +337,7 @@ func Add(arcName string, files []string, opts Options) error {
 
 	// Load or create archive
 	var arcData *binarray.Buffer
+	var tailSource *binarray.Buffer
 	existing := make(map[int]SeenEntry)
 
 	if fileExists(arcName) {
@@ -348,13 +350,23 @@ func Add(arcName string, files []string, opts Options) error {
 			return fmt.Errorf("%s is not a valid RealLive archive", filepath.Base(arcName))
 		}
 		arcData = data
+		tailSource = data
 		if count > 0 {
-			for i := 0; i < MaxSeens; i++ {
-				entry := getSubfileInfo(data, i)
-				if entry.Length > 0 {
-					existing[i] = entry
-				}
-			}
+			collectExistingEntries(data, existing)
+		}
+	} else if opts.TemplateArchive != "" {
+		data, err := binarray.ReadFile(opts.TemplateArchive)
+		if err != nil {
+			return fmt.Errorf("cannot read template archive: %w", err)
+		}
+		count := SeenCount(data)
+		if count < 0 {
+			return fmt.Errorf("%s is not a valid RealLive archive", filepath.Base(opts.TemplateArchive))
+		}
+		arcData = data
+		tailSource = data
+		if count > 0 {
+			collectExistingEntries(data, existing)
 		}
 	} else {
 		// Create empty archive
@@ -397,7 +409,19 @@ func Add(arcName string, files []string, opts Options) error {
 		return fmt.Errorf("no files to process")
 	}
 
-	return rebuildArc(arcData, arcName, sources, opts)
+	if opts.TemplateArchive != "" {
+		data, err := binarray.ReadFile(opts.TemplateArchive)
+		if err != nil {
+			return fmt.Errorf("cannot read template archive: %w", err)
+		}
+		count := SeenCount(data)
+		if count < 0 {
+			return fmt.Errorf("%s is not a valid RealLive archive", filepath.Base(opts.TemplateArchive))
+		}
+		tailSource = data
+	}
+
+	return rebuildArc(arcData, arcName, sources, opts, tailSource)
 }
 
 // Remove removes entries from an archive.
@@ -441,14 +465,14 @@ func Remove(arcName string, ranges []int, opts Options) error {
 		return writeEmptyArc(arcName)
 	}
 
-	return rebuildArc(arc.Data, arcName, sources, opts)
+	return rebuildArc(arc.Data, arcName, sources, opts, arc.Data)
 }
 
 // --- Internal helpers ---
 
 // rebuildArc reconstructs the archive file from sources.
 // sources maps SEEN index -> SeenEntry (keep from existing) or string (read from file).
-func rebuildArc(arc *binarray.Buffer, arcName string, sources map[int]interface{}, opts Options) error {
+func rebuildArc(arc *binarray.Buffer, arcName string, sources map[int]interface{}, opts Options, tailSource *binarray.Buffer) error {
 	// Create temp file
 	tmpName := arcName + ".tmp"
 	oc, err := os.Create(tmpName)
@@ -511,6 +535,17 @@ func rebuildArc(arc *binarray.Buffer, arcName string, sources map[int]interface{
 		currentOffset += n
 	}
 
+	if tail := archiveTrailingData(tailSource); len(tail) > 0 {
+		if opts.Verbose > 0 {
+			fmt.Printf("Preserving %d trailing byte(s) from template archive\n", len(tail))
+		}
+		n, err := oc.Write(tail)
+		if err != nil {
+			return fmt.Errorf("failed to write archive trailer: %w", err)
+		}
+		currentOffset += n
+	}
+
 	// Write index table
 	for i := 0; i < MaxSeens; i++ {
 		entry := offsets[i]
@@ -536,6 +571,41 @@ func rebuildArc(arc *binarray.Buffer, arcName string, sources map[int]interface{
 	}
 
 	return nil
+}
+
+func collectExistingEntries(data *binarray.Buffer, existing map[int]SeenEntry) {
+	for i := 0; i < MaxSeens; i++ {
+		entry := getSubfileInfo(data, i)
+		if entry.Length > 0 {
+			existing[i] = entry
+		}
+	}
+}
+
+func archiveDataEnd(arc *binarray.Buffer) int {
+	if arc == nil || arc.Len() < IndexSize {
+		return -1
+	}
+	end := IndexSize
+	for i := 0; i < MaxSeens; i++ {
+		entry := getSubfileInfo(arc, i)
+		if entry.Length <= 0 {
+			continue
+		}
+		entryEnd := entry.Offset + entry.Length
+		if entry.Offset >= IndexSize && entryEnd <= arc.Len() && entryEnd > end {
+			end = entryEnd
+		}
+	}
+	return end
+}
+
+func archiveTrailingData(arc *binarray.Buffer) []byte {
+	end := archiveDataEnd(arc)
+	if end < 0 || end >= arc.Len() {
+		return nil
+	}
+	return arc.Data[end:]
 }
 
 // readAndCompress reads a bytecode file and compresses it if needed.

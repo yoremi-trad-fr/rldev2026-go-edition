@@ -55,8 +55,10 @@ call :build 1 kprl16 ".\kprl\cmd\kprl" || goto :error
 call :build 2 rlc2026 ".\rlc\cmd\rlc" || goto :error
 call :build 3 rlxml ".\rlxml\cmd\rlxml" || goto :error
 call :build 4 vaconv ".\vaconv\cmd\vaconv" || goto :error
-if /I "%GOOS%"=="windows" (
+if /I "%GOOS%"=="windows" if exist "%ROOT%\kprl\cmd\reallive-debug-launcher" (
     call :build_debug 5 reallive-debug-launcher-v2 ".\kprl\cmd\reallive-debug-launcher" || goto :error
+) else if /I "%GOOS%"=="windows" (
+    echo [5/5] Skipping reallive-debug-launcher-v2; source directory not present.
 ) else (
     echo [5/5] Skipping reallive-debug-launcher-v2; Windows-only helper.
 )
