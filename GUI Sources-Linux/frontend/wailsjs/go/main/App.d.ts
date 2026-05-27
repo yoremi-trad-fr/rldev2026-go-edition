@@ -3,7 +3,7 @@
 
 export function DefaultKFN():Promise<string>;
 
-export function RldevArchive(arg1:string,arg2:string):Promise<string>;
+export function RldevArchive(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function RldevCompile(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:boolean,arg8:string):Promise<string>;
 

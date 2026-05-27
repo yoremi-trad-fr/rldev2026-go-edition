@@ -1,4 +1,4 @@
-### Status update: `25/05/2026`
+### Status update: `27/05/2026`
 <table>
   <tr>
     <td align="center" width="100%">
@@ -7,6 +7,7 @@
   </tr>
 </table>
 
+Update : 27/05/2026 : Clannad Side Stories Steam (2011) now supported
 Update : 25/05/2026 : Oni uta + Royal Nekomimi Academy + Clannad Steam (2015) now supported
 Update : 24/05/2026 : AIR is now supported - Creating a list of validated features
 
@@ -40,6 +41,7 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 ### -Clannad (2004)
 ### -Clannad Full Voice (2007)
 ### -Clannad Steam (2015) 
+### -Clannad Side Stories Steam (2011)
 ### -AIR 18+ (2005)
 ### -Oni Uta (not tested, Kotsuider contribution)
 ### -Royal Nekomimi Academy (not tested, CarouselAether contribution)
@@ -53,9 +55,9 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 </table>
 
 
-### Missing original ISOs: I’m looking for these ISOs for my testing. 
+### Missing original ISOs: I’m looking for these ISOs for my testing.
 #### ( If you own the physical version of the game, you could also create an ISO from it – that would be a huge help!)
- 
+
 1-Tomoyo After 18+ (2005)
 
 2-Harmonia 2016 (non steam)
@@ -86,7 +88,6 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### Tomoyo After-Steam (2011)
 
-### Clannad Side Stories-Steam (2011)
 
 ### Kud Wafter (2010 18+)
 
@@ -155,6 +156,16 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 OUTDIR=bin/linux-amd64 bash build-rldev.sh
 
 Windows builds embed version metadata and an application manifest into the four CLI executables.
 
+Build GUI Linux
+
+
+cd "GUI Sources-Linux"
+
+cd frontend
+npm install
+cd ..
+
+wails build -clean -tags webkit2_41
 
 <table>
   <tr>
@@ -176,6 +187,7 @@ Windows builds embed version metadata and an application manifest into the four 
 * Add support for titles released after the original OCaml Rldev implementation
 * Improve engine compatibility and tooling
 * Expand modern platform support
+*Tool for alignement utf Ocaml / GO
 
 ---
 

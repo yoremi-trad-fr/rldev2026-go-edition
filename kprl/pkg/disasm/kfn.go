@@ -214,8 +214,12 @@ func ParseKFN(r io.Reader) (*FuncRegistry, error) {
 				def := FuncDef{Name: name, Ccode: ccode}
 				def.Flags = append(def.Flags, ccodeFlags...)
 
-				// Parse flags from the parenthesized hint
-				if strings.Contains(trimmed, "(skip ") {
+				// Parse flags from the parenthesized hint.
+				// Match exact hint tokens: `(store goto)` carries one
+				// out-of-band pointer after the argument list, while
+				// `(gotos)` opcodes carry a whole label table and are
+				// handled by their dedicated readers.
+				if hasHintToken(trimmed, "goto") {
 					def.Flags = append(def.Flags, FlagIsGoto)
 				}
 				// PushStore: function leaves its return value on the
@@ -269,6 +273,25 @@ func ParseKFN(r io.Reader) (*FuncRegistry, error) {
 	}
 
 	return reg, scanner.Err()
+}
+
+func hasHintToken(line, token string) bool {
+	opIdx := strings.Index(line, "<")
+	if opIdx < 0 {
+		return false
+	}
+	hints := line[:opIdx]
+	start := strings.Index(hints, "(")
+	end := strings.Index(hints, ")")
+	if start < 0 || end < start {
+		return false
+	}
+	for _, field := range strings.Fields(hints[start+1 : end]) {
+		if field == token {
+			return true
+		}
+	}
+	return false
 }
 
 // extractFunName extracts the function identifier from a 'fun' line.

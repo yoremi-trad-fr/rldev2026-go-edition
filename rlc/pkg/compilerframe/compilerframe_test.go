@@ -75,6 +75,28 @@ func TestParseHalt(t *testing.T) {
 	}
 }
 
+func TestParseEofThenHaltPreservesTrailerAndHalt(t *testing.T) {
+	c := newComp()
+	c.EmitEOFMarkers = true
+	c.Parse([]ast.Stmt{
+		ast.EOFStmt{Loc: ast.Loc{File: "t", Line: 10}},
+		ast.HaltStmt{Loc: ast.Loc{File: "t", Line: 11}},
+	})
+
+	if !c.SeenEndEmitted {
+		t.Fatal("eof marker was not recorded")
+	}
+	if len(c.Out.IR) != 2 {
+		t.Fatalf("IR length = %d, want trailer + halt", len(c.Out.IR))
+	}
+	if !bytes.Equal(c.Out.IR[0].Bytes, SeenEndTrailerBytes()) {
+		t.Fatalf("first IR is not SeenEnd trailer")
+	}
+	if !bytes.Equal(c.Out.IR[1].Bytes, []byte{0x00}) {
+		t.Fatalf("second IR = % x, want halt", c.Out.IR[1].Bytes)
+	}
+}
+
 func TestParseDirective(t *testing.T) {
 	c := newComp()
 	c.Parse([]ast.Stmt{ast.DefineStmt{Ident: "X", Value: ast.IntLit{Val: 42}}})
@@ -647,6 +669,45 @@ func TestFunctionCallSeparatesStringVarThenUnquotedStringParam(t *testing.T) {
 	got := compilerOutputBytes(c)
 	if !bytes.Contains(got, want) {
 		t.Fatalf("string-var + unquoted string args missing separator:\n got  % x\n want % x", got, want)
+	}
+}
+
+func TestFunctionCallSeparatesIntThenUnaryParam(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "UnaryParamForTest",
+		OpType:   1,
+		OpModule: 10,
+		OpCode:   6,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+			Params: []kfn.Parameter{
+				{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FTagged}, Tag: "first"},
+				{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FTagged}, Tag: "second"},
+			},
+		}},
+	})
+	loc := ast.Loc{File: "t", Line: 1}
+	c.Parse([]ast.Stmt{ast.FuncCallStmt{
+		Loc:   loc,
+		Ident: "UnaryParamForTest",
+		Params: []ast.Param{
+			ast.SimpleParam{Loc: loc, Expr: ast.IntLit{Loc: loc, Val: 7}},
+			ast.SimpleParam{Loc: loc, Expr: ast.UnaryExpr{Loc: loc, Op: ast.UnarySub, Val: ast.IntLit{Loc: loc, Val: 1}}},
+		},
+	}})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	wantArgs := append([]byte{'('}, codegen.EncodeInt32(7)...)
+	wantArgs = append(wantArgs, ',')
+	wantArgs = append(wantArgs, '\\', codegen.OpCode(ast.OpSub))
+	wantArgs = append(wantArgs, codegen.EncodeInt32(1)...)
+	wantArgs = append(wantArgs, ')')
+	want := append(codegen.EncodeOpcode(1, 10, 6, 2, 0), wantArgs...)
+	got := compilerOutputBytes(c)
+	if !bytes.Contains(got, want) {
+		t.Fatalf("int + unary args missing separator:\n got  % x\n want % x", got, want)
 	}
 }
 

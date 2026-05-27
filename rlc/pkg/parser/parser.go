@@ -95,7 +95,7 @@ func (p *Parser) ParseExpression() ast.Expr {
 
 func (p *Parser) parseStatements() []ast.Stmt {
 	var stmts []ast.Stmt
-	for p.cur.Type != token.EOF && p.cur.Type != token.DEOF {
+	for p.cur.Type != token.EOF {
 		if p.match(token.COMMA) {
 			continue
 		}
@@ -134,6 +134,9 @@ func (p *Parser) parseStatement() ast.Stmt {
 	case token.DHALT:
 		p.advance()
 		return ast.HaltStmt{Loc: loc}
+	case token.DEOF:
+		p.advance()
+		return ast.EOFStmt{Loc: loc}
 	case token.BREAK:
 		p.advance()
 		return ast.BreakStmt{Loc: loc}
@@ -1218,7 +1221,8 @@ func isGotoLike(name string) bool {
 	switch name {
 	case "goto", "gosub",
 		"goto_if", "goto_unless",
-		"gosub_if", "gosub_unless":
+		"gosub_if", "gosub_unless",
+		"gosub_with", "GOSUBP":
 		return true
 	}
 	return false

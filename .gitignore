@@ -7,6 +7,10 @@
 .codex-check/
 .codex-go-cache/
 _codex_*/
+Games Tests files/
+ResCodex/
+bin/
+Releases/
 GUI Sources/.gocache-gui/
 GUI Sources/.gotmp-gui/
 GUI Sources/frontend/.npm-cache/

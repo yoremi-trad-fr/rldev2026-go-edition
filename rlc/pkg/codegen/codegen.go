@@ -352,10 +352,6 @@ func (o *Output) EmitExprRaw(e ast.Expr) {
 		o.EmitExprRaw(x.RHS)
 	case ast.UnaryExpr:
 		if x.Op == ast.UnarySub {
-			if lit, ok := x.Val.(ast.IntLit); ok {
-				o.AddCodeRaw(x.Loc, EncodeInt32(-lit.Val))
-				return
-			}
 			o.AddCodeRaw(x.Loc, []byte{'\\', OpCode(ast.OpSub)})
 			o.EmitExprRaw(x.Val)
 		}
@@ -1197,6 +1193,7 @@ func (o *Output) Generate(opts GenerateOptions) ([]byte, error) {
 	// --- Phase 2: Compute label positions and bytecode length ---
 	labelPos := make(map[string]int)
 	entrypoints := make([]int, 100)
+	entrypointAssigned := make([]bool, 100)
 	var kidokuTable []int
 	bytecodeLen := 0
 
@@ -1212,13 +1209,17 @@ func (o *Output) Generate(opts GenerateOptions) ([]byte, error) {
 			kidokuTable = append(kidokuTable, ir.Index)
 			bytecodeLen += 1 + spec.kidokuLen
 		case IREntrypoint:
-			entrypoints[ir.Index] = bytecodeLen
+			if ir.Index >= 0 && ir.Index < len(entrypoints) {
+				entrypoints[ir.Index] = bytecodeLen
+				entrypointAssigned[ir.Index] = true
+			}
 			kidokuTable = append(kidokuTable, ir.Index+1_000_000)
 			bytecodeLen += 1 + spec.kidokuLen
 		case IRLineref:
 			bytecodeLen += 1 + spec.linenoLen
 		}
 	}
+	fillUnassignedEntrypoints(entrypoints, entrypointAssigned)
 
 	// --- Phase 3: Build bytecode buffer ---
 	// Buffer starts at offset 8 to leave room for compressed header
@@ -1305,6 +1306,28 @@ func (o *Output) Generate(opts GenerateOptions) ([]byte, error) {
 		return buildAVG2000(bytecode, bytecodeLen, entrypoints, kidokuTable, opts)
 	}
 	return buildRealLive(bytecode, bytecodeLen, compressedLen, entrypoints, kidokuTable, opts)
+}
+
+func fillUnassignedEntrypoints(entrypoints []int, assigned []bool) {
+	if len(entrypoints) == 0 || len(assigned) == 0 {
+		return
+	}
+	defaultEntry := 0
+	if assigned[0] {
+		defaultEntry = entrypoints[0]
+	} else {
+		for i := 0; i < len(entrypoints) && i < len(assigned); i++ {
+			if assigned[i] {
+				defaultEntry = entrypoints[i]
+				break
+			}
+		}
+	}
+	for i := 0; i < len(entrypoints) && i < len(assigned); i++ {
+		if !assigned[i] {
+			entrypoints[i] = defaultEntry
+		}
+	}
 }
 
 // buildRealLive creates a RealLive format .TXT (SEEN) file.

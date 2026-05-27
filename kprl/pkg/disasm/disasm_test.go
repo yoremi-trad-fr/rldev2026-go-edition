@@ -213,6 +213,59 @@ func TestFuncRegistryLookup(t *testing.T) {
 	}
 }
 
+func TestKFNHintGotoToken(t *testing.T) {
+	if !hasHintToken("fun gosub_with (store goto) <0:Jmp:00016, 0> (...)", "goto") {
+		t.Fatal("store goto hint should expose a goto pointer")
+	}
+	if hasHintToken("fun goto_on (skip gotos) <0:Jmp:00003, 0> (...)", "goto") {
+		t.Fatal("gotos table hint must not be treated as a single goto pointer")
+	}
+}
+
+func TestReadFunctionGenericGotoPointer(t *testing.T) {
+	data := []byte{
+		'(',
+		'a', 0x00,
+		'$', 0x0b, '[',
+		'$', 0xff, 0x01, 0x00, 0x00, 0x00,
+		']',
+		')',
+		0x78, 0x56, 0x34, 0x12,
+	}
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	result := &DisassemblyResult{Pointers: make(map[int]bool)}
+	reg := NewFuncRegistry()
+	reg.Register("0:001:00016,0", FuncDef{
+		Name:       "gosub_with",
+		Flags:      []FuncFlag{FlagPushStore, FlagIsGoto},
+		Prototypes: [][]ParamType{{ParamAny}},
+	})
+	opts := DefaultOptions()
+	opts.FuncReg = reg
+
+	op := Opcode{Type: 0, Module: 1, Function: 16, Overload: 0}
+	if err := readFunction(r, result, 0, op, 1, opts); err != nil {
+		t.Fatalf("readFunction() error: %v", err)
+	}
+	if r.Pos() != len(data) {
+		t.Fatalf("reader pos = %d, want %d", r.Pos(), len(data))
+	}
+	if !result.Pointers[0x12345678] {
+		t.Fatalf("pointer target was not registered: %#v", result.Pointers)
+	}
+	if len(result.Commands) != 1 || len(result.Commands[0].Kepago) != 2 {
+		t.Fatalf("command = %#v", result.Commands)
+	}
+	got, ok := result.Commands[0].Kepago[1].(ElemString)
+	if !ok {
+		t.Fatalf("second elem = %#v", result.Commands[0].Kepago[1])
+	}
+	want := "gosub_with (special<0>(intL[1])) @@PTR=305419896@@"
+	if got.Value != want {
+		t.Fatalf("command = %q, want %q", got.Value, want)
+	}
+}
+
 func TestReadSelectCond(t *testing.T) {
 	data := []byte{
 		'(',

@@ -1,6 +1,6 @@
 # RLdev2026-Go function validation register
 
-Last update: 2026-05-24
+Last update: 2026-05-27
 
 This register tracks opcode/function signatures that have been checked against
 known-good game corpuses. It is meant to avoid re-auditing the same RealLive
@@ -65,13 +65,87 @@ Findings fixed from AIR debugging:
 - The `pause` immediately following static text output should not receive an
   extra debug line marker.
 
+## CLANNAD Steam 2015
+
+- Interpreter: `SiglusEngine_Steam.exe`, RealLive file version 1.6.7.3.
+- Corpus: 235 English SJIS `.org` files and 235 English UTF-8 `.org` files
+  compiled with the Steam `Gameexe.ini` and `reallive.kfn`; the 235 French
+  `.org` files were scanned for the same function/opcode shapes.
+- Status: user gameplay validation on 2026-05-26; static compiler audit passed
+  for both English corpuses with no compile failures and no warning-like output.
+
+Steam-specific audit notes:
+
+| Area | Evidence | Status |
+| --- | --- | --- |
+| Entry/kidoku marker | `Gameexe.ini` provides `KIDOKU_TYPE`; interpreter version is 1.6.7.3. | fixed and validated in game |
+| Steam interpreter detection | `SiglusEngine_Steam.exe` accepted by CLI and GUI interpreter lookup. | fixed |
+| Raw control textout | `SEEN9600` contains three preserved `raw #ff #01 endraw` stubs. | expected, must be retained |
+| Raw op fallback | Seven `op<...>` entries remain in each Steam extraction: two `Shl` opcodes and five `35:035:21072` calls. | preserved; no compile failure |
+| Resource byte escapes | Resource strings containing raw byte escapes no longer create empty quote runs. | fixed |
+| String argument separators | Unquoted string arguments after another argument/operator receive a separator; quoted ASCII strings are unchanged. | fixed |
+
+Findings fixed from CLANNAD Steam debugging:
+
+- Steam builds must read `KIDOKU_TYPE` from `Gameexe.ini` and feed it into
+  bytecode generation; relying only on the default marker can desynchronise the
+  entry table and crash the engine.
+- `SiglusEngine_Steam.exe` is a valid RealLive-compatible interpreter source for
+  PE version extraction.
+- Default RealLive generation version is 1.2.7.0 when no interpreter or explicit
+  target version is provided.
+- `raw #ff #01 endraw` textout stubs in `SEEN9600` are intentional bytecode and
+  must not be dropped.
+- String parameters that compile to unquoted bytes need comma separators when
+  they are not the first emitted parameter.
+
+## CLANNAD Side Stories Steam 2011
+
+- Interpreter: `RealLiveEn.exe`, RealLive file version 1.6.6.8.
+- Corpus: 22 Steam `.org` files extracted from the original `SEEN.TXT` with
+  `Gameexe.ini`, `RealLiveEn.exe`, and `reallive.kfn`.
+- Status: user gameplay validation on 2026-05-26 and 2026-05-27; both metadata
+  and no-metadata rebuilt archives launch and run past the first story start.
+
+Side Stories audit notes:
+
+| Area | Evidence | Status |
+| --- | --- | --- |
+| Story bootstrap | `SEEN0001` calls `SEEN2000` before the first voice line. | validated in game |
+| `gosub_with` pointer | `SEEN2000` contains `intC[1] = gosub_with(...) @14` and `intL[0] = gosub_with(...) @14`. | fixed; payload byte-identical |
+| EOF trailer | Side Stories files keep `eof` followed by raw `halt`. | fixed and preserved |
+| Entrypoint table | Unassigned entrypoints mirror the default entrypoint instead of staying zero. | fixed |
+| Resource indexing | Go extraction keeps `*Bo\shake{2}` and `nk*` as separate resources in `SEEN0001`; `.org` and `.utf` files must stay from the same extraction/indexing pass. | documented |
+| Round-trip audit | 17 of 22 files are payload-identical to the original; the remaining 5 redump stably and differ only in known string/resource serialization shapes. | accepted |
+
+Findings fixed from CLANNAD Side Stories debugging:
+
+- KFN hints containing `(store goto)` must set the generic goto-pointer flag.
+  Without this, `gosub_with` leaves its trailing 4-byte pointer in the stream;
+  the disassembler then emits bogus `halt` commands and a detached `= store`,
+  corrupting the early story bootstrap.
+- The compiler parser must allow trailing labels on `gosub_with`/`GOSUBP`, so
+  `intC[1] = gosub_with(...) @14` recompiles to the original pointer form.
+- Source-level `eof` must be preserved instead of stopping parsing, and a final
+  raw `halt` after the `SeenEnd` trailer must remain present.
+- Unassigned RealLive entrypoint slots should be filled from entrypoint 0, or
+  the first defined entrypoint when slot 0 is absent.
+- Do not mix OCaml-fused `.utf` resources with Go-extracted `.org` files unless
+  the resource indices have been checked. `SEEN0001` has a known split around
+  `*Bo\shake{2}` / `nk*`; fusing it shifts every following text resource by one.
+
 ## Current compatibility rules
 
 | Rule | Scope | Source |
 | --- | --- | --- |
 | `itoa_ws`, `itoa_s`, `itoa_w`, `itoa` with 3 encoded args use overload 0 before RealLive 1.2.9.0 and overload 1 from 1.2.9.0 onward. | Version-gated | CLANNAD 1.2.3.5, AIR 1.2.9.5 |
 | `strsub` and `strrsub` with 3 encoded args use overload 1. | General until contradicted by a later corpus | CLANNAD 1.2.3.5 |
-| Unknown interpreter version keeps the normal KFN/prototype selection. | Safety fallback | Compiler policy |
+| Steam/late RealLive builds should use `KIDOKU_TYPE` from `Gameexe.ini` when present. | Version and game config gated | CLANNAD Steam 1.6.7.3 |
+| `raw #ff #01 endraw` textout stubs are bytecode-preserving, not display text. | Known Steam case | CLANNAD Steam `SEEN9600` |
+| Unquoted string argument bytes need a separator after a prior argument/operator. | General string emission rule | CLANNAD Steam |
+| KFN `(store goto)` functions carry a trailing pointer like ordinary goto/gosub calls. | General KFN rule | CLANNAD Side Stories `SEEN2000` |
+| `eof` plus a following raw `halt` is a meaningful trailer shape and must be preserved. | Steam/late RealLive files | CLANNAD Side Stories |
+| Unknown interpreter version keeps the normal KFN/prototype selection, with default generation version 1.2.7.0. | Safety fallback | Compiler policy |
 
 ## To expand
 

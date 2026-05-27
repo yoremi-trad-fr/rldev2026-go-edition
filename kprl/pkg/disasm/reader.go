@@ -1313,12 +1313,14 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 
 	funcName := ""
 	var hasPushStore bool
+	var hasGotoPointer bool
 	var ccode string
 	var ccodeFlags []FuncFlag
 	if opts.FuncReg != nil {
 		if def, ok := opts.FuncReg.LookupOpcode(op); ok {
 			funcName = def.Name
 			hasPushStore = def.HasFlag(FlagPushStore)
+			hasGotoPointer = def.HasFlag(FlagIsGoto)
 			ccode = def.Ccode
 			ccodeFlags = def.Flags
 		}
@@ -1365,6 +1367,16 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 			sb.WriteString(arg)
 		}
 		sb.WriteByte(')')
+	}
+	if hasGotoPointer {
+		target, err := r.ReadInt32()
+		if err != nil {
+			return err
+		}
+		if result.Pointers != nil {
+			result.Pointers[int(target)] = true
+		}
+		fmt.Fprintf(&sb, " @@PTR=%d@@", target)
 	}
 
 	// Build the command. When the function has PushStore, prepend an

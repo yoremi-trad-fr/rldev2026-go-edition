@@ -25,6 +25,7 @@
   let consoleEl;
 
   let rlSeenFile = '';
+  let rlTemplateSeenFile = '';
   let rlOrgFile = '';
   let rlOrgDir = '';
   let rlCompileBatch = false;
@@ -107,6 +108,10 @@
     const f = await SelectSaveFile('Save SEEN.txt as', 'SEEN.TXT', '*.txt;*.TXT', 'SEEN archives');
     if (f) rlSeenFile = f;
   }
+  async function browseRlTemplateSeen() {
+    const f = await SelectFile('Select original/template SEEN.txt', '*.txt;*.TXT', 'SEEN archives');
+    if (f) rlTemplateSeenFile = f;
+  }
   async function browseRlOrg() {
     if (rlCompileBatch) {
       const d = await SelectDirectory('Select folder with .org / .ke files');
@@ -163,7 +168,7 @@
     run(() => RldevExtract(rlSeenFile, rlOutputDir));
   }
   function startRlArchive() {
-    run(() => RldevArchive(rlSeenFile, rlOutputDir));
+    run(() => RldevArchive(rlSeenFile, rlOutputDir, rlTemplateSeenFile));
   }
   function startRlList() {
     run(() => RldevList(rlSeenFile));
@@ -240,6 +245,7 @@
         <div class="form-title">4 — Rebuild SEEN.txt</div>
         <div class="form-hint" style="margin-bottom:10px">Assemble des fichiers .TXT compilés dans une archive SEEN.txt.</div>
         <div class="form-group"><label>Input folder (*.TXT) :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
+        <div class="form-group"><label>Original/template SEEN.txt :</label><div class="form-row"><input type="text" bind:value={rlTemplateSeenFile} readonly placeholder="Optionnel, requis pour Clannad Steam" /><button class="btn" on:click={browseRlTemplateSeen}>Select</button></div></div>
         <div class="form-group"><label>Output SEEN.txt :</label><div class="form-row"><input type="text" bind:value={rlSeenFile} readonly /><button class="btn" on:click={browseRlSeenSave}>Select</button></div></div>
         <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startRlArchive} disabled={!rlSeenFile || !rlOutputDir}>Rebuild Archive</button>{/if}</div>
 

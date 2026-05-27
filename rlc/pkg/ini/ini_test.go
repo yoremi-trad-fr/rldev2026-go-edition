@@ -284,6 +284,17 @@ func TestParseDotIdentDotIntDotIdent(t *testing.T) {
 	}
 }
 
+func TestParseBtnObjActionKey(t *testing.T) {
+	tbl := parseStr("#BTNOBJ.ACTION.000.NORMAL = 0, 1, 0, 0, 255, 0, 0")
+	v := tbl.Find("BTNOBJ.ACTION.000.NORMAL")
+	if len(v) != 7 {
+		t.Fatalf("BTNOBJ.ACTION.000.NORMAL values = %d, want 7", len(v))
+	}
+	if v[4].Kind != VInteger || v[4].Int != 255 {
+		t.Fatalf("fifth value = %#v, want integer 255", v[4])
+	}
+}
+
 func TestParseDotIntDotIdentDotInt(t *testing.T) {
 	// #IDENT.NNN.TEXT.NNN = value
 	tbl := parseStr("#DATA.010.ENTRY.005 = 42")

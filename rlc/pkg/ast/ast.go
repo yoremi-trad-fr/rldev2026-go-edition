@@ -468,6 +468,7 @@ type Stmt interface {
 // --- Simple statements ---
 
 type HaltStmt struct{ Loc Loc }
+type EOFStmt struct{ Loc Loc }
 type BreakStmt struct{ Loc Loc }
 type ContinueStmt struct{ Loc Loc }
 
@@ -760,6 +761,7 @@ func (DEndifStmt) difCont() {}
 // --- Stmt interface markers ---
 
 func (HaltStmt) stmtNode()      {}
+func (EOFStmt) stmtNode()       {}
 func (BreakStmt) stmtNode()     {}
 func (ContinueStmt) stmtNode()  {}
 func (LabelStmt) stmtNode()     {}
@@ -794,6 +796,7 @@ func (DForStmt) stmtNode()      {}
 func (DIfStmt) stmtNode()       {}
 
 func (s HaltStmt) StmtLoc() Loc      { return s.Loc }
+func (s EOFStmt) StmtLoc() Loc       { return s.Loc }
 func (s BreakStmt) StmtLoc() Loc     { return s.Loc }
 func (s ContinueStmt) StmtLoc() Loc  { return s.Loc }
 func (s LabelStmt) StmtLoc() Loc     { return s.Loc }

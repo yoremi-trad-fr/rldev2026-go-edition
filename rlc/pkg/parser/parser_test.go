@@ -31,6 +31,19 @@ func TestParseHalt(t *testing.T) {
 	}
 }
 
+func TestParseEofThenHalt(t *testing.T) {
+	sf := parse("eof\nhalt")
+	if len(sf.Stmts) != 2 {
+		t.Fatalf("eof/halt: got %d stmts", len(sf.Stmts))
+	}
+	if _, ok := sf.Stmts[0].(ast.EOFStmt); !ok {
+		t.Fatalf("first stmt = %T, want EOFStmt", sf.Stmts[0])
+	}
+	if _, ok := sf.Stmts[1].(ast.HaltStmt); !ok {
+		t.Fatalf("second stmt = %T, want HaltStmt", sf.Stmts[1])
+	}
+}
+
 func TestParseBreakContinue(t *testing.T) {
 	sf := parse("break\ncontinue")
 	if len(sf.Stmts) != 2 {
@@ -289,6 +302,24 @@ func TestParseFuncCallWithLabel(t *testing.T) {
 		t.Fatalf("got %d stmts", len(sf.Stmts))
 	}
 	// goto is parsed as expression then as return/funccall stmt
+}
+
+func TestParseGosubWithLabel(t *testing.T) {
+	sf := parse("intC[1] = gosub_with (special<0>(intL[1])) @14")
+	if len(sf.Stmts) != 1 {
+		t.Fatalf("got %d stmts", len(sf.Stmts))
+	}
+	as, ok := sf.Stmts[0].(ast.AssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T", sf.Stmts[0])
+	}
+	fc, ok := as.Expr.(ast.FuncCall)
+	if !ok {
+		t.Fatalf("rhs = %T", as.Expr)
+	}
+	if fc.Label == nil || fc.Label.Ident != "14" {
+		t.Fatalf("label = %#v", fc.Label)
+	}
 }
 
 func TestParseIf(t *testing.T) {

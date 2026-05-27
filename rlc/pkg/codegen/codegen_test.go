@@ -162,10 +162,12 @@ func TestOutputEmitExprInt(t *testing.T) {
 func TestOutputEmitExprNegativeIntLiteral(t *testing.T) {
 	o := NewOutput()
 	o.EmitExpr(ast.UnaryExpr{Op: ast.UnarySub, Val: ast.IntLit{Val: 1}})
-	if o.Length() != 1 {
-		t.Fatalf("length: %d", o.Length())
+	var got []byte
+	for _, ir := range o.IR {
+		got = append(got, ir.Bytes...)
 	}
-	if got, want := o.IR[0].Bytes, EncodeInt32(-1); !bytes.Equal(got, want) {
+	want := append([]byte{'\\', OpCode(ast.OpSub)}, EncodeInt32(1)...)
+	if !bytes.Equal(got, want) {
 		t.Errorf("negative literal bytes: got % x, want % x", got, want)
 	}
 }
@@ -566,6 +568,28 @@ func TestGenerateMultipleEntrypoints(t *testing.T) {
 	ep1 := binary.LittleEndian.Uint32(data[0x38:0x3c])
 	if ep1 <= ep0 {
 		t.Errorf("ep1 (%d) should be > ep0 (%d)", ep1, ep0)
+	}
+}
+
+func TestGenerateFillsUnassignedEntrypointsFromDefault(t *testing.T) {
+	o := NewOutput()
+	o.AddLine(ast.Loc{File: "t", Line: 7})
+	o.AddEntrypoint(0)
+	o.AddCode(ast.Nowhere, []byte{0x00})
+
+	data, err := o.Generate(DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ep0 := binary.LittleEndian.Uint32(data[0x34:0x38])
+	if ep0 == 0 {
+		t.Fatal("test setup expected entrypoint 0 to be non-zero")
+	}
+	for _, off := range []int{0x38, 0x3c, 0x34 + 99*4} {
+		if got := binary.LittleEndian.Uint32(data[off : off+4]); got != ep0 {
+			t.Fatalf("entrypoint at 0x%x = %d, want default %d", off, got, ep0)
+		}
 	}
 }
 

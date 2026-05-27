@@ -424,7 +424,7 @@ func (a *App) RldevExtract(seenFile, outputDir string) string {
 	return ""
 }
 
-func (a *App) RldevArchive(outputSeen, inputDir string) string {
+func (a *App) RldevArchive(outputSeen, inputDir, templateSeen string) string {
 	a.log("========================================")
 	a.log("  RLdev - Reconstruction SEEN.txt")
 	a.log("========================================")
@@ -452,7 +452,12 @@ func (a *App) RldevArchive(outputSeen, inputDir string) string {
 		return a.failIf(fmt.Errorf("aucun fichier .TXT trouve dans %s", inputDir))
 	}
 
-	args := []string{"-a", outputSeen}
+	args := []string{"-a"}
+	if strings.TrimSpace(templateSeen) != "" {
+		args = append(args, "-template", templateSeen)
+		a.log("Template SEEN.txt: " + templateSeen)
+	}
+	args = append(args, outputSeen)
 	args = append(args, files...)
 	if err := a.runTool("kprl", args...); err != nil {
 		return err.Error()
@@ -463,10 +468,11 @@ func (a *App) RldevArchive(outputSeen, inputDir string) string {
 
 func appendTransformArgs(args []string, outputTransform string, forceTransform bool) []string {
 	outputTransform = strings.TrimSpace(outputTransform)
-	if outputTransform != "" && !strings.EqualFold(outputTransform, "NONE") {
+	hasTransform := outputTransform != "" && !strings.EqualFold(outputTransform, "NONE")
+	if hasTransform {
 		args = append(args, "-x", outputTransform)
 	}
-	if forceTransform {
+	if hasTransform && forceTransform {
 		args = append(args, "--force-transform")
 	}
 	return args

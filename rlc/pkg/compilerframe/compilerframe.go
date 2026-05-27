@@ -53,10 +53,28 @@ type Compiler struct {
 	breakStack         []string // break targets (label idents)
 	continueStack      []string // continue targets (label idents)
 	noLineForNextPause bool
+	afterEOFMarker     bool
+
+	// EmitEOFMarkers controls whether the source-level `eof` marker writes
+	// the SeenEnd trailer. The CLI wires this to debug-info generation.
+	EmitEOFMarkers bool
+	SeenEndEmitted bool
 
 	Errors   []error
 	Warnings []string
 	Verbose  int
+}
+
+const seenEndTrailer = "" +
+	"\x82\x72\x82\x85\x82\x85\x82\x8e\x82\x64\x82\x8e\x82\x84" +
+	"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff" +
+	"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+
+// SeenEndTrailerBytes returns the canonical RealLive SeenEnd marker. Disasm
+// writes this marker as `eof`; keeping it source-addressable preserves scripts
+// that intentionally place a final `halt` after the trailer.
+func SeenEndTrailerBytes() []byte {
+	return []byte(seenEndTrailer)
 }
 
 // New creates a fully-wired Compiler.
@@ -70,6 +88,7 @@ func New(reg *kfn.Registry, iniTable *ini.Table) *Compiler {
 		Mem: mem, Out: out, Norm: norm,
 		Intrin: intrinsic.New(mem),
 		Reg:    reg, Ini: iniTable, State: state,
+		EmitEOFMarkers: true,
 	}
 	out.NativeSpeakerTags = iniTable.HasNamae()
 	c.Directive = &directive.Compiler{
@@ -211,6 +230,11 @@ func (c *Compiler) HasErrors() bool { return len(c.Errors) > 0 }
 func (c *Compiler) ParseElt(stmt ast.Stmt) {
 	if c.noLineForNextPause && !isPauseStmt(stmt) {
 		c.noLineForNextPause = false
+	}
+	if c.afterEOFMarker {
+		if _, ok := stmt.(ast.HaltStmt); !ok {
+			c.afterEOFMarker = false
+		}
 	}
 
 	// 1. Structures: if/while/for/repeat/case/block/seq/hiding/dif/dfor
@@ -690,7 +714,19 @@ func (c *Compiler) ParseNormElt(stmt ast.Stmt) {
 		c.Directive.Compile(s)
 
 	case ast.HaltStmt:
-		c.Out.AddCode(s.Loc, []byte{0x00}) // L722
+		if c.afterEOFMarker {
+			c.Out.AddCodeRaw(s.Loc, []byte{0x00})
+			c.afterEOFMarker = false
+		} else {
+			c.Out.AddCode(s.Loc, []byte{0x00}) // L722
+		}
+
+	case ast.EOFStmt:
+		if c.EmitEOFMarkers {
+			c.Out.AddCodeRaw(s.Loc, SeenEndTrailerBytes())
+		}
+		c.SeenEndEmitted = true
+		c.afterEOFMarker = true
 
 	case ast.BreakStmt:
 		if len(c.breakStack) == 0 {
@@ -1069,7 +1105,7 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 					}
 					inner = pe.Expr
 				}
-				if needsCommaBeforeStringParam(c.Out, prevParam, inner) {
+				if needsCommaBeforeParam(c.Out, prevParam, inner) {
 					c.Out.AddCodeRaw(s.Loc, []byte{','})
 				}
 				c.Out.EmitExprRaw(inner)
@@ -1883,7 +1919,10 @@ const (
 	emittedParamSpecialNoParens
 )
 
-func needsCommaBeforeStringParam(out *codegen.Output, prev emittedParamKind, e ast.Expr) bool {
+func needsCommaBeforeParam(out *codegen.Output, prev emittedParamKind, e ast.Expr) bool {
+	if prev != emittedParamNone && simpleParamNeedsSeparator(e) {
+		return true
+	}
 	switch prev {
 	case emittedParamNone:
 		return false
@@ -1893,6 +1932,14 @@ func needsCommaBeforeStringParam(out *codegen.Output, prev emittedParamKind, e a
 	default:
 		return out.StringExprNeedsSeparator(e)
 	}
+}
+
+func simpleParamNeedsSeparator(e ast.Expr) bool {
+	switch e.(type) {
+	case ast.UnaryExpr:
+		return true
+	}
+	return false
 }
 
 func classifyEmittedParam(e ast.Expr) emittedParamKind {
