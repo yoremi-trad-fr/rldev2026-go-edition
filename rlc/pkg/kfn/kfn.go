@@ -34,16 +34,16 @@ import (
 type ParamType int
 
 const (
-	PAny    ParamType = iota // any type
-	PInt                     // integer
-	PIntC                    // integer constant
-	PIntV                    // integer variable
-	PStr                     // string
-	PStrC                    // string constant
-	PStrV                    // string variable
-	PResStr                  // resource string
-	PSpecial                 // special tagged parameter
-	PComplex                 // complex (tuple) parameter
+	PAny     ParamType = iota // any type
+	PInt                      // integer
+	PIntC                     // integer constant
+	PIntV                     // integer variable
+	PStr                      // string
+	PStrC                     // string constant
+	PStrV                     // string variable
+	PResStr                   // resource string
+	PSpecial                  // special tagged parameter
+	PComplex                  // complex (tuple) parameter
 )
 
 var paramTypeNames = [...]string{"any", "int", "intC", "intV", "str", "strC", "strV", "res", "special", "complex"}
@@ -108,10 +108,10 @@ const (
 
 // SpecialDef defines one case of a special parameter.
 type SpecialDef struct {
-	ID    int
-	Name  string      // for named specials
+	ID     int
+	Name   string      // for named specials
 	Params []Parameter // parameters inside the special
-	Flags []SpecialFlag
+	Flags  []SpecialFlag
 }
 
 // Prototype is one overload of a function (nil = undefined for this overload).
@@ -128,7 +128,7 @@ type Prototype struct {
 type Target int
 
 const (
-	TargetDefault  Target = iota
+	TargetDefault Target = iota
 	TargetRealLive
 	TargetAVG2000
 	TargetKinetic
@@ -136,9 +136,12 @@ const (
 
 func (t Target) String() string {
 	switch t {
-	case TargetRealLive: return "RealLive"
-	case TargetAVG2000:  return "AVG2000"
-	case TargetKinetic:  return "Kinetic"
+	case TargetRealLive:
+		return "RealLive"
+	case TargetAVG2000:
+		return "AVG2000"
+	case TargetKinetic:
+		return "Kinetic"
 	}
 	return "Default"
 }
@@ -146,9 +149,12 @@ func (t Target) String() string {
 // ParseTarget converts a string to a Target.
 func ParseTarget(s string) Target {
 	switch strings.ToLower(s) {
-	case "reallive", "2": return TargetRealLive
-	case "avg2000", "1":  return TargetAVG2000
-	case "kinetic", "3":  return TargetKinetic
+	case "reallive", "2":
+		return TargetRealLive
+	case "avg2000", "1":
+		return TargetAVG2000
+	case "kinetic", "3":
+		return TargetKinetic
 	}
 	return TargetDefault
 }
@@ -172,7 +178,7 @@ type TargetConstraint struct {
 // FuncDef is one function in the RealLive API.
 type FuncDef struct {
 	Ident      string
-	CCStr      string     // control code string (empty if not a control code)
+	CCStr      string // control code string (empty if not a control code)
 	Flags      []FuncFlag
 	OpType     int
 	OpModule   int
@@ -193,7 +199,9 @@ func IdentOfOpcode(opType, opModule, opCode, overload int) string {
 // HasFlag checks if the function has a given flag.
 func (f *FuncDef) HasFlag(flag FuncFlag) bool {
 	for _, fl := range f.Flags {
-		if fl == flag { return true }
+		if fl == flag {
+			return true
+		}
 	}
 	return false
 }
@@ -201,14 +209,22 @@ func (f *FuncDef) HasFlag(flag FuncFlag) bool {
 // ReturnType determines the return type of a function.
 // Returns "int", "str", or "none".
 func (f *FuncDef) ReturnType() string {
-	if f.HasFlag(FlagPushStore) { return "int" }
+	if f.HasFlag(FlagPushStore) {
+		return "int"
+	}
 	for _, proto := range f.Prototypes {
-		if !proto.Defined { continue }
+		if !proto.Defined {
+			continue
+		}
 		for _, p := range proto.Params {
 			for _, fl := range p.Flags {
 				if fl == FReturn {
-					if p.Type == PInt || p.Type == PIntC || p.Type == PIntV { return "int" }
-					if p.Type == PStr || p.Type == PStrC || p.Type == PStrV { return "str" }
+					if p.Type == PInt || p.Type == PIntC || p.Type == PIntV {
+						return "int"
+					}
+					if p.Type == PStr || p.Type == PStrC || p.Type == PStrV {
+						return "str"
+					}
 				}
 			}
 		}
@@ -254,9 +270,13 @@ func (r *Registry) Register(fd *FuncDef) {
 // Lookup finds a function by identifier, filtering by current target/version.
 func (r *Registry) Lookup(ident string) (*FuncDef, bool) {
 	fns, ok := r.Functions[ident]
-	if !ok || len(fns) == 0 { return nil, false }
+	if !ok || len(fns) == 0 {
+		return nil, false
+	}
 	for _, fn := range fns {
-		if r.validForTarget(fn) { return fn, true }
+		if r.validForTarget(fn) {
+			return fn, true
+		}
 	}
 	return fns[0], true // fallback to first
 }
@@ -264,36 +284,43 @@ func (r *Registry) Lookup(ident string) (*FuncDef, bool) {
 // LookupCtrlCode finds a control code function.
 func (r *Registry) LookupCtrlCode(name string) (*FuncDef, bool) {
 	fns, ok := r.CtrlCodes[name]
-	if !ok || len(fns) == 0 { return nil, false }
+	if !ok || len(fns) == 0 {
+		return nil, false
+	}
 	for _, fn := range fns {
-		if r.validForTarget(fn) { return fn, true }
+		if r.validForTarget(fn) {
+			return fn, true
+		}
 	}
 	return fns[0], true
 }
 
 func (r *Registry) validForTarget(fd *FuncDef) bool {
-	if len(fd.Targets) == 0 { return true }
-	target := r.Target
-	if target == TargetDefault { target = TargetRealLive }
-	// A KFN entry written as `ver Avg2000, RealLive` carries two
-	// TargetConstraint entries. The semantics are OR: the function is
-	// valid if ANY constraint matches the current target. (The previous
-	// AND-shaped loop rejected RealLive entries that also mentioned
-	// Avg2000, including bgmLoop and many others.)
-	//
-	// A version Compare clause is treated as a refinement of the class:
-	// only checked when the class itself matches the current target.
-	for _, tc := range fd.Targets {
-		classOK := tc.Class == TargetDefault || tc.Class == target
-		if !classOK {
-			continue
-		}
-		if tc.Compare != nil && !tc.Compare(r.Version) {
-			continue
-		}
+	if len(fd.Targets) == 0 {
 		return true
 	}
-	return false
+	target := r.Target
+	if target == TargetDefault {
+		target = TargetRealLive
+	}
+
+	hasClass := false
+	classOK := false
+	for _, tc := range fd.Targets {
+		if tc.Class != TargetDefault {
+			hasClass = true
+			if tc.Class == target {
+				classOK = true
+			}
+		}
+		if tc.Compare != nil && !tc.Compare(r.Version) {
+			return false
+		}
+	}
+	if !hasClass {
+		return true
+	}
+	return classOK
 }
 
 // ValidForTarget is the exported form of validForTarget. It lets
@@ -317,9 +344,12 @@ func (r *Registry) CurrentVersionString() string {
 		}
 	}
 	switch {
-	case v[2] == 0 && v[3] == 0: return fmt.Sprintf("%s %d.%d", name, v[0], v[1])
-	case v[3] == 0:              return fmt.Sprintf("%s %d.%d.%d", name, v[0], v[1], v[2])
-	default:                     return fmt.Sprintf("%s %d.%d.%d.%d", name, v[0], v[1], v[2], v[3])
+	case v[2] == 0 && v[3] == 0:
+		return fmt.Sprintf("%s %d.%d", name, v[0], v[1])
+	case v[3] == 0:
+		return fmt.Sprintf("%s %d.%d.%d", name, v[0], v[1], v[2])
+	default:
+		return fmt.Sprintf("%s %d.%d.%d.%d", name, v[0], v[1], v[2], v[3])
 	}
 }
 
@@ -330,7 +360,9 @@ func (r *Registry) CurrentVersionString() string {
 // ParseFile parses a reallive.kfn file and returns a populated Registry.
 func ParseFile(path string) (*Registry, error) {
 	f, err := os.Open(path)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer f.Close()
 	return Parse(f)
 }
@@ -338,7 +370,9 @@ func ParseFile(path string) (*Registry, error) {
 // Parse parses a reallive.kfn from a reader.
 func Parse(r io.Reader) (*Registry, error) {
 	data, err := io.ReadAll(r)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	reg := NewRegistry()
 	p := &kfnParser{
 		src:  string(data),
@@ -358,10 +392,36 @@ type kfnTokType int
 
 const (
 	kEOF kfnTokType = iota
-	kMODULE; kFUN; kVER; kEND
-	kLt; kGt; kEq; kCm; kLp; kRp; kLbr; kRbr; kQu; kSt; kPl; kCo; kPt; kHa; kHy
-	kINT; kINTC; kINTV; kSTR; kSTRC; kSTRV; kRES; kSPECIAL
-	kINTEGER; kIDENT; kSTRING
+	kMODULE
+	kFUN
+	kVER
+	kEND
+	kLt
+	kGt
+	kEq
+	kCm
+	kLp
+	kRp
+	kLbr
+	kRbr
+	kQu
+	kSt
+	kPl
+	kCo
+	kPt
+	kHa
+	kHy
+	kINT
+	kINTC
+	kINTV
+	kSTR
+	kSTRC
+	kSTRV
+	kRES
+	kSPECIAL
+	kINTEGER
+	kIDENT
+	kSTRING
 )
 
 type kfnTok struct {
@@ -381,48 +441,72 @@ func (l *kfnLexer) next() kfnTok {
 		c := l.src[l.pos]
 		// Skip whitespace
 		if c == ' ' || c == '\t' || c == '\r' {
-			l.pos++; continue
+			l.pos++
+			continue
 		}
 		if c == '\n' {
-			l.pos++; l.line++; continue
+			l.pos++
+			l.line++
+			continue
 		}
 		// Line comment
 		if c == '/' && l.pos+1 < len(l.src) && l.src[l.pos+1] == '/' {
 			l.pos += 2
-			for l.pos < len(l.src) && l.src[l.pos] != '\n' { l.pos++ }
+			for l.pos < len(l.src) && l.src[l.pos] != '\n' {
+				l.pos++
+			}
 			continue
 		}
 		// Single-char tokens
 		l.pos++
 		switch c {
-		case '=': return kfnTok{typ: kEq}
-		case '<': return kfnTok{typ: kLt}
-		case '>': return kfnTok{typ: kGt}
-		case '(': return kfnTok{typ: kLp}
-		case ')': return kfnTok{typ: kRp}
-		case '{': return kfnTok{typ: kLbr}
-		case '}': return kfnTok{typ: kRbr}
-		case '?': return kfnTok{typ: kQu}
-		case ',': return kfnTok{typ: kCm}
-		case '*': return kfnTok{typ: kSt}
-		case '+': return kfnTok{typ: kPl}
-		case ':': return kfnTok{typ: kCo}
-		case '.': return kfnTok{typ: kPt}
-		case '#': return kfnTok{typ: kHa}
-		case '-': return kfnTok{typ: kHy}
+		case '=':
+			return kfnTok{typ: kEq}
+		case '<':
+			return kfnTok{typ: kLt}
+		case '>':
+			return kfnTok{typ: kGt}
+		case '(':
+			return kfnTok{typ: kLp}
+		case ')':
+			return kfnTok{typ: kRp}
+		case '{':
+			return kfnTok{typ: kLbr}
+		case '}':
+			return kfnTok{typ: kRbr}
+		case '?':
+			return kfnTok{typ: kQu}
+		case ',':
+			return kfnTok{typ: kCm}
+		case '*':
+			return kfnTok{typ: kSt}
+		case '+':
+			return kfnTok{typ: kPl}
+		case ':':
+			return kfnTok{typ: kCo}
+		case '.':
+			return kfnTok{typ: kPt}
+		case '#':
+			return kfnTok{typ: kHa}
+		case '-':
+			return kfnTok{typ: kHy}
 		}
 		l.pos-- // rewind for multi-char tokens
 		// Number: decimal or $hex
 		if c >= '0' && c <= '9' {
 			start := l.pos
-			for l.pos < len(l.src) && l.src[l.pos] >= '0' && l.src[l.pos] <= '9' { l.pos++ }
+			for l.pos < len(l.src) && l.src[l.pos] >= '0' && l.src[l.pos] <= '9' {
+				l.pos++
+			}
 			n, _ := strconv.Atoi(string(l.src[start:l.pos]))
 			return kfnTok{typ: kINTEGER, num: n}
 		}
 		if c == '$' {
 			l.pos++ // skip $
 			start := l.pos
-			for l.pos < len(l.src) && isHexDigit(l.src[l.pos]) { l.pos++ }
+			for l.pos < len(l.src) && isHexDigit(l.src[l.pos]) {
+				l.pos++
+			}
 			n, _ := strconv.ParseInt(string(l.src[start:l.pos]), 16, 32)
 			return kfnTok{typ: kINTEGER, num: int(n)}
 		}
@@ -430,30 +514,49 @@ func (l *kfnLexer) next() kfnTok {
 		if c == '\'' {
 			l.pos++ // skip opening '
 			start := l.pos
-			for l.pos < len(l.src) && l.src[l.pos] != '\'' { l.pos++ }
+			for l.pos < len(l.src) && l.src[l.pos] != '\'' {
+				l.pos++
+			}
 			s := string(l.src[start:l.pos])
-			if l.pos < len(l.src) { l.pos++ } // skip closing '
+			if l.pos < len(l.src) {
+				l.pos++
+			} // skip closing '
 			return kfnTok{typ: kSTRING, str: s}
 		}
 		// Identifier or keyword
 		if isAlpha(c) || c == '_' {
 			start := l.pos
-			for l.pos < len(l.src) && isIdentChar(l.src[l.pos]) { l.pos++ }
+			for l.pos < len(l.src) && isIdentChar(l.src[l.pos]) {
+				l.pos++
+			}
 			word := string(l.src[start:l.pos])
 			switch word {
-			case "module":  return kfnTok{typ: kMODULE}
-			case "fun":     return kfnTok{typ: kFUN}
-			case "ver":     return kfnTok{typ: kVER}
-			case "end":     return kfnTok{typ: kEND, str: "end"}
-			case "int":     return kfnTok{typ: kINT}
-			case "intC":    return kfnTok{typ: kINTC}
-			case "intV":    return kfnTok{typ: kINTV}
-			case "str":     return kfnTok{typ: kSTR}
-			case "strC":    return kfnTok{typ: kSTRC}
-			case "strV":    return kfnTok{typ: kSTRV}
-			case "res":     return kfnTok{typ: kRES}
-			case "special": return kfnTok{typ: kSPECIAL}
-			default:        return kfnTok{typ: kIDENT, str: word}
+			case "module":
+				return kfnTok{typ: kMODULE}
+			case "fun":
+				return kfnTok{typ: kFUN}
+			case "ver":
+				return kfnTok{typ: kVER}
+			case "end":
+				return kfnTok{typ: kEND, str: "end"}
+			case "int":
+				return kfnTok{typ: kINT}
+			case "intC":
+				return kfnTok{typ: kINTC}
+			case "intV":
+				return kfnTok{typ: kINTV}
+			case "str":
+				return kfnTok{typ: kSTR}
+			case "strC":
+				return kfnTok{typ: kSTRC}
+			case "strV":
+				return kfnTok{typ: kSTRV}
+			case "res":
+				return kfnTok{typ: kRES}
+			case "special":
+				return kfnTok{typ: kSPECIAL}
+			default:
+				return kfnTok{typ: kIDENT, str: word}
 			}
 		}
 		// Unknown char — skip
@@ -498,7 +601,10 @@ func (p *kfnParser) expect(t kfnTokType) kfnTok {
 }
 
 func (p *kfnParser) match(t kfnTokType) bool {
-	if p.cur.typ == t { p.advance(); return true }
+	if p.cur.typ == t {
+		p.advance()
+		return true
+	}
 	return false
 }
 
@@ -538,15 +644,15 @@ func (p *kfnParser) parseModule() {
 }
 
 type rawFunDef struct {
-	ident    string
-	ccName   string // "" absent, "__self__" unnamed, else named
-	ccFlags  []FuncFlag
-	funFlags []FuncFlag
-	opType   int
-	opModule int
-	opCode   int
+	ident     string
+	ccName    string // "" absent, "__self__" unnamed, else named
+	ccFlags   []FuncFlag
+	funFlags  []FuncFlag
+	opType    int
+	opModule  int
+	opCode    int
 	overloads int
-	protos   []Prototype
+	protos    []Prototype
 }
 
 func (p *kfnParser) parseFunDef() rawFunDef {
@@ -554,13 +660,15 @@ func (p *kfnParser) parseFunDef() rawFunDef {
 	// ident (may be empty, "end", single ident, or two idents)
 	ident := ""
 	if p.cur.typ == kIDENT {
-		ident = p.cur.str; p.advance()
+		ident = p.cur.str
+		p.advance()
 		if p.cur.typ == kIDENT {
 			// second ident = alternate name, use first
 			p.advance()
 		}
 	} else if p.cur.typ == kEND {
-		ident = "end"; p.advance()
+		ident = "end"
+		p.advance()
 	}
 
 	// ccode: {}, {name}, {*name}, {=name}, {*=name}
@@ -573,12 +681,19 @@ func (p *kfnParser) parseFunDef() rawFunDef {
 			hasStar := p.match(kSt)
 			hasEq := p.match(kEq)
 			if p.cur.typ == kIDENT {
-				ccName = p.cur.str; p.advance()
+				ccName = p.cur.str
+				p.advance()
 			}
 			p.expect(kRbr)
-			if hasStar { ccFlags = append(ccFlags, FlagIsTextout) }
-			if hasEq { ccFlags = append(ccFlags, FlagNoBraces) }
-			if hasStar && hasEq { ccFlags = append(ccFlags, FlagIsLbr) }
+			if hasStar {
+				ccFlags = append(ccFlags, FlagIsTextout)
+			}
+			if hasEq {
+				ccFlags = append(ccFlags, FlagNoBraces)
+			}
+			if hasStar && hasEq {
+				ccFlags = append(ccFlags, FlagIsLbr)
+			}
 		}
 	}
 
@@ -587,7 +702,9 @@ func (p *kfnParser) parseFunDef() rawFunDef {
 	if p.match(kLp) {
 		for p.cur.typ == kIDENT {
 			flag := parseFuncFlag(strings.ToLower(p.cur.str))
-			if flag >= 0 { funFlags = append(funFlags, FuncFlag(flag)) }
+			if flag >= 0 {
+				funFlags = append(funFlags, FuncFlag(flag))
+			}
 			p.advance()
 		}
 		p.expect(kRp)
@@ -622,8 +739,11 @@ func (p *kfnParser) parseModuleID() int {
 		return p.advance().num
 	}
 	if p.cur.typ == kIDENT {
-		name := p.cur.str; p.advance()
-		if num, ok := p.mods[name]; ok { return num }
+		name := p.cur.str
+		p.advance()
+		if num, ok := p.mods[name]; ok {
+			return num
+		}
 		panic(fmt.Sprintf("kfn line %d: undeclared module %s", p.line, name))
 	}
 	panic(fmt.Sprintf("kfn line %d: expected module id", p.line))
@@ -636,7 +756,10 @@ func (p *kfnParser) parsePrototype() Prototype {
 	p.expect(kLp)
 	var params []Parameter
 	for p.cur.typ != kRp && p.cur.typ != kEOF {
-		if p.cur.typ == kCm { p.advance(); continue } // skip trailing/extra commas
+		if p.cur.typ == kCm {
+			p.advance()
+			continue
+		} // skip trailing/extra commas
 		params = append(params, p.parseParameter())
 		p.match(kCm) // optional comma
 	}
@@ -650,11 +773,26 @@ func (p *kfnParser) parseParameter() Parameter {
 	var tag string
 	for {
 		switch p.cur.typ {
-		case kHa: p.advance(); flags = append(flags, FTextObject); continue
-		case kQu: p.advance(); flags = append(flags, FOptional); continue
-		case kLt: p.advance(); flags = append(flags, FUncount); continue
-		case kGt: p.advance(); flags = append(flags, FReturn); continue
-		case kEq: p.advance(); flags = append(flags, FFake); continue
+		case kHa:
+			p.advance()
+			flags = append(flags, FTextObject)
+			continue
+		case kQu:
+			p.advance()
+			flags = append(flags, FOptional)
+			continue
+		case kLt:
+			p.advance()
+			flags = append(flags, FUncount)
+			continue
+		case kGt:
+			p.advance()
+			flags = append(flags, FReturn)
+			continue
+		case kEq:
+			p.advance()
+			flags = append(flags, FFake)
+			continue
 		}
 		break
 	}
@@ -662,7 +800,8 @@ func (p *kfnParser) parseParameter() Parameter {
 	// typedef or tagged string
 	var pt ParamType
 	if p.cur.typ == kSTRING {
-		tag = p.cur.str; p.advance()
+		tag = p.cur.str
+		p.advance()
 		pt = PIntC
 		flags = append(flags, FTagged)
 	} else {
@@ -671,9 +810,13 @@ func (p *kfnParser) parseParameter() Parameter {
 
 	// postparm: +, 'tag'
 	for {
-		if p.match(kPl) { flags = append(flags, FArgc); continue }
+		if p.match(kPl) {
+			flags = append(flags, FArgc)
+			continue
+		}
 		if p.cur.typ == kSTRING {
-			tag = p.cur.str; p.advance()
+			tag = p.cur.str
+			p.advance()
 			flags = append(flags, FTagged)
 			continue
 		}
@@ -685,21 +828,42 @@ func (p *kfnParser) parseParameter() Parameter {
 
 func (p *kfnParser) parseTypeDef() ParamType {
 	switch p.cur.typ {
-	case kINT:     p.advance(); return PInt
-	case kINTC:    p.advance(); return PIntC
-	case kINTV:    p.advance(); return PIntV
-	case kSTR:     p.advance(); return PStr
-	case kSTRC:    p.advance(); return PStrC
-	case kSTRV:    p.advance(); return PStrV
-	case kRES:     p.advance(); return PResStr
+	case kINT:
+		p.advance()
+		return PInt
+	case kINTC:
+		p.advance()
+		return PIntC
+	case kINTV:
+		p.advance()
+		return PIntV
+	case kSTR:
+		p.advance()
+		return PStr
+	case kSTRC:
+		p.advance()
+		return PStrC
+	case kSTRV:
+		p.advance()
+		return PStrV
+	case kRES:
+		p.advance()
+		return PResStr
 	case kSPECIAL:
-		p.advance(); p.expect(kLp)
+		p.advance()
+		p.expect(kLp)
 		// skip special definition details for now
 		depth := 1
 		for depth > 0 && p.cur.typ != kEOF {
-			if p.cur.typ == kLp { depth++ }
-			if p.cur.typ == kRp { depth-- }
-			if depth > 0 { p.advance() }
+			if p.cur.typ == kLp {
+				depth++
+			}
+			if p.cur.typ == kRp {
+				depth--
+			}
+			if depth > 0 {
+				p.advance()
+			}
 		}
 		p.expect(kRp)
 		return PSpecial
@@ -708,9 +872,15 @@ func (p *kfnParser) parseTypeDef() ParamType {
 		// complex: (typedef, typedef, ...)
 		depth := 1
 		for depth > 0 && p.cur.typ != kEOF {
-			if p.cur.typ == kLp { depth++ }
-			if p.cur.typ == kRp { depth-- }
-			if depth > 0 { p.advance() }
+			if p.cur.typ == kLp {
+				depth++
+			}
+			if p.cur.typ == kRp {
+				depth--
+			}
+			if depth > 0 {
+				p.advance()
+			}
 		}
 		p.expect(kRp)
 		return PComplex
@@ -749,13 +919,32 @@ func (p *kfnParser) parseVersionConstraint() TargetConstraint {
 		hasEq := p.match(kEq)
 		v := p.parseVStamp()
 		return TargetConstraint{Compare: func(cur Version) bool {
-			if isLt && hasEq { return cur[0] <= v[0] || (cur[0] == v[0] && cur[1] <= v[1]) }
-			if isLt { return cur[0] < v[0] || (cur[0] == v[0] && cur[1] < v[1]) }
-			if hasEq { return cur[0] >= v[0] || (cur[0] == v[0] && cur[1] >= v[1]) }
-			return cur[0] > v[0] || (cur[0] == v[0] && cur[1] > v[1])
+			cmp := compareVersion(cur, v)
+			if isLt && hasEq {
+				return cmp <= 0
+			}
+			if isLt {
+				return cmp < 0
+			}
+			if hasEq {
+				return cmp >= 0
+			}
+			return cmp > 0
 		}}
 	}
 	return TargetConstraint{}
+}
+
+func compareVersion(a, b Version) int {
+	for i := 0; i < len(a); i++ {
+		if a[i] < b[i] {
+			return -1
+		}
+		if a[i] > b[i] {
+			return 1
+		}
+	}
+	return 0
 }
 
 func (p *kfnParser) parseVStamp() Version {
@@ -780,9 +969,11 @@ func (p *kfnParser) processFunDef(constraints []TargetConstraint, raw rawFunDef)
 	}
 	ccStr := ""
 	switch raw.ccName {
-	case "":          // absent
-	case "__self__":  ccStr = ident
-	default:          ccStr = raw.ccName
+	case "": // absent
+	case "__self__":
+		ccStr = ident
+	default:
+		ccStr = raw.ccName
 	}
 
 	// Filter out Fake params
@@ -796,9 +987,14 @@ func (p *kfnParser) processFunDef(constraints []TargetConstraint, raw rawFunDef)
 		for _, param := range proto.Params {
 			isFake := false
 			for _, fl := range param.Flags {
-				if fl == FFake { isFake = true; break }
+				if fl == FFake {
+					isFake = true
+					break
+				}
 			}
-			if !isFake { filtered = append(filtered, param) }
+			if !isFake {
+				filtered = append(filtered, param)
+			}
 		}
 		protos = append(protos, Prototype{Defined: true, Params: filtered})
 	}
@@ -820,16 +1016,26 @@ func (p *kfnParser) processFunDef(constraints []TargetConstraint, raw rawFunDef)
 
 func parseFuncFlag(s string) FuncFlag {
 	switch s {
-	case "store": return FlagPushStore
-	case "skip":  return FlagIsSkip
-	case "jump":  return FlagIsJump
-	case "goto":  return FlagIsGoto
-	case "if":    return FlagIsCond
-	case "neg":   return FlagIsNeg
-	case "cases": return FlagHasCases
-	case "gotos": return FlagHasGotos
-	case "call":  return FlagIsCall
-	case "ret":   return FlagIsRet
+	case "store":
+		return FlagPushStore
+	case "skip":
+		return FlagIsSkip
+	case "jump":
+		return FlagIsJump
+	case "goto":
+		return FlagIsGoto
+	case "if":
+		return FlagIsCond
+	case "neg":
+		return FlagIsNeg
+	case "cases":
+		return FlagHasCases
+	case "gotos":
+		return FlagHasGotos
+	case "call":
+		return FlagIsCall
+	case "ret":
+		return FlagIsRet
 	}
 	return -1
 }

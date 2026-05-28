@@ -390,7 +390,7 @@ func (a *App) RldevDisassemble(seenFile, kfnFile, encoding, gameID, outputDir st
 		return a.failIf(err)
 	}
 
-	args := []string{"-d", "-g", "-e", encoding, "-o", outputDir}
+	args := []string{"-d", "-v", "1", "-e", encoding, "-o", outputDir}
 	a.log("KFN: " + kfnFile)
 	args = append(args, "-kfn", kfnFile)
 	if gameID != "" {
@@ -417,7 +417,7 @@ func (a *App) RldevExtract(seenFile, outputDir string) string {
 		return a.failIf(err)
 	}
 
-	if err := a.runTool("kprl", "-x", "-o", outputDir, seenFile); err != nil {
+	if err := a.runTool("kprl", "-x", "-v", "1", "-o", outputDir, seenFile); err != nil {
 		return err.Error()
 	}
 	a.logOK("Extraction terminee.")

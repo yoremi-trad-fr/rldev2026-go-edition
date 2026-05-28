@@ -78,6 +78,69 @@ func TestReaderExpression(t *testing.T) {
 	}
 }
 
+func TestReadStringQuotedArgumentStopsBeforeAdjacentQuote(t *testing.T) {
+	data := []byte("\"TITLE\"\"BODY\")")
+	r := NewReader(data, 0, len(data), ModeRealLive)
+
+	first, err := r.GetData()
+	if err != nil {
+		t.Fatalf("first GetData() error: %v", err)
+	}
+	if first != "'TITLE'" {
+		t.Fatalf("first GetData() = %q, want 'TITLE'", first)
+	}
+
+	second, err := r.GetData()
+	if err != nil {
+		t.Fatalf("second GetData() error: %v", err)
+	}
+	if second != "'BODY'" {
+		t.Fatalf("second GetData() = %q, want 'BODY'", second)
+	}
+	if b, err := r.Peek(); err != nil || b != ')' {
+		t.Fatalf("next byte = 0x%02x, %v; want ')'", b, err)
+	}
+}
+
+func TestMergeSkipsVisibleDebugLines(t *testing.T) {
+	result := &DisassemblyResult{
+		ResStrs: []string{`\{Sunohara}`},
+		Commands: []Command{
+			{CType: "textout", Kepago: []CommandElem{ElemString{Value: "#res<0000>"}}},
+			{CType: "dbline", Kepago: []CommandElem{ElemString{Value: "#line 113"}}},
+		},
+	}
+
+	if addTextoutFails(result, `\size{40}`) {
+		t.Fatal("addTextoutFails returned true, want merge into previous resource")
+	}
+	if got, want := result.ResStrs[0], `\{Sunohara}\size{40}`; got != want {
+		t.Fatalf("merged resource = %q, want %q", got, want)
+	}
+}
+
+func TestReadSelectKeepsQuotedContinuations(t *testing.T) {
+	data := []byte(`{"ONE"A,"TWO"B,"THREE"C}`)
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	result := &DisassemblyResult{}
+	cmd := Command{}
+	opts := Options{SeparateStrings: true}
+
+	if err := readSelect(r, result, &cmd, Opcode{Function: 1}, 3, opts); err != nil {
+		t.Fatalf("readSelect error: %v", err)
+	}
+	if got, want := result.ResStrs, []string{"ONEA", "TWOB", "THREEC"}; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("resources = %#v, want %#v", got, want)
+	}
+	if len(result.Commands) != 1 {
+		t.Fatalf("command count = %d, want 1", len(result.Commands))
+	}
+	got := result.Commands[0].Kepago[0].(ElemString).Value
+	if want := "select(#res<0000>, #res<0001>, #res<0002>)"; got != want {
+		t.Fatalf("select command = %q, want %q", got, want)
+	}
+}
+
 func TestReaderExpectSuccess(t *testing.T) {
 	data := []byte{'(', ')'}
 	r := NewReader(data, 0, 2, ModeRealLive)

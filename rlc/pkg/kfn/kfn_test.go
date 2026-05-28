@@ -58,23 +58,35 @@ func TestParseFunctions(t *testing.T) {
 		t.Errorf("goto opcode: got %d:%d:%d, want 0:1:0", fn.OpType, fn.OpModule, fn.OpCode)
 	}
 	// Check flags
-	if !fn.HasFlag(FlagIsSkip) { t.Error("goto should have IsSkip") }
-	if !fn.HasFlag(FlagIsGoto) { t.Error("goto should have IsGoto") }
+	if !fn.HasFlag(FlagIsSkip) {
+		t.Error("goto should have IsSkip")
+	}
+	if !fn.HasFlag(FlagIsGoto) {
+		t.Error("goto should have IsGoto")
+	}
 }
 
 func TestParseFuncFlags(t *testing.T) {
 	reg := parseTestKFN(t)
 	fn, ok := reg.Lookup("goto_if")
-	if !ok { t.Fatal("goto_if not found") }
-	if !fn.HasFlag(FlagIsCond) { t.Error("goto_if should have IsCond") }
-	if !fn.HasFlag(FlagIsGoto) { t.Error("goto_if should have IsGoto") }
+	if !ok {
+		t.Fatal("goto_if not found")
+	}
+	if !fn.HasFlag(FlagIsCond) {
+		t.Error("goto_if should have IsCond")
+	}
+	if !fn.HasFlag(FlagIsGoto) {
+		t.Error("goto_if should have IsGoto")
+	}
 }
 
 func TestParsePrototypes(t *testing.T) {
 	reg := parseTestKFN(t)
 	// jump has 2 overloads: ('scenario') and ('scenario', 'entrypoint')
 	fns := reg.Functions["jump"]
-	if len(fns) == 0 { t.Fatal("jump not found") }
+	if len(fns) == 0 {
+		t.Fatal("jump not found")
+	}
 	fn := fns[0]
 	if len(fn.Prototypes) != 2 {
 		t.Fatalf("jump prototypes: got %d, want 2", len(fn.Prototypes))
@@ -107,53 +119,153 @@ func TestParseEmptyPrototype(t *testing.T) {
 func TestParseParameterFlags(t *testing.T) {
 	reg := parseTestKFN(t)
 	fn, _ := reg.Lookup("goto_if")
-	if len(fn.Prototypes) == 0 || !fn.Prototypes[0].Defined { t.Fatal("goto_if proto") }
+	if len(fn.Prototypes) == 0 || !fn.Prototypes[0].Defined {
+		t.Fatal("goto_if proto")
+	}
 	param := fn.Prototypes[0].Params[0]
 	// Should have Uncount (<) and Tagged ('condition')
 	hasUncount := false
 	hasTagged := false
 	for _, fl := range param.Flags {
-		if fl == FUncount { hasUncount = true }
-		if fl == FTagged { hasTagged = true }
+		if fl == FUncount {
+			hasUncount = true
+		}
+		if fl == FTagged {
+			hasTagged = true
+		}
 	}
-	if !hasUncount { t.Error("expected FUncount flag") }
-	if !hasTagged { t.Error("expected FTagged flag") }
-	if param.Tag != "condition" { t.Errorf("tag: got %q, want 'condition'", param.Tag) }
+	if !hasUncount {
+		t.Error("expected FUncount flag")
+	}
+	if !hasTagged {
+		t.Error("expected FTagged flag")
+	}
+	if param.Tag != "condition" {
+		t.Errorf("tag: got %q, want 'condition'", param.Tag)
+	}
 }
 
 func TestParseStoreFlag(t *testing.T) {
 	reg := parseTestKFN(t)
 	fn, _ := reg.Lookup("intout")
-	if !fn.HasFlag(FlagPushStore) { t.Error("intout should have PushStore") }
+	if !fn.HasFlag(FlagPushStore) {
+		t.Error("intout should have PushStore")
+	}
 }
 
 func TestParseControlCode(t *testing.T) {
 	reg := parseTestKFN(t)
 	// strout has {} → control code with its own name
 	fn, ok := reg.LookupCtrlCode("strout")
-	if !ok { t.Fatal("strout ctrl code not found") }
-	if fn.CCStr != "strout" { t.Errorf("ccstr: got %q", fn.CCStr) }
+	if !ok {
+		t.Fatal("strout ctrl code not found")
+	}
+	if fn.CCStr != "strout" {
+		t.Errorf("ccstr: got %q", fn.CCStr)
+	}
 }
 
 func TestParseVerBlock(t *testing.T) {
 	reg := parseTestKFN(t)
 	// strout should be in RealLive ver block
 	fns := reg.Functions["strout"]
-	if len(fns) == 0 { t.Fatal("strout not found") }
-	if len(fns[0].Targets) == 0 { t.Fatal("strout should have target constraints") }
+	if len(fns) == 0 {
+		t.Fatal("strout not found")
+	}
+	if len(fns[0].Targets) == 0 {
+		t.Fatal("strout should have target constraints")
+	}
 
 	// kgoto should be in Kinetic ver block
 	fns = reg.Functions["kgoto"]
-	if len(fns) == 0 { t.Fatal("kgoto not found") }
-	if len(fns[0].Targets) == 0 { t.Fatal("kgoto should have target constraints") }
+	if len(fns) == 0 {
+		t.Fatal("kgoto not found")
+	}
+	if len(fns[0].Targets) == 0 {
+		t.Fatal("kgoto should have target constraints")
+	}
+}
+
+func TestVersionConstraintsAreConjunctive(t *testing.T) {
+	reg, err := Parse(strings.NewReader(`
+module 001 = Jmp
+
+ver >= 1.2, < 1.2.5
+  fun CallDLL <2:Jmp:00001, 0> (='0', intC)
+end
+
+ver >= 1.2.5
+  fun CallDLL <2:Jmp:00002, 0> ('index', 'par1', 'par2', 'par3', 'par4', 'par5')
+end
+`))
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	reg.Target = TargetRealLive
+	reg.Version = Version{1, 6, 2, 3}
+	fn, ok := reg.Lookup("CallDLL")
+	if !ok {
+		t.Fatal("CallDLL not found")
+	}
+	if fn.OpCode != 2 {
+		t.Fatalf("RealLive 1.6 should select the >=1.2.5 CallDLL; opcode=%d", fn.OpCode)
+	}
+	if len(fn.Prototypes) != 1 || len(fn.Prototypes[0].Params) != 6 {
+		t.Fatalf("CallDLL params = %#v, want the 6-parameter modern prototype", fn.Prototypes)
+	}
+
+	reg.Version = Version{1, 2, 4, 9}
+	fn, ok = reg.Lookup("CallDLL")
+	if !ok {
+		t.Fatal("CallDLL not found")
+	}
+	if fn.OpCode != 1 {
+		t.Fatalf("RealLive 1.2.4 should select the legacy CallDLL; opcode=%d", fn.OpCode)
+	}
+}
+
+func TestClassConstraintsAreDisjunctive(t *testing.T) {
+	reg, err := Parse(strings.NewReader(`
+module 001 = Jmp
+
+ver Avg2000, RealLive
+  fun dual <0:Jmp:00003, 0> ()
+end
+`))
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	reg.Target = TargetRealLive
+	fn, ok := reg.Lookup("dual")
+	if !ok {
+		t.Fatal("dual should be valid for RealLive")
+	}
+	if !reg.ValidForTarget(fn) {
+		t.Fatal("dual should be valid for RealLive")
+	}
+
+	reg.Target = TargetKinetic
+	fn, ok = reg.Lookup("dual")
+	if !ok {
+		t.Fatal("dual not found")
+	}
+	if reg.ValidForTarget(fn) {
+		t.Fatal("dual should not be valid for Kinetic")
+	}
 }
 
 func TestParseEndKeyword(t *testing.T) {
 	reg := parseTestKFN(t)
 	// "end" is a special case — keyword used as function name
 	fn, ok := reg.Lookup("end")
-	if !ok { t.Fatal("end function not found") }
-	if fn.OpCode != 14 { t.Errorf("end opcode: got %d, want 14", fn.OpCode) }
+	if !ok {
+		t.Fatal("end function not found")
+	}
+	if fn.OpCode != 14 {
+		t.Errorf("end opcode: got %d, want 14", fn.OpCode)
+	}
 }
 
 func TestGotoFuncs(t *testing.T) {
@@ -161,9 +273,14 @@ func TestGotoFuncs(t *testing.T) {
 	// Functions with IsGoto flag should be in GotoFuncs list
 	found := false
 	for _, name := range reg.GotoFuncs {
-		if name == "goto" { found = true; break }
+		if name == "goto" {
+			found = true
+			break
+		}
 	}
-	if !found { t.Error("'goto' should be in GotoFuncs") }
+	if !found {
+		t.Error("'goto' should be in GotoFuncs")
+	}
 }
 
 func TestIdentOfOpcode(t *testing.T) {
@@ -186,7 +303,10 @@ func TestReturnType(t *testing.T) {
 }
 
 func TestParseTarget(t *testing.T) {
-	tests := []struct{ in string; want Target }{
+	tests := []struct {
+		in   string
+		want Target
+	}{
 		{"reallive", TargetRealLive},
 		{"RealLive", TargetRealLive},
 		{"avg2000", TargetAVG2000},
@@ -233,12 +353,20 @@ func TestParseRealFile(t *testing.T) {
 		t.Errorf("expected 100+ functions, got %d", count)
 	}
 	// Should have common modules
-	if _, ok := reg.Modules["Jmp"]; !ok { t.Error("missing Jmp module") }
-	if _, ok := reg.Modules["Msg"]; !ok { t.Error("missing Msg module") }
-	if _, ok := reg.Modules["Str"]; !ok { t.Error("missing Str module") }
+	if _, ok := reg.Modules["Jmp"]; !ok {
+		t.Error("missing Jmp module")
+	}
+	if _, ok := reg.Modules["Msg"]; !ok {
+		t.Error("missing Msg module")
+	}
+	if _, ok := reg.Modules["Str"]; !ok {
+		t.Error("missing Str module")
+	}
 	// Should have goto
 	fn, ok := reg.Lookup("goto")
-	if !ok { t.Error("goto not found in real file") }
+	if !ok {
+		t.Error("goto not found in real file")
+	}
 	if fn.OpModule != 1 || fn.OpCode != 0 {
 		t.Errorf("goto: got %d:%d, want 1:0", fn.OpModule, fn.OpCode)
 	}

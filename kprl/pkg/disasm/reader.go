@@ -735,8 +735,9 @@ unquotLoop:
 		switch {
 		case c == '"':
 			// Enter quot mode
+			stopAfterClose := b.Len() == 0
 			r.Next()
-			if !r.readStringQuot(&b, sepStr) {
+			if !r.readStringQuot(&b, sepStr, stopAfterClose) {
 				break unquotLoop
 			}
 			continue
@@ -811,8 +812,9 @@ unquotLoop:
 
 // readStringQuot — OCaml's quot inner lexer (disassembler.ml L1318).
 // Reads bytes until a closing '"' or EOF. Returns true to continue in
-// unquot mode after the close quote, false on EOF.
-func (r *Reader) readStringQuot(b *strings.Builder, sepStr bool) bool {
+// unquot mode after the close quote, false on EOF or when a fully quoted
+// argument has ended.
+func (r *Reader) readStringQuot(b *strings.Builder, sepStr bool, stopAfterClose bool) bool {
 	for {
 		c, err := r.Next()
 		if err != nil {
@@ -838,7 +840,13 @@ func (r *Reader) readStringQuot(b *strings.Builder, sepStr bool) bool {
 			}
 
 		case '"':
-			// End of quot mode → back to unquot.
+			if stopAfterClose {
+				if quotedStringCanContinue(r) {
+					return true
+				}
+				return false
+			}
+			// End of quot mode -> back to unquot.
 			return true
 
 		default:
@@ -855,6 +863,14 @@ func (r *Reader) readStringQuot(b *strings.Builder, sepStr bool) bool {
 			}
 		}
 	}
+}
+
+func quotedStringCanContinue(r *Reader) bool {
+	next, err := r.Peek()
+	if err != nil {
+		return false
+	}
+	return next == '#' || isAsciiStringStart(next) || isShiftJISLead(next)
 }
 
 // LookAhead reports whether the next len(s) bytes match s without

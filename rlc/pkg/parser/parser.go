@@ -511,11 +511,15 @@ func (p *Parser) parseGotoOn() ast.Stmt {
 	p.expect(token.LCUR)
 	var labels []ast.Label
 	for p.cur.Type != token.RCUR && p.cur.Type != token.EOF {
+		if p.match(token.COMMA) || p.match(token.SEMI) {
+			continue
+		}
 		if p.cur.Type == token.LABEL {
 			labels = append(labels, ast.Label{Loc: p.loc(), Ident: p.cur.StrVal})
 			p.advance()
+			continue
 		}
-		p.match(token.COMMA)
+		p.advance()
 	}
 	p.match(token.RCUR)
 	return ast.GotoOnStmt{Loc: loc, Ident: ident, Expr: expr, Labels: labels}

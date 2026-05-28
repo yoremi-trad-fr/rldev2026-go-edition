@@ -386,6 +386,23 @@ func TestParseCaseOther(t *testing.T) {
 	}
 }
 
+func TestParseGotoOnSemicolonLabels(t *testing.T) {
+	sf := parse("goto_on (intL[10]) { @1; @2; @3 }")
+	if len(sf.Stmts) != 1 {
+		t.Fatalf("got %d stmts", len(sf.Stmts))
+	}
+	gs, ok := sf.Stmts[0].(ast.GotoOnStmt)
+	if !ok {
+		t.Fatalf("got %T", sf.Stmts[0])
+	}
+	if len(gs.Labels) != 3 {
+		t.Fatalf("labels = %d, want 3", len(gs.Labels))
+	}
+	if gs.Labels[0].Ident != "1" || gs.Labels[2].Ident != "3" {
+		t.Fatalf("labels = %#v", gs.Labels)
+	}
+}
+
 func TestParseBlock(t *testing.T) {
 	sf := parse(": halt ; break ;")
 	// ":" starts a block until ";"

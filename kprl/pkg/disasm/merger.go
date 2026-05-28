@@ -35,9 +35,11 @@ func addTextoutFails(result *DisassemblyResult, s string) bool {
 	if len(result.Commands) == 0 {
 		return true
 	}
-	// Walk backwards past hidden commands (#line directives, etc.).
+	// Walk backwards past non-text commands (#line directives, debug
+	// separators, etc.). They should not interrupt resource/control-code
+	// folding, even when -g makes them visible in the .org output.
 	i := len(result.Commands) - 1
-	for i >= 0 && result.Commands[i].Hidden {
+	for i >= 0 && mergeTransparentCommand(result.Commands[i]) {
 		i--
 	}
 	if i < 0 {
@@ -85,6 +87,10 @@ func addTextoutFails(result *DisassemblyResult, s string) bool {
 	}
 
 	return true
+}
+
+func mergeTransparentCommand(cmd Command) bool {
+	return cmd.Hidden || cmd.CType == "dbline" || cmd.CType == "debug"
 }
 
 func forceTextoutCommand(result *DisassemblyResult, cmd *Command, s string, opts Options) {
