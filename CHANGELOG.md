@@ -3,6 +3,32 @@
 This file tracks the RLdev2026 Go Edition beta history and the compatibility
 fixes validated during the project sessions.
 
+## Beta 2.6 - 2026-05-28
+
+Support and tooling updates:
+
+- Added an explicit GUI checkbox for RealLive debugger source extraction:
+  `Sources debug RealLive (-g / #line)`.
+- Kept normal extraction clean by default; debug `.org` generation is now an
+  intentional secondary output for native F3/F5/O workflows.
+- Added `docs/debug-rl/` with a concise RealLive debug-mode guide and a minimal
+  `Flag.ini.example`.
+
+CLANNAD Steam extraction fixes:
+
+- Added missing CLANNAD Steam `Shl` signatures for `1:Shl:04101` and
+  `1:Shl:04202`.
+- Fixed command-level `###PRINT` markers, including the CLANNAD Steam encoded
+  `###PR 01 00 T(` form, so they disassemble as text resources instead of raw
+  `op<35:035:21072,...>` calls.
+- Fixed quoted English `select`/string arguments that contain internal double
+  quotes.
+- Repaired late Steam argument parsing where bytecode argument counts show that
+  a unary-minus expression starts the next argument, covering cases such as
+  `objBgMove` and `InitFrame`.
+- Validated a full verbose extraction of the 235-file CLANNAD Steam corpus with
+  no remaining targeted raw opcode warnings.
+
 ## Beta 2.4 - 2026-05-27
 
 Support added for:

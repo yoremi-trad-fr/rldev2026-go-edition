@@ -10,9 +10,9 @@ import (
 	"strings"
 )
 
-// parseParamProto pulls the parameter-type tokens out of a KFN `fun`
-// line. It looks for the last parenthesised group on the line (after
-// the opcode triple) and returns one ParamType per top-level position.
+// parseParamProto pulls the first parameter prototype out of a KFN `fun`
+// line. It is kept for older tests/helpers; ParseKFN uses parseParamProtos so
+// overloaded functions retain every parenthesised prototype after the opcode.
 //
 // The KFN parameter mini-grammar we recognise:
 //
@@ -21,46 +21,73 @@ import (
 //	          | 'str' | 'strC' | 'strV'
 //	          | 'res' | 'special' | 'complex'
 //	          | 'any'
-//	flag    ::= '<' | '+' | '~' | …  (ignored — we only care about types)
+//	flag    ::= '<' | '>' | '+' | '~' | …
 //
 // Unknown tokens map to ParamAny. This isn't a full parser; just enough
 // to know whether a position is a `res`-typed string so we can route it
-// through the resource file like OCaml does.
-func parseParamProto(line string) []ParamType {
+// through the resource file like OCaml does, and whether a position is a
+// return slot so return-param functions can be rendered as assignments.
+func parseParamProto(line string) ([]ParamType, [][]ParamFlag) {
+	protos, flags := parseParamProtos(line)
+	if len(protos) == 0 {
+		return nil, nil
+	}
+	return protos[0], flags[0]
+}
+
+func parseParamProtos(line string) ([][]ParamType, [][][]ParamFlag) {
 	// Strip everything up to and including the opcode triple `<…,…>`.
 	if idx := strings.Index(line, ">"); idx >= 0 {
 		// In hardwired '/// fun_name <opcode>' lines there might be no
 		// further parens; that's fine — we'll bail out below.
 		line = line[idx+1:]
 	}
-	// Find the outermost parenthesised group.
-	open := strings.Index(line, "(")
-	if open < 0 {
-		return nil
-	}
-	depth := 0
-	close := -1
-	for i := open; i < len(line); i++ {
-		switch line[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				close = i
+
+	var protos [][]ParamType
+	var allFlags [][][]ParamFlag
+	for {
+		open := strings.Index(line, "(")
+		if open < 0 {
+			break
+		}
+		depth := 0
+		close := -1
+		for i := open; i < len(line); i++ {
+			switch line[i] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					close = i
+				}
+			}
+			if close >= 0 {
+				break
 			}
 		}
 		if close >= 0 {
-			break
+			body := line[open+1 : close]
+			proto, flags := parseParamBody(body)
+			protos = append(protos, proto)
+			allFlags = append(allFlags, flags)
+			line = line[close+1:]
+			continue
 		}
+		break
 	}
-	if close < 0 {
-		return nil
+
+	if len(protos) == 0 {
+		return nil, nil
 	}
-	body := line[open+1 : close]
+	return protos, allFlags
+}
+
+func parseParamBody(body string) ([]ParamType, [][]ParamFlag) {
 	// Split on top-level commas. The inner grammar can contain
 	// quoted names but no nested parens at this stage.
 	var params []ParamType
+	var flags [][]ParamFlag
 	cur := ""
 	inQuote := false
 	flushParam := func() {
@@ -69,12 +96,17 @@ func parseParamProto(line string) []ParamType {
 		if token == "" {
 			return
 		}
-		// Strip leading flag chars (`<`, `+`, `~`, `#`, etc.) and any
-		// quoted name annotation. `#` denotes an output/return slot in
-		// KFN syntax (e.g. `# res 'text'`); the type word follows it.
+		// Strip leading flag chars (`<`, `>`, `+`, `~`, `#`, etc.) and
+		// retain only the ones that affect source rendering.
+		var paramFlags []ParamFlag
 		for len(token) > 0 {
 			c := token[0]
-			if c == '<' || c == '+' || c == '~' || c == '&' || c == '*' || c == '#' || c == ' ' || c == '\t' {
+			if c == '>' {
+				paramFlags = append(paramFlags, ParamReturn)
+				token = token[1:]
+				continue
+			}
+			if c == '<' || c == '+' || c == '~' || c == '&' || c == '*' || c == '#' || c == '=' || c == ' ' || c == '\t' {
 				token = token[1:]
 				continue
 			}
@@ -86,6 +118,7 @@ func parseParamProto(line string) []ParamType {
 			typeWord = token[:sp]
 		}
 		params = append(params, paramTypeFromWord(typeWord))
+		flags = append(flags, paramFlags)
 	}
 	for i := 0; i < len(body); i++ {
 		c := body[i]
@@ -100,7 +133,7 @@ func parseParamProto(line string) []ParamType {
 		}
 	}
 	flushParam()
-	return params
+	return params, flags
 }
 
 // paramTypeFromWord maps a KFN type word to ParamType.
@@ -244,8 +277,9 @@ func ParseKFN(r io.Reader) (*FuncRegistry, error) {
 				// `res`, …) so the disassembler can pass sep_str=true to
 				// the string reader for `res`-typed params, matching
 				// OCaml read_soft_function (disassembler.ml L2314).
-				if proto := parseParamProto(trimmed); proto != nil {
-					def.Prototypes = [][]ParamType{proto}
+				if protos, flags := parseParamProtos(trimmed); len(protos) > 0 {
+					def.Prototypes = protos
+					def.ParamFlags = flags
 				}
 
 				reg.Register(opStr, def)

@@ -1689,10 +1689,6 @@ func compatibilityOverload(fd *kfn.FuncDef, params []ast.Param, hasReturnDest bo
 		argc++
 	}
 	switch fd.OpCode {
-	case 5, 6: // strsub / strrsub
-		if argc == 3 {
-			return 1, true
-		}
 	case 14, 15, 16, 17: // itoa_ws / itoa_s / itoa_w / itoa
 		if argc == 3 {
 			v, ok := knownRegistryVersion(reg)

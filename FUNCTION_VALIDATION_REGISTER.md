@@ -1,6 +1,6 @@
 # RLdev2026-Go function validation register
 
-Last update: 2026-05-27
+Last update: 2026-05-28
 
 This register tracks opcode/function signatures that have been checked against
 known-good game corpuses. It is meant to avoid re-auditing the same RealLive
@@ -72,7 +72,8 @@ Findings fixed from AIR debugging:
   compiled with the Steam `Gameexe.ini` and `reallive.kfn`; the 235 French
   `.org` files were scanned for the same function/opcode shapes.
 - Status: user gameplay validation on 2026-05-26; static compiler audit passed
-  for both English corpuses with no compile failures and no warning-like output.
+  for both English corpuses with no compile failures. Extraction audit updated
+  on 2026-05-28: the previously preserved Steam raw opcode warnings are fixed.
 
 Steam-specific audit notes:
 
@@ -81,9 +82,11 @@ Steam-specific audit notes:
 | Entry/kidoku marker | `Gameexe.ini` provides `KIDOKU_TYPE`; interpreter version is 1.6.7.3. | fixed and validated in game |
 | Steam interpreter detection | `SiglusEngine_Steam.exe` accepted by CLI and GUI interpreter lookup. | fixed |
 | Raw control textout | `SEEN9600` contains three preserved `raw #ff #01 endraw` stubs. | expected, must be retained |
-| Raw op fallback | Seven `op<...>` entries remain in each Steam extraction: two `Shl` opcodes and five `35:035:21072` calls. | preserved; no compile failure |
+| Raw op fallback | The previous seven targeted `op<...>` fallbacks are eliminated: two `Shl` calls now have KFN signatures and five encoded `###PRINT` markers now become text resources. | fixed |
 | Resource byte escapes | Resource strings containing raw byte escapes no longer create empty quote runs. | fixed |
 | String argument separators | Unquoted string arguments after another argument/operator receive a separator; quoted ASCII strings are unchanged. | fixed |
+| Internal quoted strings | English select strings such as `Say "Hello."` keep their internal quotes instead of splitting the argument too early. | fixed |
+| Unary-minus argument split | Late Steam calls whose bytecode `argc` proves the previous expression swallowed a following negative argument are split back into the expected argument list. | fixed |
 
 Findings fixed from CLANNAD Steam debugging:
 
@@ -98,6 +101,14 @@ Findings fixed from CLANNAD Steam debugging:
   must not be dropped.
 - String parameters that compile to unquoted bytes need comma separators when
   they are not the first emitted parameter.
+- Encoded command-level `###PRINT` markers can appear as ASCII `###PRINT(` or
+  as the CLANNAD Steam byte pattern `###PR 01 00 T(`; both are textout markers,
+  not unknown opcodes.
+- Some late Steam scripts encode adjacent negative arguments in a shape that can
+  be parsed greedily as subtraction. When the bytecode argument count proves
+  this happened, split the unary-minus expression back out as the next argument.
+- Native RealLive debug sources need `kprl -g` / `#line`; `flag.ini` only labels
+  variables for the F5 flag window and is not a scene/source index.
 
 ## CLANNAD Side Stories Steam 2011
 
@@ -142,10 +153,13 @@ Findings fixed from CLANNAD Side Stories debugging:
 | `strsub` and `strrsub` with 3 encoded args use overload 1. | General until contradicted by a later corpus | CLANNAD 1.2.3.5 |
 | Steam/late RealLive builds should use `KIDOKU_TYPE` from `Gameexe.ini` when present. | Version and game config gated | CLANNAD Steam 1.6.7.3 |
 | `raw #ff #01 endraw` textout stubs are bytecode-preserving, not display text. | Known Steam case | CLANNAD Steam `SEEN9600` |
+| Command-level `###PRINT` markers are textout markers, including CLANNAD Steam's encoded `###PR 01 00 T(` byte shape. | Steam/late RealLive files | CLANNAD Steam |
+| Greedy subtraction parses may need repair when `argc` proves a unary-minus-started argument was swallowed by the prior expression. | Steam/late RealLive files | CLANNAD Steam |
 | Unquoted string argument bytes need a separator after a prior argument/operator. | General string emission rule | CLANNAD Steam |
 | KFN `(store goto)` functions carry a trailing pointer like ordinary goto/gosub calls. | General KFN rule | CLANNAD Side Stories `SEEN2000` |
 | `eof` plus a following raw `halt` is a meaningful trailer shape and must be preserved. | Steam/late RealLive files | CLANNAD Side Stories |
 | Unknown interpreter version keeps the normal KFN/prototype selection, with default generation version 1.2.7.0. | Safety fallback | Compiler policy |
+| `kprl -g` emits source debug line mapping for the native RealLive debugger; `kprl -G` remains only the game-ID option. | Debug tooling | CLANNAD Steam debug audit |
 
 ## To expand
 

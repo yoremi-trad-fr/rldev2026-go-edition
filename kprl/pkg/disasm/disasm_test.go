@@ -102,6 +102,133 @@ func TestReadStringQuotedArgumentStopsBeforeAdjacentQuote(t *testing.T) {
 	}
 }
 
+func TestReadStringQuotedArgumentKeepsInternalQuotes(t *testing.T) {
+	tests := map[string]string{
+		"\"Say \"Hello.\"\"\n": "'Say \"Hello.\"'",
+		"\"Always add \"and a toilet seat cover\" to the end\"\n": "'Always add \"and a toilet seat cover\" to the end'",
+	}
+
+	for input, want := range tests {
+		r := NewReader([]byte(input), 0, len(input), ModeRealLive)
+		got, err := r.GetData()
+		if err != nil {
+			t.Fatalf("GetData(%q) error: %v", input, err)
+		}
+		if got != want {
+			t.Fatalf("GetData(%q) = %q, want %q", input, got, want)
+		}
+		if b, err := r.Peek(); err != nil || b != '\n' {
+			t.Fatalf("next byte = 0x%02x, %v; want newline", b, err)
+		}
+	}
+}
+
+func TestReadCommandPrintMarkerAtCommandBoundary(t *testing.T) {
+	for _, marker := range [][]byte{
+		[]byte("###PRINT("),
+		{'#', '#', '#', 'P', 'R', 0x01, 0x00, 'T', '('},
+	} {
+		var data []byte
+		addInt := func(v int32) {
+			data = append(data, '$', 0xff)
+			var buf [4]byte
+			binary.LittleEndian.PutUint32(buf[:], uint32(v))
+			data = append(data, buf[:]...)
+		}
+		data = append(data, marker...)
+		data = append(data, '$', 0x12, '[')
+		addInt(1020)
+		data = append(data, ']', ')', 0x00)
+
+		r := NewReader(data, 0, len(data), ModeRealLive)
+		result := &DisassemblyResult{SeenMap: NewSeenMap()}
+		opts := DefaultOptions()
+		if err := readCommand(r, &bytecode.FileHeader{}, result, opts); err != nil {
+			t.Fatalf("readCommand(% x) error: %v", marker, err)
+		}
+		if len(result.ResStrs) != 1 {
+			t.Fatalf("resources = %#v, want one", result.ResStrs)
+		}
+		if got, want := result.ResStrs[0], `\s{strS[1020]}`; got != want {
+			t.Fatalf("resource = %q, want %q", got, want)
+		}
+		if strings.Contains(result.Commands[0].Text(), "op<35") {
+			t.Fatalf("print marker was emitted as opcode: %q", result.Commands[0].Text())
+		}
+	}
+}
+
+func TestReadFuncArgsSplitsUnaryMinusArgsAfterGreedyExpression(t *testing.T) {
+	var data []byte
+	addInt := func(v int32) {
+		data = append(data, '$', 0xff)
+		var buf [4]byte
+		binary.LittleEndian.PutUint32(buf[:], uint32(v))
+		data = append(data, buf[:]...)
+	}
+
+	data = append(data, '(')
+	addInt(2)
+	addInt(992)
+	data = append(data, '\\', 0x01)
+	addInt(5048)
+	data = append(data, '\\', 0x01)
+	addInt(320)
+	addInt(86000)
+	data = append(data, ')')
+
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	args, err := readFuncArgsCtx(r, 4, nil, nil)
+	if err != nil {
+		t.Fatalf("readFuncArgsCtx() error: %v", err)
+	}
+	want := []string{"2", "992", "-5048 - 320", "86000"}
+	if strings.Join(args, "|") != strings.Join(want, "|") {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestReadFuncArgsSplitsMultipleUnaryMinusArgs(t *testing.T) {
+	var data []byte
+	addInt := func(v int32) {
+		data = append(data, '$', 0xff)
+		var buf [4]byte
+		binary.LittleEndian.PutUint32(buf[:], uint32(v))
+		data = append(data, buf[:]...)
+	}
+
+	data = append(data, '(')
+	addInt(84)
+	for _, v := range []int32{24, 12, 24, 12} {
+		data = append(data, '\\', 0x01)
+		addInt(v)
+	}
+	data = append(data, ')')
+
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	args, err := readFuncArgsCtx(r, 3, nil, nil)
+	if err != nil {
+		t.Fatalf("readFuncArgsCtx() error: %v", err)
+	}
+	want := []string{"84", "-24 - 12", "-24 - 12"}
+	if strings.Join(args, "|") != strings.Join(want, "|") {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestParseParamProtosKeepsOverloads(t *testing.T) {
+	protos, flags := parseParamProtos("fun ResetTimer <1:Sys:00110, 1> ('counter') ()")
+	if len(protos) != 2 {
+		t.Fatalf("prototype count = %d, want 2", len(protos))
+	}
+	if len(protos[0]) != 1 || len(flags[0]) != 1 {
+		t.Fatalf("first prototype = %#v / %#v, want one arg", protos[0], flags[0])
+	}
+	if len(protos[1]) != 0 || len(flags[1]) != 0 {
+		t.Fatalf("second prototype = %#v / %#v, want empty", protos[1], flags[1])
+	}
+}
+
 func TestMergeSkipsVisibleDebugLines(t *testing.T) {
 	result := &DisassemblyResult{
 		ResStrs: []string{`\{Sunohara}`},
@@ -326,6 +453,48 @@ func TestReadFunctionGenericGotoPointer(t *testing.T) {
 	want := "gosub_with (special<0>(intL[1])) @@PTR=305419896@@"
 	if got.Value != want {
 		t.Fatalf("command = %q, want %q", got.Value, want)
+	}
+}
+
+func TestReadFunctionReturnParamRendersAssignment(t *testing.T) {
+	var data []byte
+	addInt := func(v int32) {
+		data = append(data, '$', 0xff)
+		var buf [4]byte
+		binary.LittleEndian.PutUint32(buf[:], uint32(v))
+		data = append(data, buf[:]...)
+	}
+	addStrS := func(idx int32) {
+		data = append(data, '$', 0x12, '[')
+		addInt(idx)
+		data = append(data, ']')
+	}
+	data = append(data, '(')
+	addStrS(1)
+	addStrS(1004)
+	addInt(4)
+	data = append(data, ')')
+
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	result := &DisassemblyResult{}
+	reg := NewFuncRegistry()
+	reg.Register("1:010:00005,1", FuncDef{
+		Name:       "strsub",
+		Prototypes: [][]ParamType{{ParamStr, ParamStrC, ParamIntC}},
+		ParamFlags: [][][]ParamFlag{{{ParamReturn}, nil, nil}},
+	})
+	opts := DefaultOptions()
+	opts.FuncReg = reg
+
+	op := Opcode{Type: 1, Module: 10, Function: 5, Overload: 0}
+	if err := readFunction(r, result, 0, op, 3, opts); err != nil {
+		t.Fatalf("readFunction() error: %v", err)
+	}
+	if len(result.Commands) != 1 {
+		t.Fatalf("commands = %#v", result.Commands)
+	}
+	if got, want := result.Commands[0].Text(), "strS[1] = strsub(strS[1004], 4)"; got != want {
+		t.Fatalf("command = %q, want %q", got, want)
 	}
 }
 

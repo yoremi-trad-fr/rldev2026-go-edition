@@ -680,7 +680,7 @@ func (r *Reader) GetDataSep(sepStr bool) (string, error) {
 			// and dispatches to get_string, which converts the
 			// `###PRINT(<expr>)` form to `\s{<expr>}` or `\i{<expr>}`
 			// depending on the expression type.
-			if r.LookAhead("###PRINT(") {
+			if r.LookAheadPrintMarker() {
 				return r.readStringUnquot(sepStr)
 			}
 			return r.GetExpression()
@@ -744,7 +744,7 @@ unquotLoop:
 
 		case c == '#':
 			// Maybe "###PRINT("
-			if r.matchLiteral("###PRINT(") {
+			if r.matchPrintMarker() {
 				expr, err := r.GetExpression()
 				if err != nil {
 					return b.String(), err
@@ -841,6 +841,20 @@ func (r *Reader) readStringQuot(b *strings.Builder, sepStr bool, stopAfterClose 
 
 		case '"':
 			if stopAfterClose {
+				if next, err := r.Peek(); err == nil {
+					if next == '"' {
+						if quotedStringCloseDelimiter(r.peekByteAt(1)) {
+							r.Next()
+							b.WriteByte('"')
+							return false
+						}
+						return false
+					}
+					if !quotedStringCloseDelimiter(next) && r.hasQuoteBeforeCloseDelimiter() {
+						b.WriteByte('"')
+						continue
+					}
+				}
 				if quotedStringCanContinue(r) {
 					return true
 				}
@@ -873,6 +887,27 @@ func quotedStringCanContinue(r *Reader) bool {
 	return next == '#' || isAsciiStringStart(next) || isShiftJISLead(next)
 }
 
+func quotedStringCloseDelimiter(b byte) bool {
+	switch b {
+	case 0, ')', ',', '\n', '}':
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *Reader) hasQuoteBeforeCloseDelimiter() bool {
+	for i := r.pos; i < r.limit; i++ {
+		switch r.data[i] {
+		case '"':
+			return true
+		case ')', ',', '\n', '}':
+			return false
+		}
+	}
+	return false
+}
+
 // LookAhead reports whether the next len(s) bytes match s without
 // consuming them. Symmetric with matchLiteral which consumes on
 // success. Used by GetDataSep to dispatch to readStringUnquot at
@@ -883,6 +918,36 @@ func (r *Reader) LookAhead(s string) bool {
 	}
 	for i := 0; i < len(s); i++ {
 		if r.data[r.pos+i] != s[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Reader) LookAheadPrintMarker() bool {
+	return r.lookAheadBytes([]byte("###PRINT(")) ||
+		r.lookAheadBytes([]byte{'#', '#', '#', 'P', 'R', 0x01, 0x00, 'T', '('})
+}
+
+func (r *Reader) matchPrintMarker() bool {
+	if r.lookAheadBytes([]byte("###PRINT(")) {
+		r.pos += len("###PRINT(")
+		return true
+	}
+	marker := []byte{'#', '#', '#', 'P', 'R', 0x01, 0x00, 'T', '('}
+	if r.lookAheadBytes(marker) {
+		r.pos += len(marker)
+		return true
+	}
+	return false
+}
+
+func (r *Reader) lookAheadBytes(marker []byte) bool {
+	if r.pos+len(marker) > r.limit {
+		return false
+	}
+	for i := 0; i < len(marker); i++ {
+		if r.data[r.pos+i] != marker[i] {
 			return false
 		}
 	}
@@ -1101,6 +1166,11 @@ func readCommand(r *Reader, hdr *bytecode.FileHeader, result *DisassemblyResult,
 		result.Commands = append(result.Commands, cmd)
 
 	case b == '#':
+		r.Rollback(1)
+		if r.LookAheadPrintMarker() {
+			return readTextout(r, result, offset, opts)
+		}
+		r.Next()
 		// Function call: '#' type module func(16) argc(16) overload
 		opType, err := r.Next()
 		if err != nil {
@@ -1301,10 +1371,14 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 	// Look up the prototype so we know which parameters are typed as
 	// ResStr and need sep_str=true (resource-routed) when read.
 	var proto []ParamType
+	var funcDef FuncDef
+	var haveFuncDef bool
 	if opts.FuncReg != nil {
 		if def, ok := opts.FuncReg.LookupOpcode(op); ok {
-			if len(def.Prototypes) > 0 {
-				proto = def.Prototypes[0]
+			funcDef = def
+			haveFuncDef = true
+			if idx := selectPrototypeIndex(def, op); idx >= 0 {
+				proto = def.Prototypes[idx]
 			}
 		}
 	}
@@ -1317,10 +1391,8 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 	if err != nil {
 		// Best-effort: emit with name if known.
 		funcName := opcodeDisplay(op, opts.FuncReg)
-		if opts.FuncReg != nil {
-			if def, ok := opts.FuncReg.LookupOpcode(op); ok {
-				funcName = def.Name
-			}
+		if haveFuncDef {
+			funcName = funcDef.Name
 		}
 		cmd.Kepago = []CommandElem{ElemString{Value: fmt.Sprintf("%s(?)", funcName)}}
 		result.Commands = append(result.Commands, cmd)
@@ -1332,14 +1404,12 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 	var hasGotoPointer bool
 	var ccode string
 	var ccodeFlags []FuncFlag
-	if opts.FuncReg != nil {
-		if def, ok := opts.FuncReg.LookupOpcode(op); ok {
-			funcName = def.Name
-			hasPushStore = def.HasFlag(FlagPushStore)
-			hasGotoPointer = def.HasFlag(FlagIsGoto)
-			ccode = def.Ccode
-			ccodeFlags = def.Flags
-		}
+	if haveFuncDef {
+		funcName = funcDef.Name
+		hasPushStore = funcDef.HasFlag(FlagPushStore)
+		hasGotoPointer = funcDef.HasFlag(FlagIsGoto)
+		ccode = funcDef.Ccode
+		ccodeFlags = funcDef.Flags
 	}
 
 	// Ccode-form opcodes (FontSize → \size, shake → \shake, …):
@@ -1364,6 +1434,31 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 		cmd.Args = args
 		result.Commands = append(result.Commands, cmd)
 		return nil
+	}
+
+	if haveFuncDef {
+		if returnIdx := returnParamIndex(funcDef, op); returnIdx >= 0 && returnIdx < len(args) && funcName != "" {
+			callArgs := make([]string, 0, len(args)-1)
+			callArgs = append(callArgs, args[:returnIdx]...)
+			callArgs = append(callArgs, args[returnIdx+1:]...)
+
+			var assign strings.Builder
+			assign.WriteString(args[returnIdx])
+			assign.WriteString(" = ")
+			assign.WriteString(funcName)
+			assign.WriteByte('(')
+			for i, arg := range callArgs {
+				if i > 0 {
+					assign.WriteString(", ")
+				}
+				assign.WriteString(arg)
+			}
+			assign.WriteByte(')')
+
+			cmd.Kepago = []CommandElem{ElemString{Value: assign.String()}}
+			result.Commands = append(result.Commands, cmd)
+			return nil
+		}
 	}
 
 	var sb strings.Builder
@@ -1405,6 +1500,31 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 	}
 	result.Commands = append(result.Commands, cmd)
 	return nil
+}
+
+func selectPrototypeIndex(def FuncDef, op Opcode) int {
+	if len(def.Prototypes) == 0 {
+		return -1
+	}
+	if op.Overload >= 0 && op.Overload < len(def.Prototypes) {
+		return op.Overload
+	}
+	return 0
+}
+
+func returnParamIndex(def FuncDef, op Opcode) int {
+	idx := selectPrototypeIndex(def, op)
+	if idx < 0 || idx >= len(def.ParamFlags) {
+		return -1
+	}
+	for paramIdx, flags := range def.ParamFlags[idx] {
+		for _, flag := range flags {
+			if flag == ParamReturn {
+				return paramIdx
+			}
+		}
+	}
+	return -1
 }
 
 // readStrAssign handles the Strcpy/Strcat short form (overload 0).
@@ -2162,6 +2282,9 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 				// tolerates this silently. Only the opposite case —
 				// fewer args than argc — is a real stream desync.
 				if argc > 0 && len(args) < argc {
+					args = expandMinusSeparatedArgs(args, argc)
+				}
+				if argc > 0 && len(args) < argc {
 					// Soft signal: in OCaml read_soft_function this
 					// is also emitted but with `warning lexbuf` —
 					// however many real opcodes have Fake (=) params
@@ -2287,6 +2410,67 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 	return args, nil
 }
 
+func expandMinusSeparatedArgs(args []string, argc int) []string {
+	if argc <= 0 || len(args) >= argc {
+		return args
+	}
+	for i, arg := range args {
+		groupCount := argc - len(args) + 1
+		expanded, ok := splitMinusArg(arg, groupCount)
+		if !ok {
+			continue
+		}
+		out := make([]string, 0, len(args)-1+len(expanded))
+		out = append(out, args[:i]...)
+		out = append(out, expanded...)
+		out = append(out, args[i+1:]...)
+		return out
+	}
+	return args
+}
+
+func splitMinusArg(arg string, groupCount int) ([]string, bool) {
+	if groupCount < 2 {
+		return nil, false
+	}
+	parts := strings.Split(arg, " - ")
+	if len(parts) < groupCount {
+		return nil, false
+	}
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+		if parts[i] == "" {
+			return nil, false
+		}
+	}
+
+	tailGroups := groupCount - 1
+	tailParts := len(parts) - 1
+	if tailParts < tailGroups {
+		return nil, false
+	}
+
+	chunk := tailParts / tailGroups
+	if chunk < 1 {
+		chunk = 1
+	}
+	out := make([]string, 0, groupCount)
+	out = append(out, parts[0])
+	idx := 1
+	for group := 1; group < groupCount; group++ {
+		end := idx + chunk
+		if group == groupCount-1 || end > len(parts) {
+			end = len(parts)
+		}
+		out = append(out, "-"+strings.Join(parts[idx:end], " - "))
+		idx = end
+	}
+	if idx != len(parts) {
+		return nil, false
+	}
+	return out, true
+}
+
 // readAssignment reads a variable assignment ('$' prefix).
 //
 // OCaml reference: get_assignment (disassembler.ml L1294).
@@ -2409,7 +2593,22 @@ textoutLoop:
 		if !inQuot {
 			// unquot mode: terminators end the textout.
 			switch c {
-			case 0x00, '#', '$', '\n', '@':
+			case '#':
+				if r.matchPrintMarker() {
+					expr, err := r.GetExpression()
+					if err != nil {
+						return err
+					}
+					_ = r.Expect(')', "readTextout/print")
+					kind := 'i'
+					if len(expr) > 0 && expr[0] == 's' {
+						kind = 's'
+					}
+					fmt.Fprintf(&b, "\\%c{%s}", kind, expr)
+					continue
+				}
+				break textoutLoop
+			case 0x00, '$', '\n', '@':
 				break textoutLoop
 			case '"':
 				r.Next()

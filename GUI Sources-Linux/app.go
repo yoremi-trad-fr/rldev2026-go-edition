@@ -366,7 +366,7 @@ func (a *App) RldevList(seenFile string) string {
 	return ""
 }
 
-func (a *App) RldevDisassemble(seenFile, kfnFile, encoding, gameID, outputDir string) string {
+func (a *App) RldevDisassemble(seenFile, kfnFile, encoding, gameID string, debugInfo bool, outputDir string) string {
 	a.log("========================================")
 	a.log("  RLdev - Desassemblage SEEN.txt")
 	a.log("========================================")
@@ -395,6 +395,10 @@ func (a *App) RldevDisassemble(seenFile, kfnFile, encoding, gameID, outputDir st
 	args = append(args, "-kfn", kfnFile)
 	if gameID != "" {
 		args = append(args, "-G", gameID)
+	}
+	if debugInfo {
+		args = append(args, "-g")
+		a.log("Sources debug RealLive: oui (-g / #line)")
 	}
 	args = append(args, seenFile)
 

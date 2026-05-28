@@ -1,0 +1,5 @@
+intA[0]:0:example_intA_flag
+intB[0]:0:example_intB_flag
+intC[1000]:0:example_route_flag
+intL[0]:0:example_local_flag
+strS[0]:0:example_string_slot

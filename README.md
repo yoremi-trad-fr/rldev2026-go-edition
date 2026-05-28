@@ -1,12 +1,13 @@
-### Status update: `27/05/2026`
+### Status update: `28/05/2026`
 <table>
   <tr>
     <td align="center" width="100%">
-      <h2>Rldev2026-Go édition + GUI</h2>
+      <h2>Rldev2026-Go Ã©dition + GUI</h2>
     </td>
   </tr>
 </table>
 
+Update : 28/05/2026 : Beta 2.6 adds RealLive debug-source extraction in the GUI and fixes the remaining CLANNAD Steam extraction opcode warnings
 Update : 27/05/2026 : Clannad Side Stories Steam (2011) now supported
 Update : 25/05/2026 : Oni uta + Royal Nekomimi Academy + Clannad Steam (2015) now supported
 Update : 24/05/2026 : AIR is now supported - Creating a list of validated features
@@ -55,14 +56,12 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 </table>
 
 
-### Missing original ISOs: I’m looking for these ISOs for my testing.
-#### ( If you own the physical version of the game, you could also create an ISO from it – that would be a huge help!)
+### Missing original ISOs: Iâ€™m looking for these ISOs for my testing.
+#### ( If you own the physical version of the game, you could also create an ISO from it â€“ that would be a huge help!)
 
 1-Tomoyo After 18+ (2005)
 
-2-Harmonia 2016 (non steam)
-
-3-Clannad Side Stories (non steam)
+2-Clannad Side Stories (non steam)
 
 <table>
   <tr>
@@ -95,7 +94,7 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### Harmonia 2016-Steam
 
-### Harmonia 2021-Steam HD édition
+### Harmonia 2021-Steam HD Ã©dition
 
 ### Planetarian (2006)
 
@@ -117,6 +116,12 @@ This project is a full port of the **Rldev2026** toolchain to the **Go language*
 
 The goal is to provide a modern and portable implementation capable of running natively on current operating systems without relying on outdated environments such as Cygwin or virtual machines.
 A GUI is available; the aim is to make it easy for anyone to work with ReaLlive engine files for fan translations
+
+Beta 2.6 adds an explicit extraction option for the native RealLive debugger:
+`Sources debug RealLive (-g / #line)`. Keep it disabled for normal translation
+sources, and enable it only when generating `.org` files for the in-game
+F3/F5/O debug workflow. See `docs/debug-rl/README.md` for the concise debug
+mode and `flag.ini` guide.
 
 
 <table>

@@ -9,7 +9,7 @@ export function RldevCompile(arg1:string,arg2:string,arg3:string,arg4:string,arg
 
 export function RldevCompileBatch(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:boolean,arg8:string):Promise<string>;
 
-export function RldevDisassemble(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<string>;
+export function RldevDisassemble(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean,arg6:string):Promise<string>;
 
 export function RldevExtract(arg1:string,arg2:string):Promise<string>;
 

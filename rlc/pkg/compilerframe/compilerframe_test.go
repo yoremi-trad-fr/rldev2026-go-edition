@@ -534,7 +534,7 @@ func TestReturnAssignmentInjectsDestinationBeforeStringRewrite(t *testing.T) {
 	}
 }
 
-func TestStrsubThreeArgUsesObservedOverload(t *testing.T) {
+func TestStrsubThreeArgUsesShortOverload(t *testing.T) {
 	c := newComp()
 	registerStrsub(c)
 	loc := ast.Loc{File: "t", Line: 1}
@@ -550,8 +550,55 @@ func TestStrsubThreeArgUsesObservedOverload(t *testing.T) {
 	if c.HasErrors() {
 		t.Fatalf("compile errors: %v", c.Errors)
 	}
-	if findCodeIR(c, codegen.EncodeOpcode(1, 10, 5, 3, 1)) < 0 {
-		t.Fatal("three-argument strsub should use overload 1")
+	if findCodeIR(c, codegen.EncodeOpcode(1, 10, 5, 3, 0)) < 0 {
+		t.Fatal("three-argument strsub should use overload 0")
+	}
+}
+
+func TestStrsubAssignmentInjectsDestinationWithShortOverload(t *testing.T) {
+	c := newComp()
+	registerStrsub(c)
+	loc := ast.Loc{File: "t", Line: 1}
+	c.Parse([]ast.Stmt{ast.AssignStmt{
+		Loc:  loc,
+		Dest: ast.StrVar{Loc: loc, Bank: 18, Index: ast.IntLit{Loc: loc, Val: 1}},
+		Op:   ast.AssignSet,
+		Expr: ast.FuncCall{
+			Loc:   loc,
+			Ident: "strsub",
+			Params: []ast.Param{
+				ast.SimpleParam{Loc: loc, Expr: ast.StrVar{Loc: loc, Bank: 18, Index: ast.IntLit{Loc: loc, Val: 1004}}},
+				ast.SimpleParam{Loc: loc, Expr: ast.IntLit{Loc: loc, Val: 4}},
+			},
+		},
+	}})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	if findCodeIR(c, codegen.EncodeOpcode(1, 10, 5, 3, 0)) < 0 {
+		t.Fatal("strsub assignment should inject destination and use overload 0")
+	}
+}
+
+func TestStrsubFourArgUsesLongOverload(t *testing.T) {
+	c := newComp()
+	registerStrsub(c)
+	loc := ast.Loc{File: "t", Line: 1}
+	c.Parse([]ast.Stmt{ast.FuncCallStmt{
+		Loc:   loc,
+		Ident: "strsub",
+		Params: []ast.Param{
+			ast.SimpleParam{Loc: loc, Expr: ast.StrVar{Loc: loc, Bank: 18, Index: ast.IntLit{Loc: loc, Val: 0}}},
+			ast.SimpleParam{Loc: loc, Expr: ast.StrVar{Loc: loc, Bank: 18, Index: ast.IntLit{Loc: loc, Val: 1011}}},
+			ast.SimpleParam{Loc: loc, Expr: ast.IntVar{Loc: loc, Bank: 10, Index: ast.IntLit{Loc: loc, Val: 0}}},
+			ast.SimpleParam{Loc: loc, Expr: ast.IntLit{Loc: loc, Val: 1}},
+		},
+	}})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	if findCodeIR(c, codegen.EncodeOpcode(1, 10, 5, 4, 1)) < 0 {
+		t.Fatal("four-argument strsub should use overload 1")
 	}
 }
 

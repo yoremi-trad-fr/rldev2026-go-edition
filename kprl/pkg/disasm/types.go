@@ -249,6 +249,13 @@ const (
 	ParamResStr           // Resource string
 )
 
+// ParamFlag describes KFN per-parameter modifiers that affect rendering.
+type ParamFlag int
+
+const (
+	ParamReturn ParamFlag = iota // `>` parameter receives the return value
+)
+
 // FuncFlag describes properties of a function.
 type FuncFlag int
 
@@ -273,6 +280,7 @@ type FuncDef struct {
 	Name       string
 	Flags      []FuncFlag
 	Prototypes [][]ParamType // One or more parameter lists
+	ParamFlags [][][]ParamFlag
 
 	// Ccode is the kepago "control-code" rendering name for this
 	// function, set when the KFN entry has a `{xxx}` annotation
