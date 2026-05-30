@@ -41,6 +41,31 @@ func TestReaderBasics(t *testing.T) {
 	}
 }
 
+func TestParseKFNContinuationPrototypes(t *testing.T) {
+	src := strings.NewReader(`
+module 010 = Str
+fun zentohan <1:Str:00011, 1> (>str 'buf')
+                                  (strC 'src', >str 'dst')
+`)
+	reg, err := ParseKFN(src)
+	if err != nil {
+		t.Fatalf("ParseKFN() error: %v", err)
+	}
+	def, ok := reg.LookupOpcode(Opcode{Type: 1, Module: 10, Function: 11, Overload: 1})
+	if !ok {
+		t.Fatal("zentohan opcode not registered")
+	}
+	if len(def.Prototypes) != 2 {
+		t.Fatalf("prototype count = %d, want 2", len(def.Prototypes))
+	}
+	if got := def.Prototypes[1]; len(got) != 2 || got[0] != ParamStrC || got[1] != ParamStr {
+		t.Fatalf("prototype[1] = %#v, want [ParamStrC ParamStr]", got)
+	}
+	if len(def.ParamFlags[1]) != 2 || len(def.ParamFlags[1][1]) != 1 || def.ParamFlags[1][1][0] != ParamReturn {
+		t.Fatalf("prototype[1] return flags = %#v, want return on second parameter", def.ParamFlags[1])
+	}
+}
+
 func TestReaderInt(t *testing.T) {
 	data := make([]byte, 8)
 	binary.LittleEndian.PutUint32(data[0:], 0x12345678)
@@ -102,6 +127,22 @@ func TestReadStringQuotedArgumentStopsBeforeAdjacentQuote(t *testing.T) {
 	}
 }
 
+func TestGetDataParsesHyphenPrefixedSelectString(t *testing.T) {
+	input := "-\" Test Name -\"}"
+	r := NewReader([]byte(input), 0, len(input), ModeRealLive)
+
+	got, err := r.GetData()
+	if err != nil {
+		t.Fatalf("GetData() error: %v", err)
+	}
+	if got != "'- Test Name -'" {
+		t.Fatalf("GetData() = %q, want %q", got, "'- Test Name -'")
+	}
+	if b, err := r.Peek(); err != nil || b != '}' {
+		t.Fatalf("next byte = 0x%02x, %v; want '}'", b, err)
+	}
+}
+
 func TestReadStringQuotedArgumentKeepsInternalQuotes(t *testing.T) {
 	tests := map[string]string{
 		"\"Say \"Hello.\"\"\n": "'Say \"Hello.\"'",
@@ -120,6 +161,36 @@ func TestReadStringQuotedArgumentKeepsInternalQuotes(t *testing.T) {
 		if b, err := r.Peek(); err != nil || b != '\n' {
 			t.Fatalf("next byte = 0x%02x, %v; want newline", b, err)
 		}
+	}
+}
+
+func TestReadFuncArgsQuotedStringBeforeExpressionArg(t *testing.T) {
+	var data []byte
+	data = append(data, '(')
+	data = append(data, []byte("\"DUMMY\"")...)
+	data = append(data, '$', 0xff)
+	var imm [4]byte
+	binary.LittleEndian.PutUint32(imm[:], 157)
+	data = append(data, imm[:]...)
+	data = append(data, []byte("\"TOMOYO_ME_ALL_A\"")...)
+	data = append(data, ')')
+
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	args, err := readFuncArgsCtx(r, 1, []ParamType{ParamStrC, ParamIntC, ParamStrC}, nil)
+	if err != nil {
+		t.Fatalf("readFuncArgsCtx() error: %v", err)
+	}
+	want := []string{"'DUMMY'", "157", "'TOMOYO_ME_ALL_A'"}
+	if len(args) != len(want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("args[%d] = %q, want %q (all args %#v)", i, args[i], want[i], args)
+		}
+	}
+	if r.Pos() != len(data) {
+		t.Fatalf("reader pos = %d, want %d", r.Pos(), len(data))
 	}
 }
 

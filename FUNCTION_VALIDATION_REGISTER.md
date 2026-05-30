@@ -1,6 +1,6 @@
 # RLdev2026-Go function validation register
 
-Last update: 2026-05-28
+Last update: 2026-05-30
 
 This register tracks opcode/function signatures that have been checked against
 known-good game corpuses. It is meant to avoid re-auditing the same RealLive
@@ -145,6 +145,41 @@ Findings fixed from CLANNAD Side Stories debugging:
   the resource indices have been checked. `SEEN0001` has a known split around
   `*Bo\shake{2}` / `nk*`; fusing it shifts every following text resource by one.
 
+## Tomoyo After 2010 / Steam 2011
+
+- Interpreters: Tomoyo After Memorial Edition 2010 JP and Tomoyo After Steam
+  2011 English.
+- Corpus: JP 2010 native SJIS, Steam 2011 native UTF-8, FR 2010 patch extracted
+  from OCaml-compiled SEEN, and FR 2011 patch extracted from OCaml-compiled
+  SEEN.
+- Status: user gameplay validation on 2026-05-30; the four SEEN roundtrips
+  compile/extract cleanly. JP 2010 `type` rendering was validated after
+  restoring the original JP `G00` resources.
+
+Tomoyo audit notes:
+
+| Area | Evidence | Status |
+| --- | --- | --- |
+| Steam type transplant | FR patch adds `SEEN9900` text table and adapts `SEEN9070` to use `S_TYPING_EN`. | documented |
+| Native JP type | JP 2010 native uses image resources `S_TYPINGxxx`; no `SEEN9900` is present. | validated |
+| JP first-line type issue | `SEEN0707` / `SEEN9070` bytecode roundtrips correctly; the bad `50_100_150...` display came from mixed Steam English `G00` resources. | resource issue, not script issue |
+| KFN continuation prototypes | Multi-line prototypes such as `zentohan` are parsed as a single function definition. | fixed |
+| Legacy select strings | `-"..."` select/menu strings in old RLdev output are parsed as strings. | fixed |
+| `DUMMYCHECK_DISC` | Old bytecode can report `argc = 1` while the KFN prototype has three args. | fixed |
+| Archive keys | Optional `game.cfg` keys were merged into `kprl -G`; Tomoyo 2010/2011 tested here did not require a key. | available |
+
+Findings fixed from Tomoyo debugging:
+
+- KFN parser lines that start with a prototype continuation must be folded into
+  the prior `fun` line before parsing overloads.
+- The disassembler should allow a literal hyphen to begin an old select/menu
+  string argument.
+- For old KFN calls where a quoted string is followed by `$ff <int>`, `$` can
+  be an argument boundary, not part of the preceding string.
+- JP native `type` roundtrip depends on matching script and image resources:
+  Steam English `G00` files must not be mixed with JP 2010 native
+  `S_TYPINGxxx` resources.
+
 ## Current compatibility rules
 
 | Rule | Scope | Source |
@@ -156,10 +191,14 @@ Findings fixed from CLANNAD Side Stories debugging:
 | Command-level `###PRINT` markers are textout markers, including CLANNAD Steam's encoded `###PR 01 00 T(` byte shape. | Steam/late RealLive files | CLANNAD Steam |
 | Greedy subtraction parses may need repair when `argc` proves a unary-minus-started argument was swallowed by the prior expression. | Steam/late RealLive files | CLANNAD Steam |
 | Unquoted string argument bytes need a separator after a prior argument/operator. | General string emission rule | CLANNAD Steam |
+| KFN prototype continuation lines belong to the previous `fun` declaration when they start with a parenthesized overload. | General KFN parsing | Tomoyo After `zentohan` |
+| A quoted string followed by `$ff <int>` may need to end at `$` when the KFN prototype expects another argument. | Old bytecode/KFN mismatch | Tomoyo After / CLANNAD Steam `DUMMYCHECK_DISC` |
+| Hyphen-prefixed `-"..."` menu text is string data, not a unary-minus expression. | Legacy RLdev select output | Tomoyo After Steam FR `SEEN0001` |
 | KFN `(store goto)` functions carry a trailing pointer like ordinary goto/gosub calls. | General KFN rule | CLANNAD Side Stories `SEEN2000` |
 | `eof` plus a following raw `halt` is a meaningful trailer shape and must be preserved. | Steam/late RealLive files | CLANNAD Side Stories |
 | Unknown interpreter version keeps the normal KFN/prototype selection, with default generation version 1.2.7.0. | Safety fallback | Compiler policy |
 | `kprl -g` emits source debug line mapping for the native RealLive debugger; `kprl -G` remains only the game-ID option. | Debug tooling | CLANNAD Steam debug audit |
+| `kprl -G` game keys are optional and only needed for titles whose archived SEEN bytecode is encrypted after decompression. | Archive key handling | Tomoyo/game.cfg audit |
 
 ## To expand
 

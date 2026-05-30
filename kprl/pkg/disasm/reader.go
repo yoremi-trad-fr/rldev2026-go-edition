@@ -569,7 +569,7 @@ func varPrefix(t byte) string {
 // Dispatch by next byte:
 //   - ','           → consumed (debug separator) and recurse
 //   - '\n' + 2/4 b  → consumed (debug line marker) and recurse
-//   - [A-Z 0-9 ? _ "] | sjs1 | "###PRINT(" → roll back, parse string
+//   - [A-Z 0-9 ? _ - "] | sjs1 | "###PRINT(" → roll back, parse string
 //   - 'a' xx        → __special[xx](args)  (rare, mostly unused)
 //   - anything else → roll back, parse expression
 func (r *Reader) GetData() (string, error) {
@@ -693,12 +693,14 @@ func (r *Reader) GetDataSep(sepStr bool) (string, error) {
 }
 
 // isAsciiStringStart returns true if the byte starts a bare unquoted
-// string in the OCaml grammar — that is one of [A-Z 0-9 ? _].
+// string in the OCaml grammar — usually [A-Z 0-9 ? _]. Some select menu
+// strings emitted by old RLdev builds begin with a literal hyphen outside
+// quotes (`-"text"`), so treat '-' as text too.
 // Lowercase letters are NOT included on purpose.
 func isAsciiStringStart(b byte) bool {
 	return (b >= 'A' && b <= 'Z') ||
 		(b >= '0' && b <= '9') ||
-		b == '?' || b == '_'
+		b == '?' || b == '_' || b == '-'
 }
 
 // readStringUnquot — OCaml get_string (disassembler.ml L1313).
@@ -706,7 +708,7 @@ func isAsciiStringStart(b byte) bool {
 // Strings in RealLive bytecode use a peculiar two-mode encoding:
 //
 //   - "unquot" mode (default outside double-quotes):
-//     collects [A-Z 0-9 ? _ sjs-double-byte] runs as raw text;
+//     collects [A-Z 0-9 ? _ - sjs-double-byte] runs as raw text;
 //     handles "###PRINT(expr)" → \i{expr} or \s{expr};
 //     a '"' switches to quot mode;
 //     any other byte ends the string (rolled back for caller).
@@ -889,7 +891,7 @@ func quotedStringCanContinue(r *Reader) bool {
 
 func quotedStringCloseDelimiter(b byte) bool {
 	switch b {
-	case 0, ')', ',', '\n', '}':
+	case 0, ')', ',', '\n', '}', '$':
 		return true
 	default:
 		return false

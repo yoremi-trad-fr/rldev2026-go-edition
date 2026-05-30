@@ -1,3 +1,11 @@
+//go:build ignore
+
+// Legacy scratch transposition kept out of normal builds.
+//
+// The active compiler lives in rlc/pkg/compilerframe and rlc/pkg/function.
+// This file still mirrors an early direct port sketch, but it is not wired to
+// the current compiler state and should not be part of `go test ./...`.
+//
 // Function typechecking and compilation.
 // Transposed from OCaml's rlc/function.ml (~726 lines) + funcAsm.ml (~210 lines).
 //
@@ -19,9 +27,13 @@ import (
 
 // resolveFunc looks up a function by identifier and returns matching definitions.
 func (c *Compiler) resolveFunc(ident string) []kfn.FuncDef {
-	if c.Reg == nil { return nil }
+	if c.Reg == nil {
+		return nil
+	}
 	fns, ok := c.Reg.Functions[ident]
-	if !ok { return nil }
+	if !ok {
+		return nil
+	}
 	return fns
 }
 
@@ -63,7 +75,9 @@ func (c *Compiler) compileResolvedFunc(loc ast.Loc, fn kfn.FuncDef, params []ast
 	}
 
 	argc := len(params)
-	if label != nil { argc++ }
+	if label != nil {
+		argc++
+	}
 
 	c.Output.EmitOpcode(loc, fn.OpType, fn.OpModule, fn.OpFunction, argc, overload)
 
@@ -71,11 +85,15 @@ func (c *Compiler) compileResolvedFunc(loc ast.Loc, fn kfn.FuncDef, params []ast
 	if hasParams {
 		c.Output.AddCode(loc, []byte{'('})
 		for i, p := range params {
-			if i > 0 { c.Output.AddCode(loc, []byte{','}) }
+			if i > 0 {
+				c.Output.AddCode(loc, []byte{','})
+			}
 			c.compileTypedParam(loc, fn, overload, i, p)
 		}
 		if label != nil {
-			if len(params) > 0 { c.Output.AddCode(loc, []byte{','}) }
+			if len(params) > 0 {
+				c.Output.AddCode(loc, []byte{','})
+			}
 			c.Output.AddLabelRef(label.Ident, loc)
 		}
 		c.Output.AddCode(loc, []byte{')'})
@@ -119,7 +137,9 @@ func (c *Compiler) compileParamWithType(loc ast.Loc, p ast.Param, pdef kfn.Param
 		// Complex/tuple parameter: {expr, expr, ...}
 		c.Output.AddCode(loc, []byte{byte(0xa0)})
 		for i, e := range sp.Exprs {
-			if i > 0 { c.Output.AddCode(loc, []byte{','}) }
+			if i > 0 {
+				c.Output.AddCode(loc, []byte{','})
+			}
 			resolved := c.resolveExpr(e)
 			c.Output.EmitExpr(resolved)
 		}
@@ -183,7 +203,9 @@ func compileFuncStr(loc ast.Loc, fn kfn.FuncDef, args []string) string {
 	if len(args) > 0 {
 		s += "("
 		for i, a := range args {
-			if i > 0 { s += "," }
+			if i > 0 {
+				s += ","
+			}
 			s += a
 		}
 		s += ")"

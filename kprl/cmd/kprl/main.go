@@ -51,7 +51,7 @@ var (
 var (
 	verbose         = flag.Int("v", 0, "verbosity level (0-2)")
 	outdir          = flag.String("o", "", "output directory")
-	gameID          = flag.String("G", "", "game ID (LB, LBEX, CFV, FIVE, SNOW, ONIUTA)")
+	gameID          = flag.String("G", "", "game ID (LB, LBEX, CFV, FIVE, SNOW, KUDO, KUDA, LBPE, PLHD, TMPE, ONIU, ONIUTA, PING, KOYO, SHINO, TAMA, PRIP, PRID, HINA, LUV)")
 	archiveTemplate = flag.String("template", "", "template SEEN.TXT whose trailing data is preserved when rebuilding")
 )
 

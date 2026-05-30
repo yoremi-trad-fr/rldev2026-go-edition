@@ -3,6 +3,39 @@
 This file tracks the RLdev2026 Go Edition beta history and the compatibility
 fixes validated during the project sessions.
 
+## Beta 2.7 - 2026-05-30
+
+Support and tooling updates:
+
+- Added Tomoyo After roundtrip coverage for Memorial Edition 2010 JP, Steam
+  2011 English, FR 2010, and FR 2011 scripts.
+- Documented the Steam text-based `type` mechanism transplant used by the
+  Tomoyo After FR patch, including the `SEEN9070` / `SEEN9900` roles and the
+  requirements for reusing it on Tomoyo After 2005.
+- Merged additional `game.cfg` archive keys into the Go game-key registry and
+  `kprl -G` help text. These keys remain optional and are only used when a
+  title actually needs encrypted SEEN decompression/recompression.
+- Kept the old `rlc/compiler` scratch package out of normal Go builds; the
+  active compiler remains `rlc/pkg/compilerframe` plus `rlc/pkg/function`, and
+  `go test ./...` now passes for the `rlc` module.
+
+Tomoyo After fixes:
+
+- Fixed KFN prototype continuation parsing, covering multi-line overloads such
+  as `zentohan`.
+- Fixed extraction of legacy menu/select strings that begin with `-"..."`.
+- Fixed old bytecode calls such as `DUMMYCHECK_DISC`, where the KFN declares
+  three arguments but the opcode header reports one; the disassembler now uses
+  the prototype and treats `$` after a quoted string as an argument boundary.
+- Validated the JP 2010 `type` first-line issue as a resource mismatch, not a
+  script/compiler bug: JP native roundtrip needs the original JP `G00`
+  `S_TYPINGxxx` resources, not the merged Steam English set.
+
+Planned next tooling work:
+
+- Add `vaconv` support for XML metadata mode (`-m`) and batch conversion in the
+  GUI, covering `.g00`, `.g00 + .xml`, and later G00 v2/multiframe workflows.
+
 ## Beta 2.6 - 2026-05-28
 
 Support and tooling updates:

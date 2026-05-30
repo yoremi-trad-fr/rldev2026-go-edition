@@ -1,4 +1,4 @@
-### Status update: `28/05/2026`
+### Status update: `30/05/2026`
 <table>
   <tr>
     <td align="center" width="100%">
@@ -7,6 +7,7 @@
   </tr>
 </table>
 
+Update : 30/05/2026 : Beta 2.7 adds Tomoyo After 2010/2011 roundtrip support, merges optional game.cfg archive keys, and documents the Steam type transplant workflow
 Update : 28/05/2026 : Beta 2.6 adds RealLive debug-source extraction in the GUI and fixes the remaining CLANNAD Steam extraction opcode warnings
 Update : 27/05/2026 : Clannad Side Stories Steam (2011) now supported
 Update : 25/05/2026 : Oni uta + Royal Nekomimi Academy + Clannad Steam (2015) now supported
@@ -44,6 +45,9 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 ### -Clannad Steam (2015) 
 ### -Clannad Side Stories Steam (2011)
 ### -AIR 18+ (2005)
+### -Tomoyo After 18+ (2005)
+### -Tomoyo After Memorial Edition (2010)
+### -Tomoyo After-Steam (2011)
 ### -Oni Uta (not tested, Kotsuider contribution)
 ### -Royal Nekomimi Academy (not tested, CarouselAether contribution)
 
@@ -59,9 +63,7 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 ### Missing original ISOs: I’m looking for these ISOs for my testing.
 #### ( If you own the physical version of the game, you could also create an ISO from it – that would be a huge help!)
 
-1-Tomoyo After 18+ (2005)
-
-2-Clannad Side Stories (non steam)
+1-Clannad Side Stories (non steam)
 
 <table>
   <tr>
@@ -81,13 +83,6 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### Little Busters EX ! (2008)
 
-### Tomoyo After 18+ (2005)
-
-### Tomoyo After Memorial Edition (2010)
-
-### Tomoyo After-Steam (2011)
-
-
 ### Kud Wafter (2010 18+)
 
 ### Harmonia 2016
@@ -98,7 +93,7 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### Planetarian (2006)
 
--Planned updates to the tools: Improved .g00 compatibility, support for version 2 + add xml injection
+-Planned updates to the tools: Improved .g00 compatibility, XML metadata mode (`-m`), batch GUI processing, support for version 2 + add xml injection
 -Support for GAN workflow
 -Support for Babel module (for old version of ReaLlive)
 

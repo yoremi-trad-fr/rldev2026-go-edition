@@ -1,0 +1,429 @@
+≪Fonction de débogage RealLive≫
+
+    ※Les détails d'utilisation ne sont pas décrits ici.
+
+■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■Fonctions des touches
+
+    ◆【Ctrl】
+
+        Passer le message
+
+        ※Cette fonction pouvant être contrôlée par commande, elle peut être temporairement ou totalement indisponible.
+
+    ◆【Ctrl】＋【Shift】
+
+        Passer le message (sans passer l'animation à l'écran)
+
+        ※Cette fonction pouvant être contrôlée par commande, elle peut être temporairement ou totalement indisponible.
+
+	◆【Ｐ】
+
+        Lorsque la fenêtre principale (fenêtre de jeu) est active : copier le texte (le texte en cours de lecture pendant la relecture du message)
+
+        Lorsque la fenêtre de messages de débogage est active : copier le message de la ligne actuelle
+
+    ◆【Ｏ】
+
+        Lorsque la fenêtre principale (fenêtre de jeu) est active : ouvrir le fichier ORG en cours d'exécution
+
+		Lorsque la fenêtre de messages de débogage est active : ouvrir le fichier ORG de la ligne actuelle
+
+    ◆【I】
+
+        Lorsque la fenêtre principale (fenêtre de jeu) est active : ouvrir le fichier WAV de la voix actuelle
+
+    ◆【K】
+
+        Lorsque la fenêtre principale (fenêtre de jeu) est active : lire la voix actuelle
+	◆【F1】
+
+        « Barre de menu de la fenêtre / Débogage : ◆ Depuis le début »
+
+    ◆【F2】
+
+        « Barre de menu de la fenêtre / Débogage : ◆ Commutateur de débogage »
+
+    ◆【F3】
+
+        « Barre de menu de la fenêtre / Fenêtre : ◆ Débogueur de source, pause »
+
+	◆【F4】
+
+        « Barre de menu de la fenêtre / Débogage : ◆Masque de redessinage»
+
+    ◆【F5】
+
+        « Barre de menu de la fenêtre / Statut : ◆Statut des indicateurs»
+
+    ◆【F6】
+
+        « Barre de menu de la fenêtre / Statut : ◆Statut des indicateurs lus»
+
+	◆【F7】
+
+        « Barre de menu de la fenêtre / Fenêtre : ◆Banque graphique »
+
+    ◆【F8】
+
+        Inutilisé
+
+    ◆【F9】
+
+        « Barre de menu de la fenêtre / Fenêtre : ◆Fermer / Ouvrir la fenêtre »
+
+	◆【F10】
+
+        Non utilisé
+
+        ※Cette touche est contrôlée par Windows.
+        Lorsque vous appuyez dessus, le jeu semble s'arrêter car il perd le focus, mais il suffit d'appuyer une nouvelle fois dessus pour revenir à la normale.
+
+    ◆【F11】
+
+        Non utilisé
+
+    ◆【F12】
+
+        Non utilisé
+
+	◆【Insert】
+
+        Traite les événements contrôlés par le temps à une vitesse quatre fois supérieure.
+
+	◆【Supprimer】
+
+        Traite les événements contrôlés par le temps à une vitesse deux fois plus rapide.
+
+    ◆【Insérer】＋【Supprimer】
+
+        Traite les événements contrôlés par le temps à une vitesse huit fois plus rapide.
+
+    ◆【Accueil】
+
+        Traite les événements contrôlés par le temps à une vitesse quatre fois plus lente.
+
+	◆【Fin】
+
+        Traite les événements contrôlés par le temps à une vitesse 1/8 fois plus rapide.
+
+    ◆【Accueil】＋【Fin】
+
+        Met en pause les événements contrôlés par le temps.
+
+    ◆【Alt】＋【Entrée】
+
+        Bascule entre le mode plein écran et le mode fenêtre.
+        ※Cette fonction peut être contrôlée par les paramètres système du jeu et peut donc être indisponible dans certains cas.
+
+■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■Éléments système de la barre de menu de la fenêtre
+
+    ◆Taille de la fenêtre
+
+        Modification de la taille de la fenêtre
+        (*Fonction équivalente à celle du menu des commandes système)
+
+	◆Modification de la police
+
+        Modification de la police
+        (*Fonction équivalente à celle du menu des commandes système)
+
+    ◆Priorité de traitement
+
+        ≪Priorité absolue≫
+
+            *Option normale
+
+        ≪Coexistence avec d'autres programmes≫
+
+            Ralentit la vitesse de traitement afin de permettre le bon fonctionnement des autres programmes en cours d'exécution.
+            (*Fonction équivalente à celle du menu des commandes système)
+
+	◆Charge CPU
+
+        Charge la vitesse de traitement du CPU.
+
+    ◆DirectSound
+
+        Modification de la fréquence sonore
+        (*Fonction équivalente à celle du menu des commandes système)
+
+    ◆MMX
+
+        Activation/désactivation de MMX
+
+    ◆Direct3D
+
+        Activation/désactivation de Direct3D
+■Éléments de débogage dans la barre de menu de la fenêtre
+
+    ◆Depuis le début
+
+        Redémarrer le jeu
+
+    ◆Sélection de scène
+
+        Sélectionner la scène à partir de laquelle démarrer
+
+    ◆À partir de la sélection
+
+        Démarrer à partir de la scène sélectionnée dans « ◆Sélection de scène »
+
+	◆Débogage
+
+        Activer/désactiver le drapeau de débogage
+        ※Comme il est destiné au développement, il n'est généralement pas utilisé pendant le débogage.
+        ※Ce drapeau n'a aucun rapport avec « #MEMORY » dans « Gameexe.ini ».
+        ※Il existe une commande (GET_DEBUG_FLAG) permettant d'obtenir la valeur de ce drapeau dans le script.
+
+	◆Masque de redessinage
+
+        Applique un filtre pour permettre de voir où le dessin est effectué.
+        (※Il s'agit d'un outil destiné au développement, il n'est donc généralement pas utilisé pendant le débogage.)
+
+    ◆Rectangle de la zone des boutons de la fenêtre
+
+        Affiche en surbrillance le rectangle dans lequel la souris réagit aux boutons de la fenêtre.
+
+    ◆Rectangle de réaction aux actions de la souris
+
+        Affiche en surbrillance le rectangle dans lequel la souris réagit aux actions de la souris.
+
+	◆Rectangle d'affichage des objets
+
+        Affiche le rectangle d'affichage des objets sous forme de lignes rectangulaires.
+
+    ◆Rectangle de la zone des objets boutons
+
+        Affiche en surbrillance le rectangle dans lequel la souris réagit aux objets boutons.
+
+    ◆Objets
+
+        ≪Tout afficher≫
+
+            Affiche tous les objets.
+            ※Il s'agit du réglage normal.
+
+		≪Niveau 0 uniquement≫
+
+            Affiche uniquement les objets appartenant au niveau 0.
+
+        ≪Niveaux 1 à 5≫
+
+            Affiche les objets autres que ceux du niveau 0.
+
+        ≪Ne pas afficher≫
+
+            Ne fait afficher aucun objet.
+
+	◆Vérification des fichiers du jeu de fichiers
+
+        Vérifie si les fichiers enregistrés dans le jeu de fichiers existent réellement.
+
+    ◆Paramètres de débogage
+
+        Veuillez définir le chemin d'accès au fichier ORG et au texte de l'éditeur.
+        Pendant le jeu, appuyez sur la touche « O » pour ouvrir le fichier ORG.
+
+		Veuillez configurer le chemin d'accès aux données WAV d'origine du fichier KOE et le chemin d'accès à l'outil d'édition WAV.
+        Pendant le jeu, appuyez sur la touche « I » pour ouvrir le fichier WAV.
+
+
+■Éléments de la barre de menu de la fenêtre
+
+    ◆Messages de débogage
+
+        Affiche la progression du jeu et les erreurs.
+
+	◆Paramètres de sortie des messages de débogage
+
+        Vous pouvez activer ou désactiver les messages système à afficher dans les messages de débogage.
+
+    ◆Informations sur le jeu
+
+        Vous pouvez voir l'état de fonctionnement du jeu.
+
+    ◆Informations sur le système
+
+        Vous pouvez voir l'état de fonctionnement du système.
+
+    ◆Position d'exécution
+
+        Vous pouvez voir la position d'exécution de la scène.
+
+	◆Informations sur la souris
+
+        Permet de voir les coordonnées de la souris.
+
+    ◆Message de sauvegarde
+
+        Permet de voir le texte enregistré dans les données de sauvegarde lors de la sauvegarde.
+        ※Il s'agit du dernier texte affiché.
+
+	◆Informations sur les drapeaux
+
+        Vous pouvez voir les valeurs des drapeaux enregistrés dans « Flag.ini ».
+        Il y en a 20.
+        Vous pouvez enregistrer les drapeaux de votre choix dans Flag.ini et les afficher sous forme de liste.
+        Enregistrez les drapeaux importants qui ont une incidence sur le déroulement de l'histoire afin de faciliter le débogage.
+			◆Informations sur les indicateurs d'appel (indicateurs L)
+
+        Vous pouvez consulter la valeur des indicateurs généraux utilisés pour les appels.
+
+    ◆Informations sur les indicateurs de lecture
+
+        Tous les messages sont associés à un indicateur indiquant s'ils ont déjà été lus ou non.
+        Vous pouvez consulter la valeur de cet indicateur en temps réel.
+        Double-cliquez sur la liste des indicateurs à droite pour ouvrir le fichier ORG correspondant.
+◆Informations sur la table CG
+
+        Vous pouvez consulter l'état des indicateurs de la table CG.
+
+    ◆Informations sur la table CG (informations sur les groupes)
+
+        Vous pouvez consulter l'état des indicateurs de la table CG triés par ordre de groupe.
+
+    ◆Pile d'appels
+
+        Vous pouvez consulter la pile d'appels.
+
+    ◆Pile graphique
+
+        Vous pouvez consulter la pile graphique.
+
+	◆Banque graphique
+
+        Vous pouvez consulter l'état de la banque graphique.
+
+    ◆Informations sur les objets
+
+        Vous pouvez consulter les informations détaillées sur les objets.
+
+    ◆Informations sur les sons
+
+        Vous pouvez consulter l'état de lecture des sons.
+
+	◆ Informations sur les voix des personnages
+
+        Vous pouvez voir l'état ON/OFF et le volume des voix de chaque personnage.
+
+    ◆ Informations sur le compteur
+
+        Vous pouvez voir l'état de la fonction de comptage.
+
+    ◆ Informations sur le compteur EX
+
+        Vous pouvez voir l'état de la fonction de comptage EX.
+
+    ◆ Informations sur les images
+
+        Vous pouvez voir l'état de la fonction d'images.
+
+	◆ Informations sur les images EX
+
+        Vous pouvez voir l'état de la fonction d'images EX.
+
+    ◆ Informations sur le menu des commandes système
+
+        Vous pouvez voir l'état du menu des commandes système.
+        ※ Il s'agit du menu contextuel standard du système qui s'affiche lorsque vous cliquez avec le bouton droit de la souris pendant le jeu.
+
+    ◆ Informations sur la fenêtre de message
+
+        Vous pouvez voir les informations détaillées de la fenêtre de message.
+
+    ◆ Informations sur la courbe de tonalité
+
+		Vous pouvez consulter les informations relatives à la courbe de tonalité.
+
+    ◆ Informations sur le PDT série
+
+        Vous pouvez consulter les informations relatives au PDT série.
+
+    ◆ Informations sur les images pré-lues
+
+        Vous pouvez consulter les informations relatives aux images pré-lues.
+
+	◆Informations sur l'arrière-plan pré-lu
+
+        Vous pouvez consulter les informations sur l'arrière-plan pré-lu.
+
+    ◆Informations sur le PCM pré-lu
+
+        Vous pouvez consulter les informations sur le PCM pré-lu.
+
+	◆Débogueur de source
+
+        Vous pouvez suivre en temps réel les scènes ORG en cours.
+        De plus, vous pouvez faire avancer le script ligne par ligne en effectuant des pauses.
+
+	◆ Fenêtre « Sauvegarder/Charger » rapide
+
+        Il s'agit d'une fenêtre « Sauvegarder/Charger » dédiée au débogage.
+        ※ Comme vous pouvez sauvegarder à tout moment, si vous sauvegardez dans une situation où vous ne devriez pas le faire, le chargement peut entraîner un comportement anormal.
+
+    ◆ Historique des points de sauvegarde
+
+        Il s'agit de l'historique des points de sauvegarde.
+        En double-cliquant, vous pouvez démarrer à partir de cet emplacement.
+
+	◆ Fenêtre de capture
+
+        Enregistre l'écran du jeu en cours d'exécution au format BMP.
+        ※ Bien sûr, cela ralentit considérablement le fonctionnement du jeu.
+        ※ Veuillez faire attention à la capacité de votre disque dur, car un grand nombre d'images BMP seront créées dans le dossier de sortie BMP.
+
+    ◆ Fermer/ouvrir la fenêtre
+
+        Vous pouvez fermer ou ouvrir toutes les fenêtres de débogage affichées.
+
+	◆Toutes les fenêtres...
+
+        ≪Afficher≫
+
+            Ouvre toutes les fenêtres de débogage, ce qui peut être très lourd.
+
+        ≪Initialiser≫
+
+            Initialise l'affichage de toutes les fenêtres de débogage.
+            ※Cette fonction permet d'initialiser de force l'affichage lorsque les fenêtres de débogage disparaissent parfois de l'écran.
+
+
+■Éléments d'état de la barre de menu de la fenêtre
+
+    ◆Indicateur
+
+        Vous pouvez voir la valeur de tous les indicateurs.
+        Vous pouvez modifier les valeurs.
+
+    ◆Indicateur lu
+
+        Vous pouvez voir la valeur de l'indicateur lu.
+        Vous pouvez modifier les valeurs.
+        ※Si vous souhaitez simplement voir les valeurs, l'« indicateur lu de l'élément de fenêtre de la barre de menu de la fenêtre » est pratique.
+
+	◆Table CG
+
+        Vous pouvez voir la valeur des indicateurs de la table CG.
+        Vous pouvez modifier les valeurs.
+        * Si vous souhaitez simplement les consulter, l'option « Informations sur la table CG de l'élément Fenêtre de la barre de menu Fenêtre » est pratique.
+
+	◆PDT série
+
+        Vous pouvez consulter les informations détaillées du PDT série.
+        ※Plus détaillé que « Informations PDT série dans le menu Fenêtre de la barre de menu Fenêtre ».
+
+    ◆Enregistrement du nom
+
+        Vous pouvez consulter les informations [Nom] enregistrées dans Gameexe.ini.
+
+    ◆Registre
+
+        Vous pouvez consulter les informations du registre.
+
+	◆Liste des fichiers G00/PDT
+
+        Vous pouvez consulter toutes les informations relatives aux images actuellement chargées.
+        ※Les images chargées dans la banque graphique n'apparaissent pas dans cette liste.
+        ※Pour les images de la banque graphique, veuillez consulter la pile graphique et la banque graphique.

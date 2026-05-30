@@ -196,11 +196,17 @@ func ParseKFN(r io.Reader) (*FuncRegistry, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // big buffer for long lines
 
-	for scanner.Scan() {
-		line := scanner.Text()
+	var logicalLines []string
+	current := ""
+	flush := func() {
+		if strings.TrimSpace(current) != "" {
+			logicalLines = append(logicalLines, current)
+			current = ""
+		}
+	}
 
-		// Skip empty lines and pure comments
-		trimmed := strings.TrimSpace(line)
+	for scanner.Scan() {
+		trimmed := strings.TrimSpace(scanner.Text())
 		if trimmed == "" {
 			continue
 		}
@@ -208,6 +214,30 @@ func ParseKFN(r io.Reader) (*FuncRegistry, error) {
 			continue
 		}
 
+		startsNew := strings.HasPrefix(trimmed, "fun ") ||
+			strings.HasPrefix(trimmed, "/// ") ||
+			moduleRe.MatchString(trimmed)
+		if startsNew {
+			flush()
+			current = trimmed
+			continue
+		}
+
+		if strings.HasPrefix(strings.TrimSpace(current), "fun ") && strings.HasPrefix(trimmed, "(") {
+			current += " " + trimmed
+			continue
+		}
+
+		flush()
+		current = trimmed
+	}
+	flush()
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	for _, trimmed := range logicalLines {
 		// Module declarations
 		if m := moduleRe.FindStringSubmatch(trimmed); m != nil {
 			num, _ := strconv.Atoi(m[1])
@@ -306,7 +336,7 @@ func ParseKFN(r io.Reader) (*FuncRegistry, error) {
 		}
 	}
 
-	return reg, scanner.Err()
+	return reg, nil
 }
 
 func hasHintToken(line, token string) bool {
