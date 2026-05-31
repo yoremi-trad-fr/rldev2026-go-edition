@@ -483,6 +483,34 @@ func TestKFNHintGotoToken(t *testing.T) {
 	}
 }
 
+func TestKFNDisplayAliasSkipsFakeParams(t *testing.T) {
+	src := strings.NewReader(`
+module 000 = Sys
+fun __gc1 GetCursorPos <1:Sys:00133, 0> (int 'x', int 'y', int 'button1', int 'button2')
+fun __shkud ShakeScreen <1:012:01100, 0> (='DOWNUP', 'amount')
+`)
+	reg, err := ParseKFN(src)
+	if err != nil {
+		t.Fatalf("ParseKFN() error: %v", err)
+	}
+
+	def, ok := reg.Lookup("1:000:00133,0")
+	if !ok {
+		t.Fatal("GetCursorPos opcode not registered")
+	}
+	if def.Name != "GetCursorPos" {
+		t.Fatalf("display name = %q, want GetCursorPos", def.Name)
+	}
+
+	def, ok = reg.Lookup("1:012:01100,0")
+	if !ok {
+		t.Fatal("ShakeScreen opcode not registered")
+	}
+	if def.Name != "__shkud" {
+		t.Fatalf("fake-param alias should not be used, got %q", def.Name)
+	}
+}
+
 func TestReadFunctionGenericGotoPointer(t *testing.T) {
 	data := []byte{
 		'(',

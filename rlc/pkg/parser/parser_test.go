@@ -621,6 +621,24 @@ func TestParseSelect(t *testing.T) {
 	}
 }
 
+func TestParseSelectAssignment(t *testing.T) {
+	sf := parse("intF[1200] = select(#res<0137>, #res<0138>, #res<0139>)")
+	as, ok := sf.Stmts[0].(ast.AssignStmt)
+	if !ok {
+		t.Fatalf("got %T", sf.Stmts[0])
+	}
+	if _, ok := as.Dest.(ast.IntVar); !ok {
+		t.Fatalf("dest = %T, want IntVar", as.Dest)
+	}
+	call, ok := as.Expr.(ast.SelFuncCall)
+	if !ok {
+		t.Fatalf("expr = %T, want SelFuncCall", as.Expr)
+	}
+	if call.Opcode != 1 || len(call.Params) != 3 {
+		t.Fatalf("select parsed incorrectly: opcode=%d params=%d", call.Opcode, len(call.Params))
+	}
+}
+
 func TestParseConditionalSelect(t *testing.T) {
 	sf := parse(`select_cancel[4](
     title(155) if intA[0] == 0; colour(156) if intA[0] == 1; blank if intA[1] > 9: #res<0004>

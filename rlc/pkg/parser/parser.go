@@ -552,6 +552,11 @@ func (p *Parser) parseGotoCase() ast.Stmt {
 }
 
 func (p *Parser) parseSelect() ast.Stmt {
+	sf := p.parseSelectFuncCall()
+	return ast.SelectStmt{Loc: sf.Loc, Dest: ast.StoreRef{Loc: sf.Loc}, Ident: sf.Ident, Opcode: sf.Opcode, Window: sf.Window, Params: sf.Params}
+}
+
+func (p *Parser) parseSelectFuncCall() ast.SelFuncCall {
 	loc := p.loc()
 	tok := p.advance() // consume SELECT
 	var window ast.Expr
@@ -564,7 +569,7 @@ func (p *Parser) parseSelect() ast.Stmt {
 		params = p.parseSelParamList()
 		p.expect(token.RPAR)
 	}
-	return ast.SelectStmt{Loc: loc, Dest: ast.StoreRef{Loc: loc}, Ident: tok.StrVal, Opcode: int(tok.IntVal), Window: window, Params: params}
+	return ast.SelFuncCall{Loc: loc, Ident: tok.StrVal, Opcode: int(tok.IntVal), Window: window, Params: params}
 }
 
 func (p *Parser) parseSelParamList() []ast.SelParam {
@@ -1181,6 +1186,8 @@ func (p *Parser) parsePrimary() ast.Expr {
 			p.advance()
 		}
 		return ast.FuncCall{Loc: loc, Ident: name, Params: params, Label: label}
+	case token.SELECT:
+		return p.parseSelectFuncCall()
 	case token.LPAR:
 		p.advance()
 		expr := p.parseExpr()

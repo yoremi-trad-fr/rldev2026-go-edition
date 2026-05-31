@@ -66,6 +66,27 @@ func TestParseFunctions(t *testing.T) {
 	}
 }
 
+func TestParseSecondIdentifierAlias(t *testing.T) {
+	src := `
+module 000 = Sys
+fun __gc1 GetCursorPos <1:Sys:00133, 0> (int 'x', int 'y', int 'button1', int 'button2')
+fun __shkud ShakeScreen <1:012:01100, 0> (='DOWNUP', 'amount')
+`
+	reg, err := Parse(strings.NewReader(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reg.Lookup("__gc1"); !ok {
+		t.Fatal("__gc1 not registered")
+	}
+	if _, ok := reg.Lookup("GetCursorPos"); !ok {
+		t.Fatal("public GetCursorPos alias not registered")
+	}
+	if _, ok := reg.Lookup("ShakeScreen"); ok {
+		t.Fatal("fake-parameter aliases should stay on their internal identifier")
+	}
+}
+
 func TestParseFuncFlags(t *testing.T) {
 	reg := parseTestKFN(t)
 	fn, ok := reg.Lookup("goto_if")

@@ -645,6 +645,7 @@ func (p *kfnParser) parseModule() {
 
 type rawFunDef struct {
 	ident     string
+	alias     string
 	ccName    string // "" absent, "__self__" unnamed, else named
 	ccFlags   []FuncFlag
 	funFlags  []FuncFlag
@@ -659,11 +660,12 @@ func (p *kfnParser) parseFunDef() rawFunDef {
 	p.expect(kFUN)
 	// ident (may be empty, "end", single ident, or two idents)
 	ident := ""
+	alias := ""
 	if p.cur.typ == kIDENT {
 		ident = p.cur.str
 		p.advance()
 		if p.cur.typ == kIDENT {
-			// second ident = alternate name, use first
+			alias = p.cur.str
 			p.advance()
 		}
 	} else if p.cur.typ == kEND {
@@ -728,7 +730,7 @@ func (p *kfnParser) parseFunDef() rawFunDef {
 	}
 
 	return rawFunDef{
-		ident: ident, ccName: ccName, ccFlags: ccFlags, funFlags: funFlags,
+		ident: ident, alias: alias, ccName: ccName, ccFlags: ccFlags, funFlags: funFlags,
 		opType: opType, opModule: opModule, opCode: opCode,
 		overloads: overloads, protos: protos,
 	}
@@ -1001,7 +1003,7 @@ func (p *kfnParser) processFunDef(constraints []TargetConstraint, raw rawFunDef)
 
 	allFlags := append(raw.ccFlags, raw.funFlags...)
 
-	fd := &FuncDef{
+	p.reg.Register(&FuncDef{
 		Ident:      ident,
 		CCStr:      ccStr,
 		Flags:      allFlags,
@@ -1010,8 +1012,37 @@ func (p *kfnParser) processFunDef(constraints []TargetConstraint, raw rawFunDef)
 		OpCode:     raw.opCode,
 		Prototypes: protos,
 		Targets:    constraints,
+	})
+
+	if raw.alias != "" && raw.alias != ident && !prototypesHaveFakeParams(raw.protos) {
+		aliasCCStr := ccStr
+		if raw.ccName == "__self__" {
+			aliasCCStr = raw.alias
+		}
+		p.reg.Register(&FuncDef{
+			Ident:      raw.alias,
+			CCStr:      aliasCCStr,
+			Flags:      allFlags,
+			OpType:     raw.opType,
+			OpModule:   raw.opModule,
+			OpCode:     raw.opCode,
+			Prototypes: protos,
+			Targets:    constraints,
+		})
 	}
-	p.reg.Register(fd)
+}
+
+func prototypesHaveFakeParams(protos []Prototype) bool {
+	for _, proto := range protos {
+		for _, param := range proto.Params {
+			for _, flag := range param.Flags {
+				if flag == FFake {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func parseFuncFlag(s string) FuncFlag {

@@ -898,6 +898,16 @@ func (c *Compiler) compileAssign(s ast.AssignStmt) {
 				})
 				return
 			}
+		case ast.SelFuncCall:
+			c.compileSelect(ast.SelectStmt{
+				Loc:    s.Loc,
+				Dest:   s.Dest,
+				Ident:  rhs.Ident,
+				Opcode: rhs.Opcode,
+				Window: rhs.Window,
+				Params: rhs.Params,
+			})
+			return
 		}
 	}
 
@@ -1112,9 +1122,7 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 				prevParam = classifyEmittedParam(inner)
 			case ast.ComplexParam:
 				c.Out.AddCodeRaw(s.Loc, []byte{'('})
-				for _, e := range pp.Exprs {
-					c.Out.EmitExprRaw(e)
-				}
+				emitExprListWithSeparators(c.Out, s.Loc, pp.Exprs)
 				c.Out.AddCodeRaw(s.Loc, []byte{')'})
 				prevParam = emittedParamOther
 			case ast.SpecialParam:
@@ -1125,9 +1133,7 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 				if !pp.NoParens {
 					c.Out.AddCodeRaw(s.Loc, []byte{'('})
 				}
-				for _, e := range pp.Exprs {
-					c.Out.EmitExprRaw(e)
-				}
+				emitExprListWithSeparators(c.Out, s.Loc, pp.Exprs)
 				if !pp.NoParens {
 					c.Out.AddCodeRaw(s.Loc, []byte{')'})
 				}
@@ -1927,6 +1933,28 @@ func needsCommaBeforeParam(out *codegen.Output, prev emittedParamKind, e ast.Exp
 		return ok
 	default:
 		return out.StringExprNeedsSeparator(e)
+	}
+}
+
+func emitExprListWithSeparators(out *codegen.Output, loc ast.Loc, exprs []ast.Expr) {
+	prev := emittedParamNone
+	for _, e := range exprs {
+		inner := stripTopLevelParens(e)
+		if needsCommaBeforeParam(out, prev, inner) {
+			out.AddCodeRaw(loc, []byte{','})
+		}
+		out.EmitExprRaw(inner)
+		prev = classifyEmittedParam(inner)
+	}
+}
+
+func stripTopLevelParens(e ast.Expr) ast.Expr {
+	for {
+		pe, ok := e.(ast.ParenExpr)
+		if !ok {
+			return e
+		}
+		e = pe.Expr
 	}
 }
 

@@ -6,11 +6,11 @@
 //   - rlc/function.ml (726 lines) — type checking, overload by params, high-level compilation
 //
 // The function compilation pipeline:
-//   1. Look up the function definition in the KFN registry (LookupFuncDef)
-//   2. Select the correct overload (ChooseOverloadByCount / ChooseOverloadByParams)
-//   3. Type-check each parameter against the prototype (CheckParamType)
-//   4. Serialize parameters into bytecode (SerializeParams)
-//   5. Build the opcode header + serialized params (Assemble)
+//  1. Look up the function definition in the KFN registry (LookupFuncDef)
+//  2. Select the correct overload (ChooseOverloadByCount / ChooseOverloadByParams)
+//  3. Type-check each parameter against the prototype (CheckParamType)
+//  4. Serialize parameters into bytecode (SerializeParams)
+//  5. Build the opcode header + serialized params (Assemble)
 package function
 
 import (
@@ -32,11 +32,11 @@ type AsmParamKind int
 
 const (
 	AsmString  AsmParamKind = iota // raw bytecode (variable refs, etc.)
-	AsmInteger                      // integer expression bytecode
-	AsmUnknown                      // untyped bytecode
-	AsmList                         // tuple: (param, param, ...)
-	AsmSpecial                      // special tagged: a<id>(params)
-	AsmLiteral                      // quoted string literal
+	AsmInteger                     // integer expression bytecode
+	AsmUnknown                     // untyped bytecode
+	AsmList                        // tuple: (param, param, ...)
+	AsmSpecial                     // special tagged: a<id>(params)
+	AsmLiteral                     // quoted string literal
 )
 
 // AsmParam is one assembled parameter ready for bytecode emission.
@@ -241,11 +241,11 @@ func ChooseOverloadByCount(fd *kfn.FuncDef, argc int) (int, error) {
 
 // OverloadInfo holds computed info about one prototype overload.
 type OverloadInfo struct {
-	Total      int  // total non-return simple params
-	Optional   int  // number of optional params
+	Total       int  // total non-return simple params
+	Optional    int  // number of optional params
 	HasRepeated bool // has Special/Complex/Argc params
-	Index      int  // original prototype index
-	Defined    bool // false = undefined/arbitrary prototype
+	Index       int  // original prototype index
+	Defined     bool // false = undefined/arbitrary prototype
 }
 
 // AnalyzeOverloads computes OverloadInfo for each prototype.
@@ -447,13 +447,20 @@ func AssembleStr(fd *kfn.FuncDef, params []AsmParam, overload int, returnVal str
 // TypeName returns a human-readable name for a KFN parameter type.
 func TypeName(pt kfn.ParamType) string {
 	switch pt {
-	case kfn.PAny:     return "any type"
-	case kfn.PInt:     return "integer variable"
-	case kfn.PIntC, kfn.PIntV: return "integer"
-	case kfn.PStr:     return "string variable"
-	case kfn.PStrC, kfn.PStrV, kfn.PResStr: return "string"
-	case kfn.PSpecial: return "special function"
-	case kfn.PComplex: return "tuple"
+	case kfn.PAny:
+		return "any type"
+	case kfn.PInt:
+		return "integer variable"
+	case kfn.PIntC, kfn.PIntV:
+		return "integer"
+	case kfn.PStr:
+		return "string variable"
+	case kfn.PStrC, kfn.PStrV, kfn.PResStr:
+		return "string"
+	case kfn.PSpecial:
+		return "special function"
+	case kfn.PComplex:
+		return "tuple"
 	}
 	return "unknown"
 }
@@ -517,10 +524,14 @@ func CheckParamType(expected kfn.ParamType, actual ExprType) string {
 
 func etName(t ExprType) string {
 	switch t {
-	case ETInt:     return "integer"
-	case ETStr:     return "string"
-	case ETLiteral: return "string literal"
-	case ETInvalid: return "invalid expression"
+	case ETInt:
+		return "integer"
+	case ETStr:
+		return "string"
+	case ETLiteral:
+		return "string literal"
+	case ETInvalid:
+		return "invalid expression"
 	}
 	return "unknown"
 }
@@ -580,6 +591,12 @@ func LookupFuncDef(reg *kfn.Registry, ident string, params []ast.Param, ctrlCode
 		return fns[0], nil
 	}
 
+	if matched := filterFuncDefsByParams(fns, params); len(matched) == 1 {
+		return matched[0], nil
+	} else if len(matched) > 1 {
+		fns = matched
+	}
+
 	// Multiple definitions: disambiguate by first parameter type
 	if len(params) > 0 {
 		if sp, ok := params[0].(ast.SimpleParam); ok {
@@ -603,6 +620,48 @@ func LookupFuncDef(reg *kfn.Registry, ident string, params []ast.Param, ctrlCode
 
 	// Default to first
 	return fns[0], nil
+}
+
+func filterFuncDefsByParams(fns []*kfn.FuncDef, params []ast.Param) []*kfn.FuncDef {
+	var matched []*kfn.FuncDef
+	for _, fd := range fns {
+		if funcDefAcceptsParams(fd, params) {
+			matched = append(matched, fd)
+		}
+	}
+	return matched
+}
+
+func funcDefAcceptsParams(fd *kfn.FuncDef, params []ast.Param) bool {
+	if fd == nil || len(fd.Prototypes) == 0 {
+		return true
+	}
+	paramCount := simpleParamCount(params)
+	for _, info := range AnalyzeOverloads(fd.Prototypes) {
+		if !info.Defined {
+			return true
+		}
+		min := info.Total - info.Optional
+		if paramCount < min {
+			continue
+		}
+		if info.HasRepeated || paramCount <= info.Total {
+			return true
+		}
+	}
+	return false
+}
+
+func simpleParamCount(params []ast.Param) int {
+	count := 0
+	for _, p := range params {
+		if sp, ok := p.(ast.SimpleParam); ok {
+			if _, isFunc := sp.Expr.(ast.FuncCall); !isFunc {
+				count++
+			}
+		}
+	}
+	return count
 }
 
 func isIntType(pt kfn.ParamType) bool {

@@ -39,7 +39,14 @@
   let rlGameId = '';
   let rlDebugInfo = false;
   let rlG00File = '';
+  let rlG00Dir = '';
+  let rlG00Batch = false;
+  let rlG00XmlPath = '';
   let rlPngFile = '';
+  let rlPngDir = '';
+  let rlPngBatch = false;
+  let rlPngXmlPath = '';
+  let rlG00Format = 'auto';
   let rlGanFile = '';
 
   const rldevOperations = [
@@ -139,12 +146,40 @@
     if (d) rlOutputDir = d;
   }
   async function browseRlG00() {
-    const f = await SelectFile('Select .g00 file', '*.g00', 'G00 images');
-    if (f) rlG00File = f;
+    if (rlG00Batch) {
+      const d = await SelectDirectory('Select folder with .g00 files');
+      if (d) rlG00Dir = d;
+    } else {
+      const f = await SelectFile('Select .g00 file', '*.g00;*.G00', 'G00 images');
+      if (f) rlG00File = f;
+    }
   }
   async function browseRlPng() {
-    const f = await SelectFile('Select .png file', '*.png', 'PNG images');
-    if (f) rlPngFile = f;
+    if (rlPngBatch) {
+      const d = await SelectDirectory('Select folder with .png files');
+      if (d) rlPngDir = d;
+    } else {
+      const f = await SelectFile('Select .png file', '*.png;*.PNG', 'PNG images');
+      if (f) rlPngFile = f;
+    }
+  }
+  async function browseRlG00Xml() {
+    if (rlG00Batch) {
+      const d = await SelectDirectory('Select XML output folder');
+      if (d) rlG00XmlPath = d;
+    } else {
+      const f = await SelectSaveFile('Save metadata XML as', 'image.xml', '*.xml;*.XML', 'G00 metadata XML');
+      if (f) rlG00XmlPath = f;
+    }
+  }
+  async function browseRlPngXml() {
+    if (rlPngBatch) {
+      const d = await SelectDirectory('Select folder with .xml metadata files');
+      if (d) rlPngXmlPath = d;
+    } else {
+      const f = await SelectFile('Select .xml metadata file', '*.xml;*.XML', 'G00 metadata XML');
+      if (f) rlPngXmlPath = f;
+    }
   }
   async function browseRlGan() {
     const f = await SelectFile('Select .gan/.ganxml', '*.gan;*.ganxml', 'GAN files');
@@ -185,11 +220,21 @@
     rlOrgFile = '';
     rlOrgDir = '';
   }
+  function toggleG00Batch() {
+    rlG00File = '';
+    rlG00Dir = '';
+    rlG00XmlPath = '';
+  }
+  function togglePngBatch() {
+    rlPngFile = '';
+    rlPngDir = '';
+    rlPngXmlPath = '';
+  }
   function startG00Extract() {
-    run(() => RldevG00ToPng(rlG00File, rlOutputDir));
+    run(() => RldevG00ToPng(rlG00Batch ? rlG00Dir : rlG00File, rlOutputDir, rlG00XmlPath, rlG00Batch));
   }
   function startG00Import() {
-    run(() => RldevPngToG00(rlPngFile, rlOutputDir));
+    run(() => RldevPngToG00(rlPngBatch ? rlPngDir : rlPngFile, rlOutputDir, rlPngXmlPath, rlG00Format, rlPngBatch));
   }
   function startGanToXml() {
     run(() => RldevGanToXml(rlGanFile, rlOutputDir));
@@ -276,15 +321,30 @@
 
       {:else if rldevSelectedOp === 'g00_extract'}
         <div class="form-title">G00 → PNG</div>
-        <div class="form-group"><label>G00 file :</label><div class="form-row"><input type="text" bind:value={rlG00File} readonly /><button class="btn" on:click={browseRlG00}>Select</button></div></div>
+        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlG00Batch} on:change={toggleG00Batch} /> Batch mode</label></div></div>
+        {#if rlG00Batch}
+          <div class="form-group"><label>G00 folder :</label><div class="form-row"><input type="text" bind:value={rlG00Dir} readonly /><button class="btn" on:click={browseRlG00}>Select</button></div></div>
+          <div class="form-group"><label>XML folder (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlG00XmlPath} readonly placeholder="Auto : output folder" /><button class="btn" on:click={browseRlG00Xml}>Select</button></div></div>
+        {:else}
+          <div class="form-group"><label>G00 file :</label><div class="form-row"><input type="text" bind:value={rlG00File} readonly /><button class="btn" on:click={browseRlG00}>Select</button></div></div>
+          <div class="form-group"><label>XML file (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlG00XmlPath} readonly placeholder="Auto : same output basename" /><button class="btn" on:click={browseRlG00Xml}>Select</button></div></div>
+        {/if}
         <div class="form-group"><label>Output folder :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
-        <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startG00Extract} disabled={!rlG00File || !rlOutputDir}>Convert</button>{/if}</div>
+        <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startG00Extract} disabled={(rlG00Batch ? !rlG00Dir : !rlG00File) || !rlOutputDir}>Convert</button>{/if}</div>
 
       {:else if rldevSelectedOp === 'g00_import'}
         <div class="form-title">PNG → G00</div>
-        <div class="form-group"><label>PNG file :</label><div class="form-row"><input type="text" bind:value={rlPngFile} readonly /><button class="btn" on:click={browseRlPng}>Select</button></div></div>
+        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlPngBatch} on:change={togglePngBatch} /> Batch mode</label></div></div>
+        {#if rlPngBatch}
+          <div class="form-group"><label>PNG folder :</label><div class="form-row"><input type="text" bind:value={rlPngDir} readonly /><button class="btn" on:click={browseRlPng}>Select</button></div></div>
+          <div class="form-group"><label>XML folder (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlPngXmlPath} readonly placeholder="Auto : same PNG folder" /><button class="btn" on:click={browseRlPngXml}>Select</button></div></div>
+        {:else}
+          <div class="form-group"><label>PNG file :</label><div class="form-row"><input type="text" bind:value={rlPngFile} readonly /><button class="btn" on:click={browseRlPng}>Select</button></div></div>
+          <div class="form-group"><label>XML file (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlPngXmlPath} readonly placeholder="Auto : same PNG basename" /><button class="btn" on:click={browseRlPngXml}>Select</button></div></div>
+        {/if}
+        <div class="form-group"><label>G00 format :</label><div class="form-row"><select bind:value={rlG00Format}><option value="auto">Auto</option><option value="0">v0 simple</option><option value="1">v1 compressed</option><option value="2">v2 regions/XML</option></select></div></div>
         <div class="form-group"><label>Output folder :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
-        <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startG00Import} disabled={!rlPngFile || !rlOutputDir}>Convert</button>{/if}</div>
+        <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startG00Import} disabled={(rlPngBatch ? !rlPngDir : !rlPngFile) || !rlOutputDir}>Convert</button>{/if}</div>
 
       {:else if rldevSelectedOp === 'gan_to_xml'}
         <div class="form-title">GAN → XML</div>

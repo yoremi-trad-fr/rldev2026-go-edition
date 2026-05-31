@@ -1,4 +1,4 @@
-### Status update: `30/05/2026`
+### Status update: `31/05/2026`
 <table>
   <tr>
     <td align="center" width="100%">
@@ -7,7 +7,8 @@
   </tr>
 </table>
 
-Update : 30/05/2026 : Beta 2.7 adds Tomoyo After 2010/2011 roundtrip support, merges optional game.cfg archive keys, and documents the Steam type transplant workflow
+Update : 31/05/2026 : Beta 2.8 completes the Go `vaconv` G00 workflow with XML metadata, format 2 multi-region support, and GUI batch conversion
+Update : 30/05/2026 : Beta 2.7 adds Tomoyo After 2010/2011 roundtrip support and merges optional game.cfg archive keys
 Update : 28/05/2026 : Beta 2.6 adds RealLive debug-source extraction in the GUI and fixes the remaining CLANNAD Steam extraction opcode warnings
 Update : 27/05/2026 : Clannad Side Stories Steam (2011) now supported
 Update : 25/05/2026 : Oni uta + Royal Nekomimi Academy + Clannad Steam (2015) now supported
@@ -93,9 +94,9 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### Planetarian (2006)
 
--Planned updates to the tools: Improved .g00 compatibility, XML metadata mode (`-m`), batch GUI processing, support for version 2 + add xml injection
--Support for GAN workflow
--Support for Babel module (for old version of ReaLlive)
+- Beta 2.8 completed: improved `.g00` compatibility, XML metadata mode (`-m`), GUI batch processing, and G00 version 2 multi-region roundtrip support
+- Support for GAN workflow
+- Support for Babel module (for old version of ReaLlive)
 
 
 <table>
@@ -117,6 +118,11 @@ Beta 2.6 adds an explicit extraction option for the native RealLive debugger:
 sources, and enable it only when generating `.org` files for the in-game
 F3/F5/O debug workflow. See `docs/debug-rl/README.md` for the concise debug
 mode and `flag.ini` guide.
+
+Beta 2.8 completes the Go `vaconv` path for the current G00 workflow:
+format 0/1/2 extraction, format 2 XML metadata, PNG+XML import, and GUI batch
+conversion in both directions. Format 2 files now preserve multi-region layout
+metadata, while format 0 keeps the expected BGR channel order.
 
 
 <table>

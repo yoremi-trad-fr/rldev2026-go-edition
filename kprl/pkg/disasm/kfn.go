@@ -249,7 +249,7 @@ func ParseKFN(r io.Reader) (*FuncRegistry, error) {
 
 		// Function definitions: fun <ident> ...
 		if strings.HasPrefix(trimmed, "fun ") {
-			name := extractFunName(trimmed)
+			name := extractDisplayFunName(trimmed)
 			if name == "" {
 				continue
 			}
@@ -339,6 +339,18 @@ func ParseKFN(r io.Reader) (*FuncRegistry, error) {
 	return reg, nil
 }
 
+func extractDisplayFunName(line string) string {
+	name := extractFunName(line)
+	if name == "" {
+		return ""
+	}
+	alias := extractFunAlias(line, name)
+	if alias != "" && strings.HasPrefix(name, "__") && !hasFakeParamSyntax(line) {
+		return alias
+	}
+	return name
+}
+
 func hasHintToken(line, token string) bool {
 	opIdx := strings.Index(line, "<")
 	if opIdx < 0 {
@@ -374,6 +386,34 @@ func extractFunName(line string) string {
 		return ""
 	}
 	return rest[:end]
+}
+
+func extractFunAlias(line, funcName string) string {
+	rest := strings.TrimPrefix(line, "fun ")
+	rest = strings.TrimSpace(rest)
+	if !strings.HasPrefix(rest, funcName) {
+		return ""
+	}
+	rest = strings.TrimSpace(rest[len(funcName):])
+	if rest == "" || rest[0] == '(' || rest[0] == '<' || rest[0] == '{' {
+		return ""
+	}
+	end := 0
+	for end < len(rest) && rest[end] != ' ' && rest[end] != '\t' && rest[end] != '(' && rest[end] != '<' && rest[end] != '{' {
+		end++
+	}
+	if end == 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+func hasFakeParamSyntax(line string) bool {
+	opEnd := strings.Index(line, ">")
+	if opEnd < 0 || opEnd+1 >= len(line) {
+		return false
+	}
+	return strings.Contains(line[opEnd+1:], "=")
 }
 
 // extractCcode pulls the kepago control-code annotation `{...}` that

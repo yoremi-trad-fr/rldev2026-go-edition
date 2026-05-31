@@ -1,208 +1,118 @@
-# RLdev2026-Go function validation register
+# RLdev2026-Go bytecode function validation register
 
-Last update: 2026-05-30
+Last update: 2026-05-31
 
-This register tracks opcode/function signatures that have been checked against
-known-good game corpuses. It is meant to avoid re-auditing the same RealLive
-function families for every new title.
+This register only tracks RealLive bytecode function signatures, overload
+selection rules, and function-shaped bytecode behaviours that have been
+validated against known-good corpuses. Resource handling, G00 work, archive
+keys, GUI behaviour, and general project notes belong elsewhere.
 
 ## Method
 
-- Compile the extracted `.org` sources with the target game's `RealLive.exe`
-  and `Gameexe.ini`.
+- Compile extracted `.org` sources with the target game's interpreter and
+  `Gameexe.ini` when available.
 - Disassemble compiled files with opcode annotations.
-- Compare the disassembled opcode signatures against original extracted files.
-- For sensitive overload cases, confirm the byte header manually when needed.
-- Keep version-specific rules tied to the interpreter version, not to one game
-  name, unless the corpus proves otherwise.
+- Compare function opcodes, overload ids, and argument counts against the
+  original extracted files.
+- Keep rules tied to RealLive/interpreter version first, and to a game only
+  when the corpus proves the behaviour is game-specific.
 
-## CLANNAD 2007 FV
+## Validated Opcode Signatures
+
+### CLANNAD 2007 FV
 
 - Interpreter: RealLive 1.2.3.5.
 - Corpus: 242 FR files and 242 JP SJIS files.
-- Status: validated for the string-return overload cases below.
-- Note: compiling the FR UTF-8 corpus without a Western output transform emits
-  accent conversion warnings. This is separate from opcode signature parity.
-
-Validated signatures:
+- Status: validated for string-return overload selection.
 
 | Function | Opcode | Expected overload | Count FR | Count JP | Status |
 | --- | --- | ---: | ---: | ---: | --- |
-| `strsub` | `1:010:00005` | 1 | 2 | 2 | fixed and matched |
-| `itoa_s` | `1:010:00015` | 0 | 10 | 10 | fixed and matched |
-| `itoa` | `1:010:00017` | 0 | 36 | 36 | fixed and matched |
-| `itoa` | `1:010:00017` | 1 | 0 | 0 | absent, as expected |
+| `strsub` | `1:010:00005` | 1 | 2 | 2 | matched |
+| `itoa_s` | `1:010:00015` | 0 | 10 | 10 | matched |
+| `itoa` | `1:010:00017` | 0 | 36 | 36 | matched |
 | `strcpy` 3-arg form | `1:010:00000` | 1 | 6 | 6 | matched |
 
-Findings fixed from this audit:
+Validated rule: RealLive 1.2.3.5 uses overload 0 for `itoa*` calls with
+three encoded args; `strsub` with three encoded args uses overload 1.
 
-- RealLive 1.2.3.5 uses overload 0 for `itoa*` calls with 3 encoded args.
-- `strsub` with 3 encoded args uses overload 1 in the original bytecode.
-- Inner ASCII double quotes inside string literals must not be emitted as raw
-  `0x22`; the compiler maps them to the observed SJIS quote pair.
-
-## AIR 1.02
+### AIR 1.02
 
 - Interpreter: RealLive 1.2.9.5.
 - Corpus: 96 FR UTF-8 files and 96 JP SJIS files.
-- Status: gameplay route start validated by user; static overload audit matched.
-
-Validated signatures:
+- Status: route start validated by user; static overload audit matched.
 
 | Function | Opcode | Expected overload | Count FR | Count JP | Status |
 | --- | --- | ---: | ---: | ---: | --- |
 | `itoa` | `1:010:00017` | 1 | 10552 | 10552 | matched |
-| `itoa` | `1:010:00017` | 0 | 0 | 0 | absent, as expected |
 | `strcpy` | `1:010:00000` | 0 | 22199 | 22199 | matched |
 | `strcat` | `1:010:00002` | 0 | 10552 | 10552 | matched |
 
-Findings fixed from AIR debugging:
+Validated rule: RealLive 1.2.9.5 uses overload 1 for `itoa` calls with
+three encoded args. KFN return parameters such as `>str` are encoded as real
+parameters before string assignment rewriting, e.g. `strS[0] = itoa(n, 2)`.
 
-- KFN return parameters (`>str`, etc.) must be injected before string assignment
-  rewrites. Example: `strS[0] = itoa(n, 2)` encodes as an `itoa` opcode with
-  the destination string as a real parameter.
-- RealLive 1.2.9.5 uses overload 1 for `itoa` calls with 3 encoded args.
-- The `pause` immediately following static text output should not receive an
-  extra debug line marker.
-
-## CLANNAD Steam 2015
-
-- Interpreter: `SiglusEngine_Steam.exe`, RealLive file version 1.6.7.3.
-- Corpus: 235 English SJIS `.org` files and 235 English UTF-8 `.org` files
-  compiled with the Steam `Gameexe.ini` and `reallive.kfn`; the 235 French
-  `.org` files were scanned for the same function/opcode shapes.
-- Status: user gameplay validation on 2026-05-26; static compiler audit passed
-  for both English corpuses with no compile failures. Extraction audit updated
-  on 2026-05-28: the previously preserved Steam raw opcode warnings are fixed.
-
-Steam-specific audit notes:
-
-| Area | Evidence | Status |
-| --- | --- | --- |
-| Entry/kidoku marker | `Gameexe.ini` provides `KIDOKU_TYPE`; interpreter version is 1.6.7.3. | fixed and validated in game |
-| Steam interpreter detection | `SiglusEngine_Steam.exe` accepted by CLI and GUI interpreter lookup. | fixed |
-| Raw control textout | `SEEN9600` contains three preserved `raw #ff #01 endraw` stubs. | expected, must be retained |
-| Raw op fallback | The previous seven targeted `op<...>` fallbacks are eliminated: two `Shl` calls now have KFN signatures and five encoded `###PRINT` markers now become text resources. | fixed |
-| Resource byte escapes | Resource strings containing raw byte escapes no longer create empty quote runs. | fixed |
-| String argument separators | Unquoted string arguments after another argument/operator receive a separator; quoted ASCII strings are unchanged. | fixed |
-| Internal quoted strings | English select strings such as `Say "Hello."` keep their internal quotes instead of splitting the argument too early. | fixed |
-| Unary-minus argument split | Late Steam calls whose bytecode `argc` proves the previous expression swallowed a following negative argument are split back into the expected argument list. | fixed |
-
-Findings fixed from CLANNAD Steam debugging:
-
-- Steam builds must read `KIDOKU_TYPE` from `Gameexe.ini` and feed it into
-  bytecode generation; relying only on the default marker can desynchronise the
-  entry table and crash the engine.
-- `SiglusEngine_Steam.exe` is a valid RealLive-compatible interpreter source for
-  PE version extraction.
-- Default RealLive generation version is 1.2.7.0 when no interpreter or explicit
-  target version is provided.
-- `raw #ff #01 endraw` textout stubs in `SEEN9600` are intentional bytecode and
-  must not be dropped.
-- String parameters that compile to unquoted bytes need comma separators when
-  they are not the first emitted parameter.
-- Encoded command-level `###PRINT` markers can appear as ASCII `###PRINT(` or
-  as the CLANNAD Steam byte pattern `###PR 01 00 T(`; both are textout markers,
-  not unknown opcodes.
-- Some late Steam scripts encode adjacent negative arguments in a shape that can
-  be parsed greedily as subtraction. When the bytecode argument count proves
-  this happened, split the unary-minus expression back out as the next argument.
-- Native RealLive debug sources need `kprl -g` / `#line`; `flag.ini` only labels
-  variables for the F5 flag window and is not a scene/source index.
-
-## CLANNAD Side Stories Steam 2011
+### CLANNAD Side Stories Steam 2011
 
 - Interpreter: `RealLiveEn.exe`, RealLive file version 1.6.6.8.
-- Corpus: 22 Steam `.org` files extracted from the original `SEEN.TXT` with
-  `Gameexe.ini`, `RealLiveEn.exe`, and `reallive.kfn`.
-- Status: user gameplay validation on 2026-05-26 and 2026-05-27; both metadata
-  and no-metadata rebuilt archives launch and run past the first story start.
+- Corpus: 22 Steam `.org` files extracted from the original `SEEN.TXT`.
+- Status: user gameplay validation on 2026-05-26 and 2026-05-27.
 
-Side Stories audit notes:
-
-| Area | Evidence | Status |
+| Function shape | Evidence | Status |
 | --- | --- | --- |
-| Story bootstrap | `SEEN0001` calls `SEEN2000` before the first voice line. | validated in game |
-| `gosub_with` pointer | `SEEN2000` contains `intC[1] = gosub_with(...) @14` and `intL[0] = gosub_with(...) @14`. | fixed; payload byte-identical |
-| EOF trailer | Side Stories files keep `eof` followed by raw `halt`. | fixed and preserved |
-| Entrypoint table | Unassigned entrypoints mirror the default entrypoint instead of staying zero. | fixed |
-| Resource indexing | Go extraction keeps `*Bo\shake{2}` and `nk*` as separate resources in `SEEN0001`; `.org` and `.utf` files must stay from the same extraction/indexing pass. | documented |
-| Round-trip audit | 17 of 22 files are payload-identical to the original; the remaining 5 redump stably and differ only in known string/resource serialization shapes. | accepted |
+| `gosub_with(...) @label` store pointer | `SEEN2000` contains `intC[1] = gosub_with(...) @14` and `intL[0] = gosub_with(...) @14`. | pointer payload matched |
+| KFN `(store goto)` functions | Same `SEEN2000` corpus. | trailing pointer preserved |
 
-Findings fixed from CLANNAD Side Stories debugging:
+Validated rule: KFN functions marked `(store goto)` carry the same trailing
+pointer payload as ordinary goto/gosub calls.
 
-- KFN hints containing `(store goto)` must set the generic goto-pointer flag.
-  Without this, `gosub_with` leaves its trailing 4-byte pointer in the stream;
-  the disassembler then emits bogus `halt` commands and a detached `= store`,
-  corrupting the early story bootstrap.
-- The compiler parser must allow trailing labels on `gosub_with`/`GOSUBP`, so
-  `intC[1] = gosub_with(...) @14` recompiles to the original pointer form.
-- Source-level `eof` must be preserved instead of stopping parsing, and a final
-  raw `halt` after the `SeenEnd` trailer must remain present.
-- Unassigned RealLive entrypoint slots should be filled from entrypoint 0, or
-  the first defined entrypoint when slot 0 is absent.
-- Do not mix OCaml-fused `.utf` resources with Go-extracted `.org` files unless
-  the resource indices have been checked. `SEEN0001` has a known split around
-  `*Bo\shake{2}` / `nk*`; fusing it shifts every following text resource by one.
+### CLANNAD Steam 2015
 
-## Tomoyo After 2010 / Steam 2011
+- Interpreter: `SiglusEngine_Steam.exe`, RealLive file version 1.6.7.3.
+- Corpus: 235 English SJIS `.org` files and 235 English UTF-8 `.org` files.
+- Status: user gameplay validation on 2026-05-26; static compiler audit passed.
+
+| Function/bytecode shape | Evidence | Status |
+| --- | --- | --- |
+| `Shl` KFN signatures | Previously emitted as raw fallback opcodes in Steam corpus. | fixed and compiled via KFN |
+| Command-level `###PRINT` marker | CLANNAD Steam byte pattern `###PR 01 00 T(`. | decoded as textout marker |
+| Raw textout stub | `SEEN9600` contains `raw #ff #01 endraw` stubs. | preserved as bytecode |
+| Unary-minus argument split | Late Steam calls where bytecode `argc` proves a following negative argument was swallowed. | repaired to expected arg list |
+
+Validated rule: late Steam bytecode can require argument-list repair when the
+encoded `argc` contradicts a greedy subtraction parse.
+
+### Tomoyo After 2010 / Steam 2011
 
 - Interpreters: Tomoyo After Memorial Edition 2010 JP and Tomoyo After Steam
   2011 English.
-- Corpus: JP 2010 native SJIS, Steam 2011 native UTF-8, FR 2010 patch extracted
-  from OCaml-compiled SEEN, and FR 2011 patch extracted from OCaml-compiled
-  SEEN.
-- Status: user gameplay validation on 2026-05-30; the four SEEN roundtrips
-  compile/extract cleanly. JP 2010 `type` rendering was validated after
-  restoring the original JP `G00` resources.
+- Corpus: JP 2010 native SJIS, Steam 2011 native UTF-8, FR 2010 patch, and
+  FR 2011 patch.
+- Status: user gameplay validation on 2026-05-30.
 
-Tomoyo audit notes:
-
-| Area | Evidence | Status |
+| Function/prototype shape | Evidence | Status |
 | --- | --- | --- |
-| Steam type transplant | FR patch adds `SEEN9900` text table and adapts `SEEN9070` to use `S_TYPING_EN`. | documented |
-| Native JP type | JP 2010 native uses image resources `S_TYPINGxxx`; no `SEEN9900` is present. | validated |
-| JP first-line type issue | `SEEN0707` / `SEEN9070` bytecode roundtrips correctly; the bad `50_100_150...` display came from mixed Steam English `G00` resources. | resource issue, not script issue |
-| KFN continuation prototypes | Multi-line prototypes such as `zentohan` are parsed as a single function definition. | fixed |
-| Legacy select strings | `-"..."` select/menu strings in old RLdev output are parsed as strings. | fixed |
-| `DUMMYCHECK_DISC` | Old bytecode can report `argc = 1` while the KFN prototype has three args. | fixed |
-| Archive keys | Optional `game.cfg` keys were merged into `kprl -G`; Tomoyo 2010/2011 tested here did not require a key. | available |
+| KFN continuation prototypes | Multi-line prototypes such as `zentohan`. | parsed as one function definition |
+| `DUMMYCHECK_DISC` argc mismatch | Old bytecode can report `argc = 1` while the KFN prototype has three args. | encoded argc is respected |
+| Quoted arg followed by `$ff <int>` | Tomoyo/late KFN calls where `$` starts the next encoded argument. | argument boundary preserved |
 
-Findings fixed from Tomoyo debugging:
+Validated rule: old KFN/prototype mismatches must follow the encoded bytecode
+argument count when it is more specific than the prototype.
 
-- KFN parser lines that start with a prototype continuation must be folded into
-  the prior `fun` line before parsing overloads.
-- The disassembler should allow a literal hyphen to begin an old select/menu
-  string argument.
-- For old KFN calls where a quoted string is followed by `$ff <int>`, `$` can
-  be an argument boundary, not part of the preceding string.
-- JP native `type` roundtrip depends on matching script and image resources:
-  Steam English `G00` files must not be mixed with JP 2010 native
-  `S_TYPINGxxx` resources.
-
-## Current compatibility rules
+## Compatibility Rules
 
 | Rule | Scope | Source |
 | --- | --- | --- |
-| `itoa_ws`, `itoa_s`, `itoa_w`, `itoa` with 3 encoded args use overload 0 before RealLive 1.2.9.0 and overload 1 from 1.2.9.0 onward. | Version-gated | CLANNAD 1.2.3.5, AIR 1.2.9.5 |
-| `strsub` and `strrsub` with 3 encoded args use overload 1. | General until contradicted by a later corpus | CLANNAD 1.2.3.5 |
-| Steam/late RealLive builds should use `KIDOKU_TYPE` from `Gameexe.ini` when present. | Version and game config gated | CLANNAD Steam 1.6.7.3 |
-| `raw #ff #01 endraw` textout stubs are bytecode-preserving, not display text. | Known Steam case | CLANNAD Steam `SEEN9600` |
-| Command-level `###PRINT` markers are textout markers, including CLANNAD Steam's encoded `###PR 01 00 T(` byte shape. | Steam/late RealLive files | CLANNAD Steam |
-| Greedy subtraction parses may need repair when `argc` proves a unary-minus-started argument was swallowed by the prior expression. | Steam/late RealLive files | CLANNAD Steam |
-| Unquoted string argument bytes need a separator after a prior argument/operator. | General string emission rule | CLANNAD Steam |
-| KFN prototype continuation lines belong to the previous `fun` declaration when they start with a parenthesized overload. | General KFN parsing | Tomoyo After `zentohan` |
-| A quoted string followed by `$ff <int>` may need to end at `$` when the KFN prototype expects another argument. | Old bytecode/KFN mismatch | Tomoyo After / CLANNAD Steam `DUMMYCHECK_DISC` |
-| Hyphen-prefixed `-"..."` menu text is string data, not a unary-minus expression. | Legacy RLdev select output | Tomoyo After Steam FR `SEEN0001` |
-| KFN `(store goto)` functions carry a trailing pointer like ordinary goto/gosub calls. | General KFN rule | CLANNAD Side Stories `SEEN2000` |
-| `eof` plus a following raw `halt` is a meaningful trailer shape and must be preserved. | Steam/late RealLive files | CLANNAD Side Stories |
-| Unknown interpreter version keeps the normal KFN/prototype selection, with default generation version 1.2.7.0. | Safety fallback | Compiler policy |
-| `kprl -g` emits source debug line mapping for the native RealLive debugger; `kprl -G` remains only the game-ID option. | Debug tooling | CLANNAD Steam debug audit |
-| `kprl -G` game keys are optional and only needed for titles whose archived SEEN bytecode is encrypted after decompression. | Archive key handling | Tomoyo/game.cfg audit |
+| `itoa_ws`, `itoa_s`, `itoa_w`, and `itoa` with three encoded args use overload 0 before RealLive 1.2.9.0 and overload 1 from RealLive 1.2.9.0 onward. | Version-gated | CLANNAD 1.2.3.5, AIR 1.2.9.5 |
+| `strsub` and `strrsub` with three encoded args use overload 1. | General until contradicted | CLANNAD 1.2.3.5 |
+| KFN return parameters such as `>str` are emitted as real function parameters before assignment rewriting. | General KFN rule | AIR 1.02 |
+| KFN `(store goto)` functions carry a trailing pointer payload. | General KFN rule | CLANNAD Side Stories `SEEN2000` |
+| Encoded `argc` can override ambiguous source parsing when a greedy expression parse swallows a following argument. | Late RealLive/Steam | CLANNAD Steam |
+| Old KFN calls may have fewer encoded args than the modern prototype; honour the original encoded `argc`. | Old bytecode/KFN mismatch | Tomoyo `DUMMYCHECK_DISC` |
 
-## To expand
+## To Expand
 
-- Add each new title with interpreter version, corpus size, and any newly seen
-  opcode signatures.
-- When a later title contradicts a rule, split it by RealLive version range
-  instead of making a game-specific exception first.
+- Add only validated bytecode function signatures or function-shaped bytecode
+  behaviours.
+- Include interpreter version, corpus size, opcode/function shape, expected
+  overload or encoded argument rule, and validation status.
+- Put resource, archive, GUI, and image-format notes in separate documents.

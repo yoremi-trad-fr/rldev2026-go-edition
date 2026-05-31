@@ -26,8 +26,8 @@ export function RldevExtract(arg1, arg2) {
   return window['go']['main']['App']['RldevExtract'](arg1, arg2);
 }
 
-export function RldevG00ToPng(arg1, arg2) {
-  return window['go']['main']['App']['RldevG00ToPng'](arg1, arg2);
+export function RldevG00ToPng(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RldevG00ToPng'](arg1, arg2, arg3, arg4);
 }
 
 export function RldevGanToXml(arg1, arg2) {
@@ -38,8 +38,8 @@ export function RldevList(arg1) {
   return window['go']['main']['App']['RldevList'](arg1);
 }
 
-export function RldevPngToG00(arg1, arg2) {
-  return window['go']['main']['App']['RldevPngToG00'](arg1, arg2);
+export function RldevPngToG00(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['RldevPngToG00'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function RldevXmlToGan(arg1, arg2) {

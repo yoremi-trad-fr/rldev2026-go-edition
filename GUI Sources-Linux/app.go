@@ -605,43 +605,115 @@ func (a *App) RldevCompileBatch(inputDir, kfnFile, gameexe, interpreter, encodin
 	return ""
 }
 
-func (a *App) RldevG00ToPng(g00File, outputDir string) string {
+func g00BatchFiles(inputDir, ext string) ([]string, error) {
+	seen := map[string]bool{}
+	var files []string
+	for _, suffix := range []string{strings.ToLower(ext), strings.ToUpper(ext)} {
+		matches, err := filepath.Glob(filepath.Join(inputDir, "*"+suffix))
+		if err != nil {
+			return nil, err
+		}
+		for _, file := range matches {
+			if !seen[file] {
+				seen[file] = true
+				files = append(files, file)
+			}
+		}
+	}
+	sort.Strings(files)
+	if len(files) == 0 {
+		return nil, fmt.Errorf("aucun fichier %s trouve dans %s", ext, inputDir)
+	}
+	return files, nil
+}
+
+func appendG00MetadataArg(args []string, xmlPath string) []string {
+	xmlPath = strings.TrimSpace(xmlPath)
+	if xmlPath != "" {
+		args = append(args, "-m", xmlPath)
+	}
+	return args
+}
+
+func appendG00FormatArg(args []string, g00Format string) []string {
+	g00Format = strings.TrimSpace(g00Format)
+	if g00Format != "" && !strings.EqualFold(g00Format, "auto") {
+		args = append(args, "-g", g00Format)
+	}
+	return args
+}
+
+func (a *App) RldevG00ToPng(g00Input, outputDir, xmlPath string, batch bool) string {
 	a.log("========================================")
 	a.log("  RLdev - G00 vers PNG")
 	a.log("========================================")
 
-	if err := required("fichier G00", g00File); err != nil {
+	label := "fichier G00"
+	if batch {
+		label = "dossier G00"
+	}
+	if err := required(label, g00Input); err != nil {
 		return a.failIf(err)
 	}
 	if err := required("dossier de sortie", outputDir); err != nil {
 		return a.failIf(err)
 	}
 
-	if err := a.runTool("vaconv", "-v", "-d", outputDir, g00File); err != nil {
+	args := []string{"-v", "-d", outputDir}
+	args = appendG00MetadataArg(args, xmlPath)
+	if batch {
+		files, err := g00BatchFiles(g00Input, ".g00")
+		if err != nil {
+			return a.failIf(err)
+		}
+		a.log(fmt.Sprintf("Batch G00: %d fichier(s)", len(files)))
+		args = append(args, files...)
+	} else {
+		args = append(args, g00Input)
+	}
+	if err := a.runTool("vaconv", args...); err != nil {
 		return err.Error()
 	}
 	a.logOK("Conversion terminee.")
 	return ""
 }
 
-func (a *App) RldevPngToG00(pngFile, outputDir string) string {
+func (a *App) RldevPngToG00(pngInput, outputDir, xmlPath, g00Format string, batch bool) string {
 	a.log("========================================")
 	a.log("  RLdev - PNG vers G00")
 	a.log("========================================")
 
-	if err := required("fichier PNG", pngFile); err != nil {
+	label := "fichier PNG"
+	if batch {
+		label = "dossier PNG"
+	}
+	if err := required(label, pngInput); err != nil {
 		return a.failIf(err)
 	}
 	if err := required("dossier de sortie", outputDir); err != nil {
 		return a.failIf(err)
 	}
 
-	base := strings.TrimSuffix(filepath.Base(pngFile), filepath.Ext(pngFile))
-	outputFile := filepath.Join(outputDir, base+".g00")
-	if err := a.runTool("vaconv", "-v", "-o", outputFile, "-i", "png", pngFile); err != nil {
+	args := []string{"-v"}
+	args = appendG00FormatArg(args, g00Format)
+	args = appendG00MetadataArg(args, xmlPath)
+	if batch {
+		files, err := g00BatchFiles(pngInput, ".png")
+		if err != nil {
+			return a.failIf(err)
+		}
+		a.log(fmt.Sprintf("Batch PNG: %d fichier(s)", len(files)))
+		args = append(args, "-d", outputDir)
+		args = append(args, files...)
+	} else {
+		base := strings.TrimSuffix(filepath.Base(pngInput), filepath.Ext(pngInput))
+		outputFile := filepath.Join(outputDir, base+".g00")
+		args = append(args, "-o", outputFile, "-i", pngInput)
+	}
+	if err := a.runTool("vaconv", args...); err != nil {
 		return err.Error()
 	}
-	a.logOK("Conversion terminee: " + outputFile)
+	a.logOK("Conversion terminee.")
 	return ""
 }
 

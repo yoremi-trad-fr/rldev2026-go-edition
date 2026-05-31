@@ -1603,6 +1603,52 @@ func TestBracketSpecialParamKeepsParens(t *testing.T) {
 	}
 }
 
+func TestBracketSpecialParamSeparatesNegativeArg(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "index_series",
+		OpType:   1,
+		OpModule: 0,
+		OpCode:   800,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+			Params: []kfn.Parameter{
+				{Type: kfn.PIntC},
+				{Type: kfn.PIntC},
+				{Type: kfn.PIntC},
+				{Type: kfn.PSpecial, Flags: []kfn.ParamFlag{kfn.FArgc}},
+			},
+		}},
+	})
+	c.ParseElt(ast.FuncCallStmt{
+		Loc:   ast.Loc{Line: 1},
+		Ident: "index_series",
+		Params: []ast.Param{
+			ast.SimpleParam{Expr: ast.IntVar{Bank: 2, Index: ast.IntLit{Val: 1}}},
+			ast.SimpleParam{Expr: ast.IntLit{Val: 0}},
+			ast.SimpleParam{Expr: ast.IntLit{Val: 0}},
+			ast.SpecialParam{Tag: 2, Exprs: []ast.Expr{
+				ast.IntLit{Val: 0},
+				ast.IntLit{Val: 10000},
+				ast.UnaryExpr{Op: ast.UnarySub, Val: ast.IntLit{Val: 800}},
+				ast.IntLit{Val: 0},
+			}},
+		},
+	})
+	if c.HasErrors() {
+		t.Fatalf("errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	want := []byte{
+		0x24, 0xff, 0x10, 0x27, 0x00, 0x00,
+		',', '\\', codegen.OpCode(ast.OpSub),
+		0x24, 0xff, 0x20, 0x03, 0x00, 0x00,
+	}
+	if !bytes.Contains(got, want) {
+		t.Fatalf("negative special arg should be comma-separated:\n got  % x\n want % x", got, want)
+	}
+}
+
 func TestTextStubNilExpr(t *testing.T) {
 	c := newComp()
 	c.ParseElt(ast.ReturnStmt{Loc: ast.Loc{Line: 1}})

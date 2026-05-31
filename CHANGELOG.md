@@ -3,15 +3,51 @@
 This file tracks the RLdev2026 Go Edition beta history and the compatibility
 fixes validated during the project sessions.
 
+## Beta 2.8 - 2026-05-31
+
+G00 / `vaconv` updates:
+
+- Completed the Go `vaconv` workflow for G00 format 0, 1, and 2 files.
+- Added XML metadata support with `-m`, including PNG+XML import and automatic
+  XML export for format 2 files.
+- Added format 2 multi-region encode/decode support, compatible with modern
+  G00 files that carry region layout metadata.
+- Fixed format 0 BGR channel order so roundtripped background images keep their
+  original colours.
+- Fixed format 2 BGRA pixel handling and PNG alpha preservation for
+  semi-transparent assets.
+- Added focused G00 tests for format 0 colour order, PNG alpha handling,
+  format 1 roundtrip, and format 2 BGRA/region roundtrip.
+
+GUI updates:
+
+- Added G00 batch conversion to the Windows and Linux GUI for both
+  `G00 -> PNG` and `PNG -> G00`.
+- Added XML metadata file/folder selection for G00 conversion workflows.
+- Added a G00 format selector for PNG import: auto, v0, v1, and v2.
+- Updated generated Wails bindings and frontend builds for the new GUI
+  conversion signatures.
+
+Compiler/disassembler maintenance:
+
+- Improved KFN alias and overload handling for function families whose public
+  name differs from the internal opcode name.
+- Improved argument emission around complex/special parameters and unary
+  negative values.
+- Added parser/compiler support for `select(...)` as an expression where older
+  extracted sources require it.
+
+Documentation:
+
+- Cleaned `FUNCTION_VALIDATION_REGISTER.md` so it only tracks validated
+  bytecode function signatures and function-shaped bytecode behaviours.
+
 ## Beta 2.7 - 2026-05-30
 
 Support and tooling updates:
 
 - Added Tomoyo After roundtrip coverage for Memorial Edition 2010 JP, Steam
   2011 English, FR 2010, and FR 2011 scripts.
-- Documented the Steam text-based `type` mechanism transplant used by the
-  Tomoyo After FR patch, including the `SEEN9070` / `SEEN9900` roles and the
-  requirements for reusing it on Tomoyo After 2005.
 - Merged additional `game.cfg` archive keys into the Go game-key registry and
   `kprl -G` help text. These keys remain optional and are only used when a
   title actually needs encrypted SEEN decompression/recompression.
@@ -27,14 +63,6 @@ Tomoyo After fixes:
 - Fixed old bytecode calls such as `DUMMYCHECK_DISC`, where the KFN declares
   three arguments but the opcode header reports one; the disassembler now uses
   the prototype and treats `$` after a quoted string as an argument boundary.
-- Validated the JP 2010 `type` first-line issue as a resource mismatch, not a
-  script/compiler bug: JP native roundtrip needs the original JP `G00`
-  `S_TYPINGxxx` resources, not the merged Steam English set.
-
-Planned next tooling work:
-
-- Add `vaconv` support for XML metadata mode (`-m`) and batch conversion in the
-  GUI, covering `.g00`, `.g00 + .xml`, and later G00 v2/multiframe workflows.
 
 ## Beta 2.6 - 2026-05-28
 
