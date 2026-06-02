@@ -440,20 +440,21 @@ func (a *App) RldevArchive(outputSeen, inputDir, templateSeen string) string {
 		return a.failIf(err)
 	}
 
-	filesUpper, _ := filepath.Glob(filepath.Join(inputDir, "*.TXT"))
-	filesLower, _ := filepath.Glob(filepath.Join(inputDir, "*.txt"))
 	seen := map[string]bool{}
-	files := make([]string, 0, len(filesUpper)+len(filesLower))
-	for _, file := range append(filesUpper, filesLower...) {
-		key := strings.ToLower(file)
-		if !seen[key] {
-			seen[key] = true
-			files = append(files, file)
+	var files []string
+	for _, pattern := range []string{"*.TXT", "*.txt", "*.AVG", "*.avg"} {
+		matches, _ := filepath.Glob(filepath.Join(inputDir, pattern))
+		for _, file := range matches {
+			key := strings.ToLower(file)
+			if !seen[key] {
+				seen[key] = true
+				files = append(files, file)
+			}
 		}
 	}
 	sort.Strings(files)
 	if len(files) == 0 {
-		return a.failIf(fmt.Errorf("aucun fichier .TXT trouve dans %s", inputDir))
+		return a.failIf(fmt.Errorf("aucun fichier .TXT ou .avg trouve dans %s", inputDir))
 	}
 
 	args := []string{"-a"}
@@ -484,10 +485,10 @@ func appendTransformArgs(args []string, outputTransform string, forceTransform b
 
 func (a *App) RldevCompile(orgFile, kfnFile, gameexe, interpreter, encoding, outputTransform string, forceTransform bool, outputDir string) string {
 	a.log("========================================")
-	a.log("  RLdev - Compilation Kepago")
+	a.log("  RLdev - Compilation script")
 	a.log("========================================")
 
-	if err := required("script .org/.ke", orgFile); err != nil {
+	if err := required("script .org/.ke/.avg", orgFile); err != nil {
 		return a.failIf(err)
 	}
 	if err := required("dossier de sortie", outputDir); err != nil {
@@ -495,6 +496,14 @@ func (a *App) RldevCompile(orgFile, kfnFile, gameexe, interpreter, encoding, out
 	}
 	closeLog := a.startLogFile(outputDir, "rlc-compile")
 	defer closeLog()
+
+	if isAVG32SourceFile(orgFile) {
+		if err := a.compileAVG32Source(orgFile, outputDir, outputTransform, forceTransform); err != nil {
+			return err.Error()
+		}
+		a.logOK("Compilation AVG32 terminee.")
+		return ""
+	}
 
 	if encoding == "" {
 		encoding = "UTF-8"
@@ -527,7 +536,7 @@ func (a *App) RldevCompile(orgFile, kfnFile, gameexe, interpreter, encoding, out
 
 func (a *App) RldevCompileBatch(inputDir, kfnFile, gameexe, interpreter, encoding, outputTransform string, forceTransform bool, outputDir string) string {
 	a.log("========================================")
-	a.log("  RLdev - Compilation batch Kepago")
+	a.log("  RLdev - Compilation batch scripts")
 	a.log("========================================")
 
 	if err := required("dossier d'entree", inputDir); err != nil {
@@ -539,35 +548,41 @@ func (a *App) RldevCompileBatch(inputDir, kfnFile, gameexe, interpreter, encodin
 	closeLog := a.startLogFile(outputDir, "rlc-batch")
 	defer closeLog()
 
-	if encoding == "" {
-		encoding = "UTF-8"
-	}
-	if kfnFile == "" {
-		kfnFile = a.findKFN()
-	}
-	if err := required("KFN", kfnFile); err != nil {
-		return a.failIf(err)
-	}
-	interpreter = a.resolveInterpreter(gameexe, interpreter)
-
 	entries, err := os.ReadDir(inputDir)
 	if err != nil {
 		return a.failIf(fmt.Errorf("lecture du dossier impossible: %w", err))
 	}
 
 	var sources []string
+	hasKepago := false
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		ext := strings.ToLower(filepath.Ext(entry.Name()))
-		if ext == ".org" || ext == ".ke" {
+		if ext == ".org" || ext == ".ke" || ext == ".avg" {
 			sources = append(sources, entry.Name())
+			if ext == ".org" || ext == ".ke" {
+				hasKepago = true
+			}
 		}
 	}
 	sort.Strings(sources)
 	if len(sources) == 0 {
-		return a.failIf(fmt.Errorf("aucun fichier .org ou .ke trouve dans %s", inputDir))
+		return a.failIf(fmt.Errorf("aucun fichier .org, .ke ou .avg trouve dans %s", inputDir))
+	}
+
+	if hasKepago {
+		if encoding == "" {
+			encoding = "UTF-8"
+		}
+		if kfnFile == "" {
+			kfnFile = a.findKFN()
+		}
+		if err := required("KFN", kfnFile); err != nil {
+			return a.failIf(err)
+		}
+		interpreter = a.resolveInterpreter(gameexe, interpreter)
 	}
 
 	okCount := 0
@@ -576,6 +591,16 @@ func (a *App) RldevCompileBatch(inputDir, kfnFile, gameexe, interpreter, encodin
 		base := strings.TrimSuffix(name, filepath.Ext(name))
 		inputFile := filepath.Join(inputDir, name)
 		a.log(fmt.Sprintf("[%d/%d] %s", i+1, len(sources), name))
+
+		if isAVG32SourceFile(inputFile) {
+			if err := a.compileAVG32Source(inputFile, outputDir, outputTransform, forceTransform); err != nil {
+				errCount++
+				a.logError(fmt.Sprintf("%s: %v", name, err))
+				continue
+			}
+			okCount++
+			continue
+		}
 
 		args := []string{"-v", "-e", encoding, "-d", outputDir, "-o", base}
 		args = appendTransformArgs(args, outputTransform, forceTransform)
@@ -603,6 +628,29 @@ func (a *App) RldevCompileBatch(inputDir, kfnFile, gameexe, interpreter, encodin
 	}
 	a.logOK(result)
 	return ""
+}
+
+func isAVG32SourceFile(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".avg")
+}
+
+func (a *App) compileAVG32Source(avgFile, outputDir, outputTransform string, forceTransform bool) error {
+	args := []string{"-c", "-t", "AVG32", "-v", "1", "-o", outputDir}
+	args = appendKPRLTransformArgs(args, outputTransform, forceTransform)
+	args = append(args, avgFile)
+	return a.runTool("kprl", args...)
+}
+
+func appendKPRLTransformArgs(args []string, outputTransform string, forceTransform bool) []string {
+	outputTransform = strings.TrimSpace(outputTransform)
+	hasTransform := outputTransform != "" && !strings.EqualFold(outputTransform, "NONE")
+	if hasTransform {
+		args = append(args, "-transform-output", outputTransform)
+	}
+	if hasTransform && forceTransform {
+		args = append(args, "-force-transform")
+	}
+	return args
 }
 
 func g00BatchFiles(inputDir, ext string) ([]string, error) {

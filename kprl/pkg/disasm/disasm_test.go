@@ -287,6 +287,59 @@ func TestReadFuncArgsSplitsMultipleUnaryMinusArgs(t *testing.T) {
 	}
 }
 
+func TestReadFuncArgsStructuralTupleAfterScalarArg(t *testing.T) {
+	var data []byte
+	addInt := func(v int32) {
+		data = append(data, '$', 0xff)
+		var buf [4]byte
+		binary.LittleEndian.PutUint32(buf[:], uint32(v))
+		data = append(data, buf[:]...)
+	}
+	addLine := func(line uint16) {
+		data = append(data, '\n')
+		var buf [2]byte
+		binary.LittleEndian.PutUint16(buf[:], line)
+		data = append(data, buf[:]...)
+	}
+
+	data = append(data, '(')
+	addInt(0)
+	addLine(260)
+	data = append(data, '(')
+	data = append(data, []byte("BT_SE_A00A")...)
+	addInt(100)
+	addInt(100)
+	data = append(data, ')')
+	addLine(261)
+	data = append(data, '(')
+	data = append(data, []byte("BT_SE_A00A")...)
+	addInt(100)
+	addInt(100)
+	data = append(data, ')')
+	data = append(data, ')')
+
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	args, err := readFuncArgsCtx(r, 1, nil, nil)
+	if err != nil {
+		t.Fatalf("readFuncArgsCtx() error: %v", err)
+	}
+	if len(args) != 3 {
+		t.Fatalf("args len = %d, want 3 (%v)", len(args), args)
+	}
+	if args[0] != "0" {
+		t.Fatalf("args[0] = %q, want 0", args[0])
+	}
+	wantPrefix := "('BT_SE_A00A', 100, 100) /* nested:"
+	for i := 1; i < len(args); i++ {
+		if !strings.HasPrefix(args[i], wantPrefix) {
+			t.Fatalf("args[%d] = %q, want prefix %q", i, args[i], wantPrefix)
+		}
+	}
+	if r.Pos() != len(data) {
+		t.Fatalf("reader pos = %d, want %d", r.Pos(), len(data))
+	}
+}
+
 func TestParseParamProtosKeepsOverloads(t *testing.T) {
 	protos, flags := parseParamProtos("fun ResetTimer <1:Sys:00110, 1> ('counter') ()")
 	if len(protos) != 2 {

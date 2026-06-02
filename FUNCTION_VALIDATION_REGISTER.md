@@ -1,21 +1,22 @@
 # RLdev2026-Go bytecode function validation register
 
-Last update: 2026-05-31
+Last update: 2026-06-02
 
-This register only tracks RealLive bytecode function signatures, overload
-selection rules, and function-shaped bytecode behaviours that have been
-validated against known-good corpuses. Resource handling, G00 work, archive
-keys, GUI behaviour, and general project notes belong elsewhere.
+This register only tracks RealLive bytecode function signatures, AVG32
+instruction shapes, overload selection rules, and function-shaped bytecode
+behaviours that have been validated against known-good corpuses. Resource
+handling, G00 work, archive keys, GUI behaviour, and general project notes
+belong elsewhere.
 
 ## Method
 
-- Compile extracted `.org` sources with the target game's interpreter and
-  `Gameexe.ini` when available.
+- Compile extracted `.org` or `.avg` sources with the target game's
+  interpreter and `Gameexe.ini` when available.
 - Disassemble compiled files with opcode annotations.
-- Compare function opcodes, overload ids, and argument counts against the
-  original extracted files.
-- Keep rules tied to RealLive/interpreter version first, and to a game only
-  when the corpus proves the behaviour is game-specific.
+- Compare function opcodes, instruction shapes, overload ids, and argument
+  counts against the original extracted files.
+- Keep rules tied to interpreter family/version first, and to a game only when
+  the corpus proves the behaviour is game-specific.
 
 ## Validated Opcode Signatures
 
@@ -98,6 +99,39 @@ encoded `argc` contradicts a greedy subtraction parse.
 Validated rule: old KFN/prototype mismatches must follow the encoded bytecode
 argument count when it is more specific than the prototype.
 
+### Kanon 1999 / Kanon 1999 18+ AVG32
+
+- Interpreter: AVG32/TPC32 Kanon 1999 family.
+- Corpus: Kanon 1999 all-age and Kanon 1999 18+ roundtrip corpuses.
+- Status: user gameplay validation on 2026-06-02.
+
+| Instruction shape | Evidence | Status |
+| --- | --- | --- |
+| `text_zenkaku` / `text_hankaku` top-level text | SJIS and UTF-8/WESTERN roundtrips, including French accent test text. | text preserved and rebuilds |
+| `set_title([...])` formatted text | Kanon title/prologue resources extracted as editable `.utf` text. | editable and rebuilds |
+| `choice(...)` / `choice2(...)` text lists | Kanon choice text extracted as editable `.utf` resources. | editable and rebuilds |
+| Label and jump table targets | Full Kanon archive rebuild with recalculated offsets. | offsets rebuild cleanly |
+
+Validated rule: AVG32 UTF-8/WESTERN output keeps Japanese text in SJIS,
+maps validated Western accents through the configured font table, and emits
+Latin-only dialogue as `text_hankaku` so spacing matches the AVG32 renderer.
+
+### Little Busters! 2007
+
+- Interpreter: RealLive pre-1.1 family, validated against the Little Busters!
+  2007 corpus.
+- Corpus: Little Busters! 2007 SJIS/UTF-8 extraction and roundtrip corpus.
+- Status: user gameplay validation on 2026-06-02.
+
+| Function/prototype shape | Evidence | Status |
+| --- | --- | --- |
+| `objBgOfFileAnm` overload id 2 | Little Busters! bytecode uses the pre-1.1 filename + animation-name + visible/x/y form. | KFN updated and roundtrip validated |
+| `objBgOfFileAnm` shorter overloads | Same function also keeps the older one-arg and five-arg animation-name forms. | overload range preserved |
+
+Validated rule: pre-1.1 RealLive `objBgOfFileAnm` accepts overload ids 0, 1,
+and 2, including the filename + animation-name + visible/x/y form used by
+Little Busters! 2007.
+
 ## Compatibility Rules
 
 | Rule | Scope | Source |
@@ -108,6 +142,8 @@ argument count when it is more specific than the prototype.
 | KFN `(store goto)` functions carry a trailing pointer payload. | General KFN rule | CLANNAD Side Stories `SEEN2000` |
 | Encoded `argc` can override ambiguous source parsing when a greedy expression parse swallows a following argument. | Late RealLive/Steam | CLANNAD Steam |
 | Old KFN calls may have fewer encoded args than the modern prototype; honour the original encoded `argc`. | Old bytecode/KFN mismatch | Tomoyo `DUMMYCHECK_DISC` |
+| AVG32 Latin-only WESTERN dialogue is emitted as `text_hankaku`; Japanese dialogue remains in the native text form. | AVG32/Kanon | Kanon 1999 all-age / 18+ |
+| pre-1.1 `objBgOfFileAnm` accepts overload id 2 for filename + animation-name + visible/x/y. | RealLive pre-1.1 | Little Busters! 2007 |
 
 ## To Expand
 

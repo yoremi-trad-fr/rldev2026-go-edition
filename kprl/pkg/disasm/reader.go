@@ -2256,9 +2256,10 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 	// Disambiguate complex-tuple form `((tuple)+)` vs. regular args
 	// at entry: the former has its second '(' immediately after the
 	// outer one. If we see that pattern, treat every nested '(' as
-	// structural (sub-tuple opener). Otherwise, an inner '(' is the
-	// start of a parenthesised arith expression `(800-180)/2` and
-	// must be parsed via GetDataSep → GetExpression.
+	// structural (sub-tuple opener). Otherwise, an inner '(' is usually
+	// the start of a parenthesised arith expression `(800-180)/2` and
+	// must be parsed via GetDataSep → GetExpression, except for opcodes
+	// that carry later tuple arguments such as `(name, min, max)+`.
 	complexForm := false
 	if b2, err := r.Peek(); err == nil && b2 == '(' {
 		complexForm = true
@@ -2316,7 +2317,7 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 			// or skip silently. Here we just continue.
 
 		case '(':
-			if !complexForm {
+			if !complexForm && !r.startsStructuralTupleArg() {
 				// We're reading top-level args of a normal opcode
 				// and just hit a '(' — this is a parenthesised
 				// arith expression like `(800 - 180) / 2`. Delegate
@@ -2331,67 +2332,19 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 			}
 			// Complex tuple form: structural '(' is a sub-tuple
 			// opener. Capture its content via the dispatcher.
-			start := r.Pos()
-			r.Next() // consume '('
-			var inner strings.Builder
-			inner.WriteByte('(')
-			localDepth := 1
-		nestedLoop:
-			for !r.AtEnd() && localDepth > 0 {
-				nb, perr := r.Peek()
-				if perr != nil {
-					break
-				}
-				switch nb {
-				case ')':
-					r.Next()
-					localDepth--
-					if localDepth > 0 {
-						inner.WriteByte(')')
-					}
-				case '(':
-					if localDepth == 1 {
-						d, err := r.GetDataSep(false)
-						if err != nil {
-							break nestedLoop
-						}
-						if inner.Len() > 1 {
-							inner.WriteString(", ")
-						}
-						inner.WriteString(d)
-						continue
-					}
-					r.Next()
-					localDepth++
-					inner.WriteByte('(')
-				case ',':
-					r.Next()
-					inner.WriteString(", ")
-				case '\n':
-					r.Next()
-					if r.mode == ModeAvg2000 {
-						_, _ = r.ReadInt32()
-					} else {
-						_, _ = r.ReadUint16()
-					}
-				default:
-					d, err := r.GetDataSep(false)
-					if err != nil {
-						break nestedLoop
-					}
-					if inner.Len() > 1 {
-						inner.WriteString(", ")
-					}
-					inner.WriteString(d)
-				}
-			}
-			end := r.Pos()
-			args = append(args, fmt.Sprintf("%s) /* nested:%d bytes */",
-				inner.String(), end-start))
+			args = append(args, r.readStructuralTupleArg())
 
 		case ',':
 			// Argument separator — silently consumed in OCaml unquot.
 			r.Next()
+
+		case '\n':
+			r.Next()
+			if r.mode == ModeAvg2000 {
+				_, _ = r.ReadInt32()
+			} else {
+				_, _ = r.ReadUint16()
+			}
 
 		default:
 			// If we have a prototype, use sep_str=true for ResStr params.
@@ -2410,6 +2363,89 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 	}
 
 	return args, nil
+}
+
+func (r *Reader) startsStructuralTupleArg() bool {
+	if r.peekByteAt(0) != '(' {
+		return false
+	}
+	i := r.pos + 1
+	for i < r.limit {
+		b := r.data[i]
+		switch b {
+		case ',':
+			i++
+			continue
+		case '\n':
+			if r.mode == ModeAvg2000 {
+				i += 5
+			} else {
+				i += 3
+			}
+			continue
+		}
+		return b == '"' || b == '#' || b == 'a' || isAsciiStringStart(b) || isShiftJISLead(b)
+	}
+	return false
+}
+
+func (r *Reader) readStructuralTupleArg() string {
+	start := r.Pos()
+	r.Next() // consume '('
+	var inner strings.Builder
+	inner.WriteByte('(')
+	localDepth := 1
+nestedLoop:
+	for !r.AtEnd() && localDepth > 0 {
+		nb, perr := r.Peek()
+		if perr != nil {
+			break
+		}
+		switch nb {
+		case ')':
+			r.Next()
+			localDepth--
+			if localDepth > 0 {
+				inner.WriteByte(')')
+			}
+		case '(':
+			if localDepth == 1 {
+				d, err := r.GetDataSep(false)
+				if err != nil {
+					break nestedLoop
+				}
+				if inner.Len() > 1 {
+					inner.WriteString(", ")
+				}
+				inner.WriteString(d)
+				continue
+			}
+			r.Next()
+			localDepth++
+			inner.WriteByte('(')
+		case ',':
+			r.Next()
+			inner.WriteString(", ")
+		case '\n':
+			r.Next()
+			if r.mode == ModeAvg2000 {
+				_, _ = r.ReadInt32()
+			} else {
+				_, _ = r.ReadUint16()
+			}
+		default:
+			d, err := r.GetDataSep(false)
+			if err != nil {
+				break nestedLoop
+			}
+			if inner.Len() > 1 {
+				inner.WriteString(", ")
+			}
+			inner.WriteString(d)
+		}
+	}
+	end := r.Pos()
+	return fmt.Sprintf("%s) /* nested:%d bytes */", inner.String(), end-start)
 }
 
 func expandMinusSeparatedArgs(args []string, argc int) []string {

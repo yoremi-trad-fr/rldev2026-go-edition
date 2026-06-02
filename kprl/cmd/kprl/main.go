@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/yoremi/rldev-go/pkg/avg32"
 	"github.com/yoremi/rldev-go/pkg/binarray"
 	"github.com/yoremi/rldev-go/pkg/bytecode"
 	"github.com/yoremi/rldev-go/pkg/diag"
@@ -59,6 +60,7 @@ var (
 var (
 	encoding        = flag.String("e", "CP932", "output text encoding")
 	outputTransform = flag.String("transform-output", "", "text transform override: none, western, chinese, korean")
+	forceTransform  = flag.Bool("force-transform", false, "replace unmappable characters when using a text transform")
 	bom             = flag.Bool("bom", false, "include UTF-8 BOM")
 	singleFile      = flag.Bool("s", false, "don't separate text into resource file")
 	separateAll     = flag.Bool("S", false, "put all text in resource file")
@@ -66,7 +68,7 @@ var (
 	annotate        = flag.Bool("n", false, "annotate with offsets")
 	noCodes         = flag.Bool("r", false, "don't generate control codes")
 	debugInfo       = flag.Bool("g", false, "read debug information")
-	target          = flag.String("t", "", "target: RealLive, AVG2000, Kinetic")
+	target          = flag.String("t", "", "target: RealLive, AVG2000, AVG32, Kinetic")
 	targetVersion   = flag.String("f", "", "interpreter version (n.n.n.n) or filename")
 	kfnFile         = flag.String("kfn", "", "RealLive function definition file (default: reallive.kfn)")
 	castFile        = flag.String("cast", "", "cast of characters translation file")
@@ -115,6 +117,15 @@ func main() {
 		OutDir:          *outdir,
 		GameID:          *gameID,
 		TemplateArchive: *archiveTemplate,
+		ForceTransform:  *forceTransform,
+	}
+
+	if *outputTransform != "" {
+		mode, err := texttransforms.ParseMode(*outputTransform)
+		if err != nil {
+			fatal("%v", err)
+		}
+		opts.TextTransform = mode
 	}
 
 	if *gameID != "" {
@@ -161,7 +172,11 @@ func main() {
 		err = doExtract(args, opts)
 
 	case *actionCompress:
-		err = kprl.Pack(args, opts)
+		if isAVG32AssembleRequest(args) {
+			err = doAssembleAVG32(args, opts)
+		} else {
+			err = kprl.Pack(args, opts)
+		}
 
 	case *actionDisassemble:
 		err = doDisassemble(args, opts)
@@ -203,22 +218,29 @@ func doInfo(args []string, opts kprl.Options) error {
 		return err
 	}
 
-	fmt.Printf("Archive: %s (%d entries)\n\n", filepath.Base(fname), arc.Count)
+	fmt.Printf("Archive: %s (%s, %d entries)\n\n", filepath.Base(fname), arc.Format, arc.Count)
 	fmt.Printf("%-16s %8s %10s %10s %7s\n", "File", "Index", "Offset", "Length", "Ratio")
 	fmt.Println(strings.Repeat("-", 55))
 
-	for i := 0; i < kprl.MaxSeens; i++ {
+	for _, i := range archiveInfoIndices(arc) {
 		entry := arc.Entries[i]
 		if entry.Length == 0 {
 			continue
 		}
 
-		sub := kprl.GetSubfile(arc.Data, i)
+		sub := arc.Subfile(i)
 		if sub == nil {
 			continue
 		}
 
-		name := fmt.Sprintf("SEEN%04d.TXT", i)
+		name := arc.EntryName(i)
+		if arc.Format == kprl.ArchiveFormatAVG32 {
+			unpacked := int(sub.GetInt(0x08))
+			ratio := float64(entry.Length) / float64(unpacked) * 100.0
+			fmt.Printf("%-16s %8d %10d %10d %6.1f%%\n", name, i, entry.Offset, entry.Length, ratio)
+			continue
+		}
+
 		hdr, err := bytecode.ReadFullHeader(sub, true)
 		if err != nil {
 			fmt.Printf("%-16s %8d %10d %10d  [error]\n", name, i, entry.Offset, entry.Length)
@@ -235,6 +257,57 @@ func doInfo(args []string, opts kprl.Options) error {
 		}
 	}
 
+	return nil
+}
+
+func archiveInfoIndices(arc *kprl.Archive) []int {
+	if arc.Format == kprl.ArchiveFormatAVG32 && len(arc.Order) > 0 {
+		return arc.Order
+	}
+	indices := make([]int, 0, arc.Count)
+	for i := 0; i < kprl.MaxSeens; i++ {
+		if arc.Entries[i].Length > 0 {
+			indices = append(indices, i)
+		}
+	}
+	return indices
+}
+
+func isAVG32AssembleRequest(args []string) bool {
+	switch strings.ToLower(*target) {
+	case "avg32", "avg", "tpc32":
+		return true
+	}
+	for _, arg := range args {
+		if strings.EqualFold(filepath.Ext(arg), ".avg") {
+			return true
+		}
+	}
+	return false
+}
+
+func doAssembleAVG32(args []string, opts kprl.Options) error {
+	if err := os.MkdirAll(opts.OutDir, 0755); err != nil {
+		return fmt.Errorf("cannot create output directory: %w", err)
+	}
+	for _, fname := range args {
+		data, err := avg32.AssembleFileWithOptions(fname, avg32.Options{
+			TextTransform:  opts.TextTransform,
+			ForceTransform: opts.ForceTransform,
+		})
+		if err != nil {
+			return fmt.Errorf("%s: %w", fname, err)
+		}
+		base := filepath.Base(fname)
+		base = strings.TrimSuffix(base, filepath.Ext(base))
+		outPath := filepath.Join(opts.OutDir, base+".TXT")
+		if opts.Verbose > 0 {
+			fmt.Printf("Assembling %s to %s\n", filepath.Base(fname), filepath.Base(outPath))
+		}
+		if err := os.WriteFile(outPath, data, 0644); err != nil {
+			return fmt.Errorf("cannot write %s: %w", outPath, err)
+		}
+	}
 	return nil
 }
 
@@ -282,11 +355,7 @@ func doDisassemble(args []string, opts kprl.Options) error {
 	}
 
 	if *outputTransform != "" {
-		mode, err := texttransforms.ParseMode(*outputTransform)
-		if err != nil {
-			return err
-		}
-		disOpts.TextTransform = mode
+		disOpts.TextTransform = opts.TextTransform
 		disOpts.TextTransformSet = true
 	}
 
@@ -296,6 +365,8 @@ func doDisassemble(args []string, opts kprl.Options) error {
 			disOpts.ForcedTarget = disasm.ModeRealLive
 		case "avg2000", "avg2k", "1":
 			disOpts.ForcedTarget = disasm.ModeAvg2000
+		case "avg32", "avg", "tpc32":
+			disOpts.ForcedTarget = disasm.ModeAVG32
 		case "kinetic", "3":
 			disOpts.ForcedTarget = disasm.ModeKinetic
 		default:
@@ -307,7 +378,11 @@ func doDisassemble(args []string, opts kprl.Options) error {
 	kfnPath := *kfnFile
 	if kfnPath == "" {
 		// Auto-detect: search near executable, in lib/, etc.
-		candidates := findKFN()
+		kfnName := "reallive.kfn"
+		if disOpts.ForcedTarget == disasm.ModeAVG32 {
+			kfnName = "avg32.kfn"
+		}
+		candidates := findKFN(kfnName)
 		if candidates != "" {
 			kfnPath = candidates
 		}
@@ -329,23 +404,30 @@ func doDisassemble(args []string, opts kprl.Options) error {
 
 	// Check if first file is an archive
 	firstFile := args[0]
+	explicitKFN := *kfnFile != ""
 	if kprl.IsArchive(firstFile) {
-		return disassembleArchive(firstFile, args[1:], opts, disOpts, writer)
+		return disassembleArchive(firstFile, args[1:], opts, disOpts, writer, explicitKFN)
 	}
 
 	// Process individual files
 	for _, fname := range args {
-		if err := disassembleFile(fname, opts, disOpts, writer); err != nil {
+		if err := disassembleFile(fname, opts, disOpts, writer, explicitKFN); err != nil {
 			diag.SysWarning("%s: %v", fname, err)
 		}
 	}
 	return nil
 }
 
-func disassembleArchive(arcName string, rangeArgs []string, opts kprl.Options, disOpts disasm.Options, writer *disasm.Writer) error {
+func disassembleArchive(arcName string, rangeArgs []string, opts kprl.Options, disOpts disasm.Options, writer *disasm.Writer, explicitKFN bool) error {
 	arc, err := kprl.LoadArchive(arcName)
 	if err != nil {
 		return err
+	}
+	if arc.Format == kprl.ArchiveFormatAVG32 {
+		if err := ensureAVG32KFN(&disOpts, explicitKFN); err != nil {
+			diag.SysWarning("cannot load AVG32 KFN: %v", err)
+		}
+		return disassembleAVG32Archive(arc, rangeArgs, opts, disOpts)
 	}
 
 	var ranges []int
@@ -366,7 +448,7 @@ func disassembleArchive(arcName string, rangeArgs []string, opts kprl.Options, d
 	}
 
 	for _, i := range ranges {
-		sub := kprl.GetSubfile(arc.Data, i)
+		sub := arc.Subfile(i)
 		if sub == nil {
 			continue
 		}
@@ -412,10 +494,76 @@ func disassembleArchive(arcName string, rangeArgs []string, opts kprl.Options, d
 	return nil
 }
 
-func disassembleFile(fname string, opts kprl.Options, disOpts disasm.Options, writer *disasm.Writer) error {
+func disassembleAVG32Archive(arc *kprl.Archive, rangeArgs []string, opts kprl.Options, disOpts disasm.Options) error {
+	var ranges []int
+	var err error
+	if len(rangeArgs) > 0 {
+		ranges, err = kprl.ParseRanges(rangeArgs)
+		if err != nil {
+			return err
+		}
+	} else {
+		ranges = arc.Order
+	}
+
+	avgOpts := avg32.Options{
+		OutDir:          opts.OutDir,
+		SrcExt:          disOpts.SrcExt,
+		FuncReg:         disOpts.FuncReg,
+		Annotate:        disOpts.Annotate,
+		SeparateStrings: disOpts.SeparateStrings,
+		TextTransform:   disOpts.TextTransform,
+		ForceTransform:  opts.ForceTransform,
+	}
+
+	for _, i := range ranges {
+		sub := arc.Subfile(i)
+		if sub == nil {
+			continue
+		}
+		seenName := arc.EntryName(i)
+		diag.Phase("disassembling %s (AVG32)", seenName)
+		decompressed, err := kprl.DecompressAVG32SubfileForDisasm(sub)
+		if err != nil {
+			diag.SysWarning("%s: failed to decompress AVG32 PACK: %v", seenName, err)
+			continue
+		}
+		result, err := avg32.Disassemble(decompressed, avgOpts)
+		if err != nil {
+			diag.SysWarning("%s: failed to disassemble AVG32 scene: %v", seenName, err)
+			continue
+		}
+		if err := avg32.WriteSource(seenName, result, avgOpts); err != nil {
+			diag.SysWarning("%s: failed to write AVG32 source: %v", seenName, err)
+		}
+	}
+	return nil
+}
+
+func disassembleFile(fname string, opts kprl.Options, disOpts disasm.Options, writer *disasm.Writer, explicitKFN bool) error {
 	arr, err := binarray.ReadFile(fname)
 	if err != nil {
 		return fmt.Errorf("cannot read '%s': %w", fname, err)
+	}
+
+	if disOpts.ForcedTarget == disasm.ModeAVG32 || (arr.Len() >= 5 && arr.Read(0, 5) == "TPC32") {
+		if err := ensureAVG32KFN(&disOpts, explicitKFN); err != nil {
+			diag.SysWarning("cannot load AVG32 KFN: %v", err)
+		}
+		avgOpts := avg32.Options{
+			OutDir:          opts.OutDir,
+			SrcExt:          disOpts.SrcExt,
+			FuncReg:         disOpts.FuncReg,
+			Annotate:        disOpts.Annotate,
+			SeparateStrings: disOpts.SeparateStrings,
+			TextTransform:   disOpts.TextTransform,
+			ForceTransform:  opts.ForceTransform,
+		}
+		result, err := avg32.Disassemble(arr.Data, avgOpts)
+		if err != nil {
+			return fmt.Errorf("failed to disassemble AVG32 scene '%s': %w", fname, err)
+		}
+		return avg32.WriteSource(filepath.Base(fname), result, avgOpts)
 	}
 
 	// Decompress if needed (for standalone files, also accept raw RealLive headers)
@@ -441,32 +589,57 @@ func disassembleFile(fname string, opts kprl.Options, disOpts disasm.Options, wr
 	return writer.WriteSource(baseName, result)
 }
 
+func ensureAVG32KFN(disOpts *disasm.Options, explicit bool) error {
+	if explicit {
+		return nil
+	}
+	kfnPath := findKFN("avg32.kfn")
+	if kfnPath == "" {
+		return fmt.Errorf("avg32.kfn not found")
+	}
+	reg, err := disasm.LoadKFN(kfnPath)
+	if err != nil {
+		return err
+	}
+	disOpts.FuncReg = reg
+	diag.Phase("loaded KFN: %s (%d functions)", kfnPath, len(reg.AllNames()))
+	return nil
+}
+
 func fatal(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "Error: "+format+"\n", args...)
 	os.Exit(1)
 }
 
-// findKFN searches for reallive.kfn in common locations.
-func findKFN() string {
+// findKFN searches for a KFN file in common locations.
+func findKFN(name string) string {
 	execPath, _ := os.Executable()
 	execDir := filepath.Dir(execPath)
 	home, _ := os.UserHomeDir()
 	rldev := os.Getenv("RLDEV")
+	wd, _ := os.Getwd()
 
 	candidates := []string{
-		filepath.Join(execDir, "reallive.kfn"),
-		filepath.Join(execDir, "lib", "reallive.kfn"),
+		filepath.Join(execDir, name),
+		filepath.Join(execDir, "lib", name),
 	}
 	if rldev != "" {
 		candidates = append([]string{
-			filepath.Join(rldev, "lib", "reallive.kfn"),
-			filepath.Join(rldev, "reallive.kfn"),
+			filepath.Join(rldev, "lib", name),
+			filepath.Join(rldev, name),
+		}, candidates...)
+	}
+	if wd != "" {
+		candidates = append([]string{
+			filepath.Join(wd, name),
+			filepath.Join(wd, "KFN", name),
+			filepath.Join(wd, "..", "KFN", name),
 		}, candidates...)
 	}
 	if home != "" {
 		candidates = append(candidates,
-			filepath.Join(home, "rldev", "lib", "reallive.kfn"),
-			filepath.Join(home, ".rldev", "lib", "reallive.kfn"),
+			filepath.Join(home, "rldev", "lib", name),
+			filepath.Join(home, ".rldev", "lib", name),
 		)
 	}
 

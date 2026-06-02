@@ -53,7 +53,7 @@
     { id: '_rs1', label: 'KPRL / RLC', section: true },
     { id: 'kprl_list',    label: '1 — List SEEN.txt' },
     { id: 'kprl_disasm',  label: '2 — Extract SEEN.txt' },
-    { id: 'rlc_compile',  label: '3 — Compile .org / .ke' },
+    { id: 'rlc_compile',  label: '3 — Compile .org / .ke / .avg' },
     { id: 'kprl_archive', label: '4 — Rebuild SEEN.txt' },
     { id: 'kprl_extract', label: 'Advanced: extract bytecode' },
     { id: '_rs3', label: 'IMAGE (G00)', section: true },
@@ -122,10 +122,10 @@
   }
   async function browseRlOrg() {
     if (rlCompileBatch) {
-      const d = await SelectDirectory('Select folder with .org / .ke files');
+      const d = await SelectDirectory('Select folder with .org / .ke / .avg files');
       if (d) rlOrgDir = d;
     } else {
-      const f = await SelectFile('Select .org / .ke file', '*.org;*.ke', 'Kepago scripts');
+      const f = await SelectFile('Select .org / .ke / .avg file', '*.org;*.ke;*.avg', 'RLdev scripts');
       if (f) rlOrgFile = f;
     }
   }
@@ -290,8 +290,8 @@
 
       {:else if rldevSelectedOp === 'kprl_archive'}
         <div class="form-title">4 — Rebuild SEEN.txt</div>
-        <div class="form-hint" style="margin-bottom:10px">Assemble des fichiers .TXT compilés dans une archive SEEN.txt.</div>
-        <div class="form-group"><label>Input folder (*.TXT) :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
+        <div class="form-hint" style="margin-bottom:10px">Assemble des fichiers .TXT/.avg compilés dans une archive SEEN.txt.</div>
+        <div class="form-group"><label>Input folder (.TXT/.avg) :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
         <div class="form-group"><label>Original/template SEEN.txt :</label><div class="form-row"><input type="text" bind:value={rlTemplateSeenFile} readonly placeholder="Optionnel, requis pour Clannad Steam" /><button class="btn" on:click={browseRlTemplateSeen}>Select</button></div></div>
         <div class="form-group"><label>Output SEEN.txt :</label><div class="form-row"><input type="text" bind:value={rlSeenFile} readonly /><button class="btn" on:click={browseRlSeenSave}>Select</button></div></div>
         <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startRlArchive} disabled={!rlSeenFile || !rlOutputDir}>Rebuild Archive</button>{/if}</div>
@@ -302,13 +302,13 @@
         <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startRlList} disabled={!rlSeenFile}>List Contents</button>{/if}</div>
 
       {:else if rldevSelectedOp === 'rlc_compile'}
-        <div class="form-title">3 — Compile .org / .ke → .TXT</div>
-        <div class="form-hint" style="margin-bottom:10px">Compile un script Kepago, ou tous les .org/.ke d'un dossier en mode batch.</div>
+        <div class="form-title">3 — Compile .org / .ke / .avg → .TXT</div>
+        <div class="form-hint" style="margin-bottom:10px">Compile les scripts RealLive/Kepago ou AVG32 d'un dossier en mode batch.</div>
         <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlCompileBatch} on:change={toggleCompileBatch} /> Batch mode</label></div></div>
         {#if rlCompileBatch}
-          <div class="form-group"><label>Input folder (.org/.ke) :</label><div class="form-row"><input type="text" bind:value={rlOrgDir} readonly /><button class="btn" on:click={browseRlOrg}>Select</button></div></div>
+          <div class="form-group"><label>Input folder (.org/.ke/.avg) :</label><div class="form-row"><input type="text" bind:value={rlOrgDir} readonly /><button class="btn" on:click={browseRlOrg}>Select</button></div></div>
         {:else}
-          <div class="form-group"><label>Script .org / .ke :</label><div class="form-row"><input type="text" bind:value={rlOrgFile} readonly /><button class="btn" on:click={browseRlOrg}>Select</button></div></div>
+          <div class="form-group"><label>Script .org / .ke / .avg :</label><div class="form-row"><input type="text" bind:value={rlOrgFile} readonly /><button class="btn" on:click={browseRlOrg}>Select</button></div></div>
         {/if}
         <div class="form-group"><label>KFN file :</label><div class="form-row"><input type="text" bind:value={rlKfnFile} readonly placeholder="Auto : ./KFN/reallive.kfn" /><button class="btn" on:click={browseRlKfn}>Select</button></div></div>
         <div class="form-group"><label>GAMEEXE.INI (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlGameexe} readonly /><button class="btn" on:click={browseRlGameexe}>Select</button></div></div>
@@ -317,7 +317,7 @@
         <div class="form-group"><label>Transformation sortie :</label><div class="form-row"><select bind:value={rlOutputTransform}><option value="NONE">NONE / CP932 original</option><option value="WESTERN">WESTERN / CP1252</option><option value="CHINESE">CHINESE</option><option value="KOREAN">KOREAN</option></select></div></div>
         <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlForceTransform} /> Force transform</label></div></div>
         <div class="form-group"><label>Output folder :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
-        <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startRlCompile} disabled={(rlCompileBatch ? !rlOrgDir : !rlOrgFile) || !rlKfnFile || !rlOutputDir}>Compile</button>{/if}</div>
+        <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startRlCompile} disabled={(rlCompileBatch ? !rlOrgDir : !rlOrgFile) || !rlOutputDir}>Compile</button>{/if}</div>
 
       {:else if rldevSelectedOp === 'g00_extract'}
         <div class="form-title">G00 → PNG</div>

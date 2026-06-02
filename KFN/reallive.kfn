@@ -3272,8 +3272,9 @@ module 072 // OBC ObjBackChild
                                                ('buf', strC 'filename', 'visible', 'x', 'y')
 
   ver < 1.1 // a guess - test 1.0.9
-    fun objBgOfFileAnm        <1:072:01003, 1> ('buf', strC 'anmname')
+    fun objBgOfFileAnm        <1:072:01003, 2> ('buf', strC 'anmname')
                                                ('buf', strC 'anmname', 'visible', 'x', 'y')
+                                               ('buf', strC 'filename', strC 'anmname', 'visible', 'x', 'y')
   end
 
   ver >= 1.1  // a guess - test 1.0.9

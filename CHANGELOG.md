@@ -3,6 +3,53 @@
 This file tracks the RLdev2026 Go Edition beta history and the compatibility
 fixes validated during the project sessions.
 
+## Beta 2.9 - 2026-06-02
+
+Support added:
+
+- Added Kanon 1999 all-age support for the AVG32/TPC32 engine, validated in
+  game.
+- Added Kanon 1999 18+ support for the AVG32/TPC32 engine, validated in game.
+- Added Little Busters! 2007 support, validated in game with the original
+  disc/ISO workflow and no executable patching.
+
+AVG32 / Kanon updates:
+
+- Added the AVG32 target to `kprl` with `-t AVG32` and the new
+  `KFN/avg32.kfn` opcode table.
+- Added PACL/PACK archive detection, listing, extraction, and rebuild support
+  for Kanon archives.
+- Added TPC32 `.avg` disassembly with paired `.utf` resources and lossless
+  `#rawhex` preservation for unknown bytecode blocks.
+- Added `.avg -> .TXT` assembly in the CLI and GUI, including single-file and
+  batch compilation.
+- Added editable AVG32 text coverage for top-level dialogue, `set_title`, and
+  choice text.
+- Fixed AVG32 UTF-8/WESTERN output so Japanese SJIS text is preserved, French
+  accents use the validated Western mapping, Latin-only dialogue is emitted as
+  `text_hankaku`, and generated `.utf` files use CRLF line endings.
+- Validated SJIS and UTF-8 roundtrips for both Kanon 1999 versions.
+
+Little Busters! 2007 updates:
+
+- Added and validated the pre-1.1 `objBgOfFileAnm` overload shape used by the
+  Little Busters! 2007 bytecode corpus.
+- Validated the Little Busters! 2007 roundtrip and in-game launch path with an
+  original disc/ISO setup.
+
+GUI updates:
+
+- The compile panel now accepts `.avg` sources in addition to `.org` and `.ke`.
+- Batch compilation can include `.avg` files.
+- Archive rebuild workflows accept `.TXT` and `.avg` inputs where appropriate.
+- KFN selection remains required for RealLive `.org` / `.ke` compilation, but
+  no longer blocks AVG32 `.avg` compilation.
+
+Notes:
+
+- AVG32 PACK rebuild currently uses valid literal recompression; rebuilt files
+  can be larger than the originals.
+
 ## Beta 2.8 - 2026-05-31
 
 G00 / `vaconv` updates:

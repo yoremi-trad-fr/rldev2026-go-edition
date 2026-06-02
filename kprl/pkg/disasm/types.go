@@ -23,6 +23,7 @@ const (
 	ModeRealLive            // Standard RealLive
 	ModeAvg2000             // AVG2000 (older)
 	ModeKinetic             // Kinetic (subset)
+	ModeAVG32               // AVG32 / TPC32 (Kanon-era)
 )
 
 func (m EngineMode) String() string {
@@ -33,6 +34,8 @@ func (m EngineMode) String() string {
 		return "AVG2000"
 	case ModeKinetic:
 		return "Kinetic"
+	case ModeAVG32:
+		return "AVG32"
 	default:
 		return "[unknown]"
 	}

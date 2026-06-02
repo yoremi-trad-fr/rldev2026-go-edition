@@ -3,9 +3,11 @@ package kprl
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/yoremi/rldev-go/pkg/binarray"
@@ -222,6 +224,218 @@ func TestExtractUsesParsedCompressionFlag(t *testing.T) {
 	}
 }
 
+func TestAVG32PackRoundTrip(t *testing.T) {
+	payload := append([]byte("TPC32\x00\x0f\x00"), bytes.Repeat([]byte{0x41, 0x42, 0x00}, 32)...)
+	packed, err := packAVG32Data(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unpacked, err := decompressAVG32Pack(binarray.FromBytes(packed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(unpacked.Data, payload) {
+		t.Fatalf("unpacked data mismatch")
+	}
+}
+
+func TestLoadAndExtractAVG32Archive(t *testing.T) {
+	dir := t.TempDir()
+	archive := filepath.Join(dir, "SEEN.TXT")
+	outDir := filepath.Join(dir, "out")
+	payload := []byte("TPC32 synthetic AVG32 scene")
+
+	writeTestAVG32Archive(t, archive, map[int][]byte{
+		1:  payload,
+		50: []byte("TPC32 second scene"),
+	})
+
+	arc, err := LoadArchive(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if arc.Format != ArchiveFormatAVG32 {
+		t.Fatalf("format = %v, want AVG32", arc.Format)
+	}
+	if arc.Count != 2 {
+		t.Fatalf("entry count = %d, want 2", arc.Count)
+	}
+	if arc.EntryName(1) != "SEEN001.TXT" {
+		t.Fatalf("entry name = %q, want SEEN001.TXT", arc.EntryName(1))
+	}
+
+	if err := Extract(archive, []int{1}, Options{OutDir: outDir}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(outDir, "SEEN001.TXT.rl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("payload = %q, want %q", got, payload)
+	}
+}
+
+func TestAddRebuildsAVG32ArchiveFromTemplate(t *testing.T) {
+	dir := t.TempDir()
+	template := filepath.Join(dir, "template.SEEN.TXT")
+	output := filepath.Join(dir, "rebuilt.SEEN.TXT")
+	input := filepath.Join(dir, "SEEN001.TXT")
+	replacement := []byte("TPC32 replacement scene")
+	kept := []byte("TPC32 kept scene")
+
+	writeTestAVG32Archive(t, template, map[int][]byte{
+		1: []byte("TPC32 old scene"),
+		2: kept,
+	})
+	if err := os.WriteFile(input, replacement, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Add(output, []string{input}, Options{TemplateArchive: template}); err != nil {
+		t.Fatal(err)
+	}
+
+	arc, err := LoadArchive(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if arc.Format != ArchiveFormatAVG32 {
+		t.Fatalf("format = %v, want AVG32", arc.Format)
+	}
+
+	seen1, err := decompressAVG32Pack(arc.Subfile(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(seen1.Data, replacement) {
+		t.Fatalf("SEEN001 payload = %q, want %q", seen1.Data, replacement)
+	}
+	seen2, err := decompressAVG32Pack(arc.Subfile(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(seen2.Data, kept) {
+		t.Fatalf("SEEN002 payload = %q, want %q", seen2.Data, kept)
+	}
+}
+
+func TestAddRebuildsAVG32ArchiveFromAvgSource(t *testing.T) {
+	dir := t.TempDir()
+	template := filepath.Join(dir, "template.SEEN.TXT")
+	output := filepath.Join(dir, "rebuilt.SEEN.TXT")
+	input := filepath.Join(dir, "SEEN001.avg")
+	replacement := []byte("TPC32 replacement from avg source")
+	kept := []byte("TPC32 kept scene")
+
+	writeTestAVG32Archive(t, template, map[int][]byte{
+		1: []byte("TPC32 old scene"),
+		2: kept,
+	})
+	if err := os.WriteFile(input, []byte(avg32RawSource(replacement)), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Add(output, []string{input}, Options{TemplateArchive: template}); err != nil {
+		t.Fatal(err)
+	}
+
+	arc, err := LoadArchive(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen1, err := decompressAVG32Pack(arc.Subfile(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(seen1.Data, replacement) {
+		t.Fatalf("SEEN001 payload = %q, want %q", seen1.Data, replacement)
+	}
+	seen2, err := decompressAVG32Pack(arc.Subfile(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(seen2.Data, kept) {
+		t.Fatalf("SEEN002 payload = %q, want %q", seen2.Data, kept)
+	}
+}
+
+func TestAddCreatesAVG32ArchiveFromAvgSourceWithoutTemplate(t *testing.T) {
+	dir := t.TempDir()
+	output := filepath.Join(dir, "new.SEEN.TXT")
+	input := filepath.Join(dir, "SEEN001.avg")
+	replacement := []byte("TPC32 replacement from standalone avg source")
+
+	if err := os.WriteFile(input, []byte(avg32RawSource(replacement)), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Add(output, []string{input}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+
+	arc, err := LoadArchive(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if arc.Format != ArchiveFormatAVG32 {
+		t.Fatalf("format = %v, want AVG32", arc.Format)
+	}
+	if arc.EntryName(1) != "SEEN001.TXT" {
+		t.Fatalf("entry name = %q, want SEEN001.TXT", arc.EntryName(1))
+	}
+	seen1, err := decompressAVG32Pack(arc.Subfile(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(seen1.Data, replacement) {
+		t.Fatalf("SEEN001 payload = %q, want %q", seen1.Data, replacement)
+	}
+}
+
+func TestAddRejectsAVG32SourceForRealLiveArchive(t *testing.T) {
+	dir := t.TempDir()
+	output := filepath.Join(dir, "SEEN.TXT")
+	input := filepath.Join(dir, "SEEN0001.avg")
+
+	writeTestArchive(t, output, map[int][]byte{
+		1: minimalRealLiveBytecode([]byte("old")),
+	}, nil)
+	if err := os.WriteFile(input, []byte(avg32RawSource([]byte("TPC32 wrong archive"))), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Add(output, []string{input}, Options{})
+	if err == nil {
+		t.Fatal("Add accepted .avg source for RealLive archive")
+	}
+	if !strings.Contains(err.Error(), ".avg sources require an AVG32 archive") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAddRejectsNonTPC32InputForAVG32Archive(t *testing.T) {
+	dir := t.TempDir()
+	template := filepath.Join(dir, "template.SEEN.TXT")
+	output := filepath.Join(dir, "rebuilt.SEEN.TXT")
+	input := filepath.Join(dir, "SEEN001.TXT")
+
+	writeTestAVG32Archive(t, template, map[int][]byte{
+		1: []byte("TPC32 old scene"),
+	})
+	if err := os.WriteFile(input, []byte("not a TPC32 scene"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Add(output, []string{input}, Options{TemplateArchive: template})
+	if err == nil {
+		t.Fatal("Add accepted non-TPC32 input for AVG32 archive")
+	}
+	if !strings.Contains(err.Error(), "not a .avg source, PACK block, or TPC32 scene") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 // fakeHeader creates a minimal FileHeader for testing
 func fakeHeader(headerVer, compilerVer int) bytecode.FileHeader {
 	return bytecode.FileHeader{HeaderVersion: headerVer, CompilerVersion: compilerVer}
@@ -281,4 +495,52 @@ func writeTestArchive(t *testing.T, path string, entries map[int][]byte, trailer
 	if err := os.WriteFile(path, out, 0644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writeTestAVG32Archive(t *testing.T, path string, entries map[int][]byte) {
+	t.Helper()
+
+	indices := make([]int, 0, len(entries))
+	for idx := range entries {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+
+	table := make([]byte, len(indices)*avg32ArchiveEntrySize)
+	body := make([]byte, 0)
+	offset := avg32ArchiveHeaderSize + len(table)
+	for tableIdx, idx := range indices {
+		packed, err := packAVG32Data(entries[idx])
+		if err != nil {
+			t.Fatal(err)
+		}
+		base := tableIdx * avg32ArchiveEntrySize
+		name := []byte(fmt.Sprintf("SEEN%03d.TXT", idx))
+		copy(table[base:], name)
+		binary.LittleEndian.PutUint32(table[base+0x10:], uint32(offset))
+		binary.LittleEndian.PutUint32(table[base+0x14:], uint32(len(packed)))
+		binary.LittleEndian.PutUint32(table[base+0x18:], uint32(len(entries[idx])))
+		binary.LittleEndian.PutUint32(table[base+0x1c:], 1)
+		body = append(body, packed...)
+		offset += len(packed)
+	}
+
+	header := make([]byte, avg32ArchiveHeaderSize)
+	copy(header, "PACL")
+	binary.LittleEndian.PutUint32(header[0x10:], uint32(len(indices)))
+	out := append(header, table...)
+	out = append(out, body...)
+	if err := os.WriteFile(path, out, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func avg32RawSource(data []byte) string {
+	var b strings.Builder
+	b.WriteString("#target AVG32\n#rawhex begin\n#rawhex")
+	for _, x := range data {
+		fmt.Fprintf(&b, " %02X", x)
+	}
+	b.WriteString("\n#rawhex end\n")
+	return b.String()
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/yoremi/rldev-go/pkg/diag"
 	"github.com/yoremi/rldev-go/pkg/gamedef"
 	"github.com/yoremi/rldev-go/pkg/rlcmp"
+	"github.com/yoremi/rldev-go/pkg/texttransforms"
 )
 
 const (
@@ -34,11 +35,30 @@ const (
 	IndexSize = MaxSeens * 8 // 80000 bytes
 	// CompExt is the extension for compressed extracted files.
 	CompExt = "rlc"
+	// Avg32CompExt is the extension for compressed AVG32 PACK blocks.
+	Avg32CompExt = "pack"
 	// UncompExt is the extension for uncompressed extracted files.
 	UncompExt = "rl"
 )
 
 var emptyArcMagic = "\x00Empty RealLive archive"
+
+// ArchiveFormat identifies the outer container format.
+type ArchiveFormat int
+
+const (
+	ArchiveFormatRealLive ArchiveFormat = iota
+	ArchiveFormatAVG32
+)
+
+func (f ArchiveFormat) String() string {
+	switch f {
+	case ArchiveFormatAVG32:
+		return "AVG32"
+	default:
+		return "RealLive"
+	}
+}
 
 // SeenEntry holds the offset and length of a file within the archive.
 type SeenEntry struct {
@@ -49,7 +69,10 @@ type SeenEntry struct {
 // Archive represents a loaded SEEN.TXT archive.
 type Archive struct {
 	Data    *binarray.Buffer
+	Format  ArchiveFormat
 	Entries [MaxSeens]SeenEntry
+	Names   [MaxSeens]string
+	Order   []int
 	Count   int // Number of non-empty entries
 }
 
@@ -60,6 +83,8 @@ type Options struct {
 	GameID          string
 	Keys            []gamedef.XORSubkey
 	TemplateArchive string
+	TextTransform   texttransforms.EncMode
+	ForceTransform  bool
 }
 
 // --- Archive detection and loading ---
@@ -83,6 +108,42 @@ func GetSubfile(arc *binarray.Buffer, idx int) *binarray.Buffer {
 		return nil
 	}
 	return arc.Sub(entry.Offset, entry.Length)
+}
+
+// EntryName returns the archive-stored filename for idx, or the default name
+// for the archive format when no explicit name exists.
+func (arc *Archive) EntryName(idx int) string {
+	if idx >= 0 && idx < MaxSeens && arc.Names[idx] != "" {
+		return arc.Names[idx]
+	}
+	if arc.Format == ArchiveFormatAVG32 {
+		return fmt.Sprintf("SEEN%03d.TXT", idx)
+	}
+	return fmt.Sprintf("SEEN%04d.TXT", idx)
+}
+
+// Subfile returns the raw archived block for idx.
+func (arc *Archive) Subfile(idx int) *binarray.Buffer {
+	if idx < 0 || idx >= MaxSeens {
+		return nil
+	}
+	entry := arc.Entries[idx]
+	if entry.Length == 0 {
+		return nil
+	}
+	return arc.Data.Sub(entry.Offset, entry.Length)
+}
+
+func (arc *Archive) selectedIndices(ranges []int) []int {
+	if ranges != nil {
+		return resolveRanges(ranges)
+	}
+	if arc.Format == ArchiveFormatAVG32 && len(arc.Order) > 0 {
+		out := append([]int(nil), arc.Order...)
+		sort.Ints(out)
+		return out
+	}
+	return resolveRanges(nil)
 }
 
 // SeenCount checks if the buffer looks like a SEEN.TXT archive and returns
@@ -128,7 +189,10 @@ func IsArchive(fname string) bool {
 	if err != nil {
 		return false
 	}
-	return SeenCount(data) >= 0
+	if SeenCount(data) >= 0 {
+		return true
+	}
+	return avg32ArchiveCount(data) >= 0
 }
 
 // LoadArchive loads a SEEN.TXT archive from file.
@@ -139,15 +203,20 @@ func LoadArchive(fname string) (*Archive, error) {
 	}
 
 	count := SeenCount(data)
-	if count < 0 {
-		return nil, fmt.Errorf("%s is not a valid RealLive archive", filepath.Base(fname))
+	if count >= 0 {
+		arc := &Archive{Data: data, Count: count, Format: ArchiveFormatRealLive}
+		for i := 0; i < MaxSeens; i++ {
+			arc.Entries[i] = getSubfileInfo(data, i)
+		}
+		return arc, nil
 	}
 
-	arc := &Archive{Data: data, Count: count}
-	for i := 0; i < MaxSeens; i++ {
-		arc.Entries[i] = getSubfileInfo(data, i)
+	arc, err := loadAVG32Archive(data)
+	if err == nil {
+		return arc, nil
 	}
-	return arc, nil
+
+	return nil, fmt.Errorf("%s is not a valid RealLive or AVG32 archive", filepath.Base(fname))
 }
 
 // --- Core operations ---
@@ -160,7 +229,7 @@ func List(fname string, ranges []int, opts Options) error {
 		return err
 	}
 
-	indices := resolveRanges(ranges)
+	indices := arc.selectedIndices(ranges)
 
 	for _, i := range indices {
 		entry := arc.Entries[i]
@@ -168,8 +237,19 @@ func List(fname string, ranges []int, opts Options) error {
 			continue
 		}
 
-		sub := GetSubfile(arc.Data, i)
+		sub := arc.Subfile(i)
 		if sub == nil {
+			continue
+		}
+
+		if arc.Format == ArchiveFormatAVG32 {
+			unc, cmp, err := avg32PackSizes(sub)
+			if err != nil {
+				diag.SysWarning("%s: cannot read PACK header: %v", arc.EntryName(i), err)
+				continue
+			}
+			ratio := float64(cmp) / float64(unc) * 100.0
+			fmt.Printf("%s: %10.2f k -> %10.2f k   (%.2f%%)\n", arc.EntryName(i), float64(unc)/1024.0, float64(cmp)/1024.0, ratio)
 			continue
 		}
 
@@ -206,19 +286,23 @@ func Break(fname string, ranges []int, opts Options) error {
 		return fmt.Errorf("cannot create output directory: %w", err)
 	}
 
-	indices := resolveRanges(ranges)
+	indices := arc.selectedIndices(ranges)
 
 	for _, i := range indices {
-		sub := GetSubfile(arc.Data, i)
+		sub := arc.Subfile(i)
 		if sub == nil {
 			continue
 		}
 
-		outName := fmt.Sprintf("SEEN%04d.TXT.%s", i, CompExt)
+		ext := CompExt
+		if arc.Format == ArchiveFormatAVG32 {
+			ext = Avg32CompExt
+		}
+		outName := fmt.Sprintf("%s.%s", arc.EntryName(i), ext)
 		outPath := filepath.Join(opts.OutDir, outName)
 
 		if opts.Verbose > 0 {
-			fmt.Printf("Extracting SEEN%04d.TXT to %s\n", i, outName)
+			fmt.Printf("Extracting %s to %s\n", arc.EntryName(i), outName)
 		}
 
 		if err := sub.WriteFile(outPath); err != nil {
@@ -240,16 +324,31 @@ func Extract(fname string, ranges []int, opts Options) error {
 		return fmt.Errorf("cannot create output directory: %w", err)
 	}
 
-	indices := resolveRanges(ranges)
+	indices := arc.selectedIndices(ranges)
 
 	for _, i := range indices {
-		sub := GetSubfile(arc.Data, i)
+		sub := arc.Subfile(i)
 		if sub == nil {
 			continue
 		}
 
-		outName := fmt.Sprintf("SEEN%04d.TXT.%s", i, UncompExt)
+		outName := fmt.Sprintf("%s.%s", arc.EntryName(i), UncompExt)
 		outPath := filepath.Join(opts.OutDir, outName)
+
+		if arc.Format == ArchiveFormatAVG32 {
+			if opts.Verbose > 0 {
+				fmt.Printf("Decompressing %s to %s\n", arc.EntryName(i), outName)
+			}
+			decompressed, err := decompressAVG32Pack(sub)
+			if err != nil {
+				fmt.Printf("Warning: failed to decompress %s: %v\n", arc.EntryName(i), err)
+				continue
+			}
+			if err := decompressed.WriteFile(outPath); err != nil {
+				return fmt.Errorf("failed to write %s: %w", outPath, err)
+			}
+			continue
+		}
 
 		// Check if already uncompressed
 		hdr, hdrErr := bytecode.ReadFileHeader(sub, true)
@@ -337,36 +436,38 @@ func Add(arcName string, files []string, opts Options) error {
 
 	// Load or create archive
 	var arcData *binarray.Buffer
+	var loadedArc *Archive
 	var tailSource *binarray.Buffer
+	targetFormat := ArchiveFormatRealLive
+	formatLocked := false
 	existing := make(map[int]SeenEntry)
+	names := make(map[int]string)
 
 	if fileExists(arcName) {
-		data, err := binarray.ReadFile(arcName)
+		arc, err := LoadArchive(arcName)
 		if err != nil {
 			return fmt.Errorf("cannot read archive: %w", err)
 		}
-		count := SeenCount(data)
-		if count < 0 {
-			return fmt.Errorf("%s is not a valid RealLive archive", filepath.Base(arcName))
-		}
-		arcData = data
-		tailSource = data
-		if count > 0 {
-			collectExistingEntries(data, existing)
+		loadedArc = arc
+		arcData = arc.Data
+		tailSource = arc.Data
+		targetFormat = arc.Format
+		formatLocked = true
+		if arc.Count > 0 {
+			collectExistingEntries(arc, existing, names)
 		}
 	} else if opts.TemplateArchive != "" {
-		data, err := binarray.ReadFile(opts.TemplateArchive)
+		arc, err := LoadArchive(opts.TemplateArchive)
 		if err != nil {
 			return fmt.Errorf("cannot read template archive: %w", err)
 		}
-		count := SeenCount(data)
-		if count < 0 {
-			return fmt.Errorf("%s is not a valid RealLive archive", filepath.Base(opts.TemplateArchive))
-		}
-		arcData = data
-		tailSource = data
-		if count > 0 {
-			collectExistingEntries(data, existing)
+		loadedArc = arc
+		arcData = arc.Data
+		tailSource = arc.Data
+		targetFormat = arc.Format
+		formatLocked = true
+		if arc.Count > 0 {
+			collectExistingEntries(arc, existing, names)
 		}
 	} else {
 		// Create empty archive
@@ -380,7 +481,7 @@ func Add(arcName string, files []string, opts Options) error {
 	}
 
 	// Parse SEEN indices from filenames and prepare sources
-	seenRe := regexp.MustCompile(`(?i)seen(\d{4})`)
+	seenRe := regexp.MustCompile(`(?i)seen0*(\d{1,4})`)
 	sources := make(map[int]interface{}) // int -> SeenEntry (keep) or string (file)
 
 	// Start with existing entries
@@ -390,10 +491,14 @@ func Add(arcName string, files []string, opts Options) error {
 
 	// Override with new files
 	anyAdded := false
+	sawAVG32Source := false
 	for _, fname := range files {
 		if !fileExists(fname) {
 			fmt.Printf("Warning: file not found: %s\n", fname)
 			continue
+		}
+		if isAVG32SourcePath(fname) {
+			sawAVG32Source = true
 		}
 		match := seenRe.FindStringSubmatch(filepath.Base(fname))
 		if match == nil {
@@ -402,6 +507,7 @@ func Add(arcName string, files []string, opts Options) error {
 		}
 		idx, _ := strconv.Atoi(match[1])
 		sources[idx] = fname
+		names[idx] = seenNameFromPath(fname, targetFormat)
 		anyAdded = true
 	}
 
@@ -409,18 +515,30 @@ func Add(arcName string, files []string, opts Options) error {
 		return fmt.Errorf("no files to process")
 	}
 
-	if opts.TemplateArchive != "" {
-		data, err := binarray.ReadFile(opts.TemplateArchive)
+	if sawAVG32Source && targetFormat != ArchiveFormatAVG32 {
+		if formatLocked {
+			return fmt.Errorf(".avg sources require an AVG32 archive or AVG32 template")
+		}
+		targetFormat = ArchiveFormatAVG32
+		for idx, source := range sources {
+			if fname, ok := source.(string); ok {
+				names[idx] = seenNameFromPath(fname, targetFormat)
+			}
+		}
+	}
+
+	if opts.TemplateArchive != "" && targetFormat == ArchiveFormatRealLive {
+		arc, err := LoadArchive(opts.TemplateArchive)
 		if err != nil {
 			return fmt.Errorf("cannot read template archive: %w", err)
 		}
-		count := SeenCount(data)
-		if count < 0 {
-			return fmt.Errorf("%s is not a valid RealLive archive", filepath.Base(opts.TemplateArchive))
-		}
-		tailSource = data
+		loadedArc = arc
+		tailSource = arc.Data
 	}
 
+	if targetFormat == ArchiveFormatAVG32 {
+		return rebuildAVG32Arc(loadedArc, arcName, sources, names, opts)
+	}
 	return rebuildArc(arcData, arcName, sources, opts, tailSource)
 }
 
@@ -439,6 +557,7 @@ func Remove(arcName string, ranges []int, opts Options) error {
 	}
 
 	sources := make(map[int]interface{})
+	names := make(map[int]string)
 	anyRemoved := false
 	anyRemain := false
 
@@ -452,6 +571,7 @@ func Remove(arcName string, ranges []int, opts Options) error {
 		} else {
 			anyRemain = true
 			sources[i] = entry
+			names[i] = arc.EntryName(i)
 		}
 	}
 
@@ -465,6 +585,9 @@ func Remove(arcName string, ranges []int, opts Options) error {
 		return writeEmptyArc(arcName)
 	}
 
+	if arc.Format == ArchiveFormatAVG32 {
+		return rebuildAVG32Arc(arc, arcName, sources, names, opts)
+	}
 	return rebuildArc(arc.Data, arcName, sources, opts, arc.Data)
 }
 
@@ -573,11 +696,12 @@ func rebuildArc(arc *binarray.Buffer, arcName string, sources map[int]interface{
 	return nil
 }
 
-func collectExistingEntries(data *binarray.Buffer, existing map[int]SeenEntry) {
+func collectExistingEntries(arc *Archive, existing map[int]SeenEntry, names map[int]string) {
 	for i := 0; i < MaxSeens; i++ {
-		entry := getSubfileInfo(data, i)
+		entry := arc.Entries[i]
 		if entry.Length > 0 {
 			existing[i] = entry
+			names[i] = arc.EntryName(i)
 		}
 	}
 }
