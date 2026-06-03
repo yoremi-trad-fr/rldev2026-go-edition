@@ -3176,6 +3176,8 @@ module 071 // OFC ObjFrontChild
   end
 
   ver >= 1.1 // a guess - test 1.0.9
+    fun objOfFileGan          <1:071:01003, 2> ? ?
+                                               ('buf', strC 'filename', strC 'ganname', 'visible', 'x', 'y')
     fun objOfFileGan          <1:071:01003, 4> ('buf', strC 'filename', strC 'ganname')
                                                ('buf', strC 'filename', strC 'ganname', 'visible')
                                                ('buf', strC 'filename', strC 'ganname', 'visible', 'x', 'y')

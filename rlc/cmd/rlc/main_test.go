@@ -147,6 +147,29 @@ func TestParseVersion(t *testing.T) {
 	}
 }
 
+func TestParseFileVersionString(t *testing.T) {
+	tests := []struct {
+		in   string
+		want kfn.Version
+		ok   bool
+	}{
+		{"1.6.3.4", kfn.Version{1, 6, 3, 4}, true},
+		{"1, 6, 3, 4", kfn.Version{1, 6, 3, 4}, true},
+		{"File version 1.6.3.4", kfn.Version{1, 6, 3, 4}, true},
+		{"040904b0", kfn.Version{}, false},
+		{"2010", kfn.Version{}, false},
+	}
+	for _, tt := range tests {
+		got, ok := parseFileVersionString(tt.in)
+		if ok != tt.ok {
+			t.Fatalf("parseFileVersionString(%q) ok=%v, want %v", tt.in, ok, tt.ok)
+		}
+		if ok && got != tt.want {
+			t.Fatalf("parseFileVersionString(%q) = %v, want %v", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestResolveSourcePath(t *testing.T) {
 	opts := DefaultOptions()
 	if resolveSourcePath(opts, "file.org") != "file.org" {

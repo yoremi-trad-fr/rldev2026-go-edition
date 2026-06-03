@@ -175,6 +175,44 @@ func TestParseKidokuDirectiveBeforeTextoutDoesNotDuplicate(t *testing.T) {
 	}
 }
 
+func TestParseKidokuLineDirectiveUsesExplicitLine(t *testing.T) {
+	c := newComp()
+	c.Parse([]ast.Stmt{
+		ast.DirectiveStmt{Loc: ast.Loc{File: "t", Line: 7}, Name: "kidoku_line", Value: ast.IntLit{Val: 129}},
+		ast.ReturnStmt{
+			Loc: ast.Loc{File: "t", Line: 8},
+			Expr: ast.StrLit{Loc: ast.Loc{File: "t", Line: 8}, Tokens: []ast.StrToken{
+				ast.TextToken{Loc: ast.Loc{File: "t", Line: 8}, Text: "hello"},
+			}},
+		},
+	})
+
+	kidoku := kidokuIRs(c)
+	if len(kidoku) != 1 {
+		t.Fatalf("kidoku count = %d, want 1", len(kidoku))
+	}
+	if kidoku[0].Index != 129 {
+		t.Fatalf("kidoku line = %d, want explicit line 129", kidoku[0].Index)
+	}
+}
+
+func TestParseCompactLineSuppressesPhysicalLineRefs(t *testing.T) {
+	c := newComp()
+	c.Parse([]ast.Stmt{
+		ast.DirectiveStmt{Loc: ast.Loc{File: "t", Line: 7}, Name: "line_compact", Value: ast.IntLit{Val: 129}},
+		ast.HaltStmt{Loc: ast.Loc{File: "t", Line: 8}},
+	})
+	if len(c.Out.IR) != 2 {
+		t.Fatalf("IR length = %d, want compact line + halt only: %#v", len(c.Out.IR), c.Out.IR)
+	}
+	if c.Out.IR[0].Type != codegen.IRLineref || c.Out.IR[0].Index != 129 {
+		t.Fatalf("first IR = %#v, want compact line 129", c.Out.IR[0])
+	}
+	if c.Out.IR[1].Type != codegen.IRCode || !bytes.Equal(c.Out.IR[1].Bytes, []byte{0x00}) {
+		t.Fatalf("second IR = %#v, want halt code", c.Out.IR[1])
+	}
+}
+
 func TestParseExplicitKidokuModeSuppressesUnannotatedTextout(t *testing.T) {
 	c := newComp()
 	c.Parse([]ast.Stmt{
@@ -1562,6 +1600,66 @@ func TestAngleSpecialParamEmitsInlineNoParens(t *testing.T) {
 	}
 	if bytes.Contains(got, []byte{0x61, 0x00, '('}) {
 		t.Fatalf("inline special was emitted as parenthesised __special form: % x", got)
+	}
+}
+
+func TestVariadicNestedSpecialParamsCountAndEmitInnerSpecial(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:  "TIMETABLE2",
+		Flags:  []kfn.FuncFlag{kfn.FlagPushStore},
+		OpType: 1, OpModule: 0, OpCode: 810,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+			Params: []kfn.Parameter{
+				{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FUncount}},
+				{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FUncount}},
+				{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FUncount}},
+				{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FUncount}},
+				{Type: kfn.PSpecial, Flags: []kfn.ParamFlag{kfn.FArgc}},
+			},
+		}},
+	})
+
+	nested := func(x int32) ast.SpecialParam {
+		return ast.SpecialParam{
+			Tag:      48,
+			NoParens: true,
+			Exprs: []ast.Expr{ast.FuncCall{
+				Ident: "__special",
+				Params: []ast.Param{
+					ast.SimpleParam{Expr: ast.IntLit{Val: 1}},
+					ast.SimpleParam{Expr: ast.IntLit{Val: x}},
+					ast.SimpleParam{Expr: ast.IntLit{Val: 433}},
+					ast.SimpleParam{Expr: ast.IntLit{Val: 0}},
+				},
+			}},
+		}
+	}
+
+	c.ParseElt(ast.FuncCallStmt{
+		Loc:   ast.Loc{Line: 1},
+		Ident: "TIMETABLE2",
+		Dest:  ast.IntVar{Bank: 0, Index: ast.IntLit{Val: 3}},
+		Params: []ast.Param{
+			ast.SimpleParam{Expr: ast.IntVar{Bank: 5, Index: ast.IntLit{Val: 5}}},
+			ast.SimpleParam{Expr: ast.IntLit{Val: 0}},
+			ast.SimpleParam{Expr: ast.IntLit{Val: 0}},
+			ast.SimpleParam{Expr: ast.IntLit{Val: 400}},
+			nested(217),
+			nested(434),
+		},
+	})
+	if c.HasErrors() {
+		t.Fatalf("errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	if !bytes.Contains(got, codegen.EncodeOpcode(1, 0, 810, 2, 0)) {
+		t.Fatalf("TIMETABLE2 argc should count only repeated specials:\n got % x", got)
+	}
+	wantNested := []byte{0x61, 48, 0x61, 1, '('}
+	if count := bytes.Count(got, wantNested); count != 2 {
+		t.Fatalf("nested __special markers = %d, want 2:\n got % x", count, got)
 	}
 }
 

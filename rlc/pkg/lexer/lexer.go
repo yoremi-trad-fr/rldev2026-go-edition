@@ -709,21 +709,52 @@ func (l *Lexer) skipBlockComment() {
 			content := strings.TrimSpace(string(l.src[start:l.pos]))
 			if !sawNewline {
 				fields := strings.Fields(content)
-				if len(fields) == 2 && fields[0] == "kidoku" {
+				if len(fields) == 2 && fields[0] == "line" {
 					if n, err := strconv.Atoi(fields[1]); err == nil {
+						directiveLine := l.line
 						l.tokens = append(l.tokens, token.Token{
 							Type:   token.DWITHEXPR,
-							StrVal: "kidoku",
-							Line:   l.line,
+							StrVal: "line_compact",
+							Line:   directiveLine,
 							File:   l.file,
 						})
 						l.tokens = append(l.tokens, token.Token{
 							Type:   token.INTEGER,
 							IntVal: int32(n),
-							Line:   l.line,
+							Line:   directiveLine,
 							File:   l.file,
 						})
+						l.line = n
+						l.stickyLine = true
 						l.suppressNextNewline = true
+					}
+				}
+				if len(fields) > 0 && fields[0] == "kidoku" {
+					valueField := ""
+					name := "kidoku"
+					switch {
+					case len(fields) == 2:
+						valueField = fields[1]
+					case len(fields) == 4 && fields[2] == "line":
+						name = "kidoku_line"
+						valueField = fields[3]
+					}
+					if valueField != "" {
+						if n, err := strconv.Atoi(valueField); err == nil {
+							l.tokens = append(l.tokens, token.Token{
+								Type:   token.DWITHEXPR,
+								StrVal: name,
+								Line:   l.line,
+								File:   l.file,
+							})
+							l.tokens = append(l.tokens, token.Token{
+								Type:   token.INTEGER,
+								IntVal: int32(n),
+								Line:   l.line,
+								File:   l.file,
+							})
+							l.suppressNextNewline = true
+						}
 					}
 				}
 			}

@@ -123,6 +123,37 @@ func TestParsePrototypes(t *testing.T) {
 	}
 }
 
+func TestParsePrototypePlaceholdersKeepOverloadIndex(t *testing.T) {
+	src := `
+module 071 = OFC
+fun objOfFileGan <1:OFC:01003, 2> ? ?
+                                     ('buf', strC 'filename', strC 'ganname', 'visible', 'x', 'y')
+`
+	reg, err := Parse(strings.NewReader(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn, ok := reg.Lookup("objOfFileGan")
+	if !ok {
+		t.Fatal("objOfFileGan not found")
+	}
+	if len(fn.Prototypes) != 3 {
+		t.Fatalf("prototypes = %d, want 3", len(fn.Prototypes))
+	}
+	if fn.Prototypes[0].Defined || fn.Prototypes[1].Defined {
+		t.Fatalf("placeholder prototypes should stay undefined: %#v", fn.Prototypes[:2])
+	}
+	if !fn.Prototypes[2].Defined || len(fn.Prototypes[2].Params) != 6 {
+		t.Fatalf("overload 2 prototype = %#v, want defined 6-arg prototype", fn.Prototypes[2])
+	}
+	if got := fn.Prototypes[2].Params[1].Type; got != PStrC {
+		t.Fatalf("filename param type = %s, want %s", got, PStrC)
+	}
+	if got := fn.Prototypes[2].Params[2].Type; got != PStrC {
+		t.Fatalf("ganname param type = %s, want %s", got, PStrC)
+	}
+}
+
 func TestParseEmptyPrototype(t *testing.T) {
 	reg := parseTestKFN(t)
 	fn, _ := reg.Lookup("goto")

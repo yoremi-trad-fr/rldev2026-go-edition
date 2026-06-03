@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/yoremi/rldev-go/pkg/diag"
@@ -733,7 +734,10 @@ var utf8DecodeRune = utf8.DecodeRune
 // `rldev_get_interpreter_version` (C binding in get_interpreter_version.c)
 // for non-Windows builds: walks the .rsrc section to find the
 // VS_FIXEDFILEINFO signature 0xFEEF04BD and reads dwFileVersionMS /
-// dwFileVersionLS.
+// dwFileVersionLS. Some RealLive builds only expose a StringFileInfo
+// FileVersion value, and some packed RealLive builds place the fixed version
+// data outside the normal .rsrc raw section, so both forms are used as
+// fallbacks.
 //
 // The interpreter version drives:
 //   - kidoku marker character: `@` for versions ≤ 1.2.5, `!` after
@@ -790,15 +794,14 @@ func pe_versionFromExe(path string) (kfn.Version, error) {
 	}
 
 	// Search for VS_FIXEDFILEINFO signature 0xFEEF04BD (little-endian: BD 04 EF FE)
-	sig := []byte{0xbd, 0x04, 0xef, 0xfe}
-	idx := -1
-	for i := rsrcOff; i+16 < end; i++ {
-		if data[i] == sig[0] && data[i+1] == sig[1] && data[i+2] == sig[2] && data[i+3] == sig[3] {
-			idx = i
-			break
-		}
+	idx := findVSFixedFileInfo(data, rsrcOff, end)
+	if idx < 0 {
+		idx = findVSFixedFileInfo(data, 0, len(data))
 	}
 	if idx < 0 {
+		if v, err := peVersionFromStringFileInfo(data); err == nil {
+			return v, nil
+		}
 		return kfn.Version{}, fmt.Errorf("VS_FIXEDFILEINFO not found")
 	}
 	if idx+16 > len(data) {
@@ -813,6 +816,117 @@ func pe_versionFromExe(path string) (kfn.Version, error) {
 		int(fvls >> 16),
 		int(fvls & 0xffff),
 	}, nil
+}
+
+func findVSFixedFileInfo(data []byte, start, end int) int {
+	if start < 0 {
+		start = 0
+	}
+	if end > len(data) {
+		end = len(data)
+	}
+	if start >= end {
+		return -1
+	}
+	sig := []byte{0xbd, 0x04, 0xef, 0xfe}
+	for i := start; i+16 < end; i++ {
+		if data[i] == sig[0] && data[i+1] == sig[1] && data[i+2] == sig[2] && data[i+3] == sig[3] {
+			return i
+		}
+	}
+	return -1
+}
+
+func peVersionFromStringFileInfo(rsrc []byte) (kfn.Version, error) {
+	key := utf16LEBytes("FileVersion")
+	for i := 0; i+len(key) < len(rsrc); i++ {
+		if !equalBytes(rsrc[i:i+len(key)], key) {
+			continue
+		}
+		searchEnd := i + len(key) + 256
+		if searchEnd > len(rsrc) {
+			searchEnd = len(rsrc)
+		}
+		for j := i + len(key); j+2 <= searchEnd; j += 2 {
+			s := readUTF16LEString(rsrc[j:searchEnd], 64)
+			if v, ok := parseFileVersionString(s); ok {
+				return v, nil
+			}
+		}
+	}
+	return kfn.Version{}, fmt.Errorf("FileVersion string not found")
+}
+
+func utf16LEBytes(s string) []byte {
+	words := utf16.Encode([]rune(s))
+	out := make([]byte, 0, len(words)*2)
+	for _, w := range words {
+		out = append(out, byte(w), byte(w>>8))
+	}
+	return out
+}
+
+func readUTF16LEString(data []byte, maxRunes int) string {
+	words := make([]uint16, 0, maxRunes)
+	for i := 0; i+1 < len(data) && len(words) < maxRunes; i += 2 {
+		w := uint16(data[i]) | uint16(data[i+1])<<8
+		if w == 0 {
+			break
+		}
+		words = append(words, w)
+	}
+	return string(utf16.Decode(words))
+}
+
+func parseFileVersionString(s string) (kfn.Version, bool) {
+	if !strings.ContainsAny(s, ".,") {
+		return kfn.Version{}, false
+	}
+	parts := make([]int, 0, 4)
+	current := -1
+	flush := func() bool {
+		if current < 0 {
+			return true
+		}
+		if current > 9999 {
+			return false
+		}
+		parts = append(parts, current)
+		current = -1
+		return len(parts) <= 4
+	}
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			if current < 0 {
+				current = 0
+			}
+			current = current*10 + int(r-'0')
+			continue
+		}
+		if !flush() {
+			return kfn.Version{}, false
+		}
+	}
+	if !flush() || len(parts) < 2 || len(parts) > 4 || parts[0] > 20 {
+		return kfn.Version{}, false
+	}
+	var v kfn.Version
+	for i, p := range parts {
+		v[i] = p
+	}
+	return v, true
+}
+
+func equalBytes(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // autoDetectVersion looks for a RealLive.exe / RealLiveEn.exe /

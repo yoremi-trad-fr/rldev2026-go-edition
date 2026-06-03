@@ -64,6 +64,30 @@
     { id: 'gan_from_xml', label: 'XML → GAN' }
   ];
 
+  const gameIdOptions = [
+    { id: 'CFV', title: 'Clannad Full Voice' },
+    { id: 'LB', title: 'Little Busters!' },
+    { id: 'LBEX', title: 'Little Busters! EX' },
+    { id: 'LBME', title: 'Little Busters! Memorial Edition' },
+    { id: 'LBPE', title: 'Little Busters! PE' },
+    { id: 'FIVE', title: '5 -Faibu-' },
+    { id: 'SNOW', title: 'Snow Standard Edition' },
+    { id: 'KUDO', title: 'Kud Wafter 18+' },
+    { id: 'KUDA', title: 'Kud Wafter all-ages' },
+    { id: 'PLHD', title: 'Planetarian HD' },
+    { id: 'TMPE', title: 'Tomoyo After PE / Memorial Edition' },
+    { id: 'ONIU', title: 'Oni Uta' },
+    { id: 'ONIUTA', title: 'Oni Uta' },
+    { id: 'PING', title: '3P LOVERS' },
+    { id: 'KOYO', title: 'Nizuma Koyomi' },
+    { id: 'SHINO', title: 'Nizuma Shino' },
+    { id: 'TAMA', title: 'Nizuma Tamaki' },
+    { id: 'PRIP', title: 'Princess Heart Link package edition' },
+    { id: 'PRID', title: 'Princess Heart Link DL edition' },
+    { id: 'HINA', title: 'Hinasawa Tomoka no Zettai Joousei' },
+    { id: 'LUV', title: 'Lovedori Halation' }
+  ];
+
   let pendingLines = [];
   let flushTimer = null;
   const maxConsoleLines = 12000;
@@ -198,7 +222,11 @@
   }
 
   function startRlDisasm() {
+    normalizeRlGameId();
     run(() => RldevDisassemble(rlSeenFile, rlKfnFile, rlEncoding, rlGameId, rlDebugInfo, rlOutputDir));
+  }
+  function normalizeRlGameId() {
+    rlGameId = rlGameId.trim().toUpperCase();
   }
   function startRlExtract() {
     run(() => RldevExtract(rlSeenFile, rlOutputDir));
@@ -276,7 +304,7 @@
         <div class="form-group"><label>SEEN.txt :</label><div class="form-row"><input type="text" bind:value={rlSeenFile} readonly /><button class="btn" on:click={browseRlSeen}>Select</button></div></div>
         <div class="form-group"><label>KFN file :</label><div class="form-row"><input type="text" bind:value={rlKfnFile} readonly placeholder="Auto : ./KFN/reallive.kfn" /><button class="btn" on:click={browseRlKfn}>Select</button></div></div>
         <div class="form-group"><label>Encodage sortie :</label><div class="form-row"><select bind:value={rlEncoding}><option value="UTF-8">UTF-8</option><option value="CP932">CP932 / Shift-JIS</option><option value="EUC-JP">EUC-JP</option></select></div></div>
-        <div class="form-group"><label>Game ID (-G, optionnel) :</label><div class="form-row"><input type="text" bind:value={rlGameId} placeholder="ex: CLANNAD, KANON, AIR..." /></div></div>
+        <div class="form-group"><label>Game ID (-G, optionnel) :</label><div class="form-row"><input type="text" bind:value={rlGameId} list="rl-game-id-options" placeholder="ex: KUDO (Kud Wafter 18+)" on:blur={normalizeRlGameId} on:change={normalizeRlGameId} /></div><datalist id="rl-game-id-options">{#each gameIdOptions as game}<option value={game.id} label={game.title}></option>{/each}</datalist></div>
         <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlDebugInfo} /> Sources debug RealLive (-g / #line)</label></div><div class="form-hint">Pour F3/F5/O uniquement ; garder décoché pour les sources de traduction.</div></div>
         <div class="form-group"><label>Output folder :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
         <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startRlDisasm} disabled={!rlSeenFile || !rlKfnFile || !rlOutputDir}>Start Extract</button>{/if}</div>

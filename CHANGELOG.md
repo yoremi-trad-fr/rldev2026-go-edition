@@ -3,6 +3,45 @@
 This file tracks the RLdev2026 Go Edition beta history and the compatibility
 fixes validated during the project sessions.
 
+## Beta 3.0 - 2026-06-03
+
+Support added:
+
+- Added Planetarian 2006 support, validated in game from the normal SJIS
+  roundtrip path.
+- Added Kud Wafter 2010 18+ support, validated in game from the normal SJIS
+  roundtrip path with `Game ID (-G) = KUDO`.
+
+Planetarian / RealLive updates:
+
+- Preserved RealLive debug-line markers in normal extraction through compact
+  `{- line N -}` comments, without enabling the full `-g` / `#line` source
+  dump.
+- Preserved read-flag markers and their original line table values through
+  compact `{- kidoku N line L -}` comments.
+- Taught `rlc` to consume the compact line/kidoku annotations, suppress
+  physical `.org` line markers when compact bytecode lines are present, and
+  rebuild the same bytecode as the validated `-g` roundtrip.
+- Fixed overloaded KFN lookup for same-opcode RealLive function families by
+  preferring prototypes that match the encoded argument count. This keeps
+  Planetarian's short `objBgOfFileGan` form and Little Busters!' longer
+  `objBgOfFileAnm` form on the same opcode family from being confused.
+
+Kud Wafter / RealLive updates:
+
+- Added and validated the `objOfFileGan` overload id 2 form used by Kud
+  Wafter: filename + GAN-name + visible/x/y.
+- Fixed disassembly of adjacent KFN `strC` parameters so consecutive strings
+  such as `filename` and `ganname` remain separate source arguments.
+- Fixed compilation of nested `special<N>(__special[M](...))` parameter groups
+  used by Kud's `TIMETABLE2` / `TIMETABLELEN2` bytecode.
+- Improved RealLive interpreter version detection for packed executables whose
+  `VS_FIXEDFILEINFO` block sits outside the normal `.rsrc` raw section. Kud
+  Wafter's `RealLive.exe` now resolves as version `1.6.3.4` instead of emitting
+  the previous version-read warning.
+- Added `Game ID (-G)` documentation and GUI autocomplete for protected
+  RealLive titles.
+
 ## Beta 2.9 - 2026-06-02
 
 Support added:

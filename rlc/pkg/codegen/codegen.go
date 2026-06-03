@@ -192,6 +192,12 @@ type Output struct {
 	// kidoku table and can desynchronise RealLive debug flow.
 	SuppressAutoKidoku bool
 
+	// SuppressAutoLineRefs disables line markers derived from physical source
+	// line numbers. kprl's compact "{- line N -}" roundtrip comments carry the
+	// original bytecode line markers explicitly; adding physical .org line
+	// markers on top bloats and shifts RealLive bytecode.
+	SuppressAutoLineRefs bool
+
 	// ResolveRes, when non-nil, is invoked to resolve a `#res<KEY>`
 	// reference to its expanded string. The compiler frame wires this
 	// to State.Resources after parsing the source. Returning ok=false
@@ -268,6 +274,9 @@ func (o *Output) Length() int { return len(o.IR) }
 // throughout the bytecode; reproducing them keeps our bytecode close to
 // byte-for-byte parity with the reference compiler.
 func (o *Output) maybeLine(loc ast.Loc) {
+	if o.SuppressAutoLineRefs {
+		return
+	}
 	if loc == ast.Nowhere || loc.Line == o.lastLine {
 		return
 	}

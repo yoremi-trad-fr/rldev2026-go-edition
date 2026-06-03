@@ -579,6 +579,10 @@ func (r *Reader) GetData() (string, error) {
 // GetDataSep is the underlying get_data with the sep_str flag from OCaml.
 // sep_str=true means "this string can be moved to the resource file".
 func (r *Reader) GetDataSep(sepStr bool) (string, error) {
+	return r.getDataSep(sepStr, false, false)
+}
+
+func (r *Reader) getDataSep(sepStr bool, splitAdjacentString bool, quoteDelimiter bool) (string, error) {
 	for {
 		b, err := r.Peek()
 		if err != nil {
@@ -670,7 +674,7 @@ func (r *Reader) GetDataSep(sepStr bool) (string, error) {
 
 		case b == '"' || isAsciiStringStart(b) || isShiftJISLead(b):
 			// Roll back nothing — readStringUnquot starts at this byte.
-			return r.readStringUnquot(sepStr)
+			return r.readStringUnquot(sepStr, splitAdjacentString, quoteDelimiter)
 
 		case b == '#':
 			// Inline interpolation marker. OCaml `get_data`
@@ -681,7 +685,7 @@ func (r *Reader) GetDataSep(sepStr bool) (string, error) {
 			// `###PRINT(<expr>)` form to `\s{<expr>}` or `\i{<expr>}`
 			// depending on the expression type.
 			if r.LookAheadPrintMarker() {
-				return r.readStringUnquot(sepStr)
+				return r.readStringUnquot(sepStr, splitAdjacentString, quoteDelimiter)
 			}
 			return r.GetExpression()
 
@@ -724,7 +728,7 @@ func isAsciiStringStart(b byte) bool {
 // The final string is wrapped in single quotes when sep_str is false
 // (inline argument mode). When sep_str is true the caller intends to
 // move the string to a resource file and handles the quoting itself.
-func (r *Reader) readStringUnquot(sepStr bool) (string, error) {
+func (r *Reader) readStringUnquot(sepStr bool, splitAdjacentString bool, quoteDelimiter bool) (string, error) {
 	var b strings.Builder
 
 unquotLoop:
@@ -736,6 +740,14 @@ unquotLoop:
 
 		switch {
 		case c == '"':
+			if splitAdjacentString && b.Len() > 0 {
+				r.Next()
+				break unquotLoop
+			}
+			if quoteDelimiter && b.Len() > 0 && quotedStringCloseDelimiter(r.peekByteAt(1)) {
+				r.Next()
+				break unquotLoop
+			}
 			// Enter quot mode
 			stopAfterClose := b.Len() == 0
 			r.Next()
@@ -1214,13 +1226,17 @@ func readCommand(r *Reader, hdr *bytecode.FileHeader, result *DisassemblyResult,
 		if err != nil {
 			return err
 		}
+		text := fmt.Sprintf("#line %d", lineNum)
+		if !opts.ReadDebugSymbols {
+			text = fmt.Sprintf("{- line %d -}", lineNum)
+		}
 		cmd := Command{
 			Offset: offset,
-			Hidden: !opts.ReadDebugSymbols,
+			Hidden: false,
 			CType:  "dbline",
 			LineNo: lineNum,
 		}
-		cmd.Kepago = []CommandElem{ElemString{Value: fmt.Sprintf("#line %d", lineNum)}}
+		cmd.Kepago = []CommandElem{ElemString{Value: text}}
 		result.Commands = append(result.Commands, cmd)
 
 	case b == ',':
@@ -1260,10 +1276,19 @@ func readCommand(r *Reader, hdr *bytecode.FileHeader, result *DisassemblyResult,
 			}}
 			result.SeenMap.EntryPoints = append(result.SeenMap.EntryPoints, offset)
 		} else {
-			cmd.Hidden = !opts.ReadDebugSymbols
+			// Regular kidoku markers are not just cosmetic debug data. They
+			// delimit text/read-flag steps, and Planetarian has markers before
+			// non-text commands such as SET_MSGBK_ON and waits. If a normal
+			// (non -g) disassembly hides them, recompilation cannot infer those
+			// bytecode boundaries and the kidoku table silently shrinks.
+			cmd.Hidden = false
 			cmd.CType = "kidoku"
+			text := fmt.Sprintf("{- kidoku %03d -}", idx)
+			if !opts.ReadDebugSymbols {
+				text = fmt.Sprintf("{- kidoku %03d line %d -}", idx, kidokuVal)
+			}
 			cmd.Kepago = []CommandElem{ElemString{
-				Value: fmt.Sprintf("{- kidoku %03d -}", idx),
+				Value: text,
 			}}
 		}
 		result.Commands = append(result.Commands, cmd)
@@ -1376,10 +1401,10 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 	var funcDef FuncDef
 	var haveFuncDef bool
 	if opts.FuncReg != nil {
-		if def, ok := opts.FuncReg.LookupOpcode(op); ok {
+		if def, ok := opts.FuncReg.LookupOpcodeForArgc(op, argc); ok {
 			funcDef = def
 			haveFuncDef = true
-			if idx := selectPrototypeIndex(def, op); idx >= 0 {
+			if idx := selectPrototypeIndexForArgc(def, op, argc); idx >= 0 {
 				proto = def.Prototypes[idx]
 			}
 		}
@@ -1439,7 +1464,7 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 	}
 
 	if haveFuncDef {
-		if returnIdx := returnParamIndex(funcDef, op); returnIdx >= 0 && returnIdx < len(args) && funcName != "" {
+		if returnIdx := returnParamIndexForArgc(funcDef, op, len(args)); returnIdx >= 0 && returnIdx < len(args) && funcName != "" {
 			callArgs := make([]string, 0, len(args)-1)
 			callArgs = append(callArgs, args[:returnIdx]...)
 			callArgs = append(callArgs, args[returnIdx+1:]...)
@@ -1514,8 +1539,38 @@ func selectPrototypeIndex(def FuncDef, op Opcode) int {
 	return 0
 }
 
+func selectPrototypeIndexForArgc(def FuncDef, op Opcode, argc int) int {
+	if len(def.Prototypes) == 0 {
+		return -1
+	}
+	if op.Overload >= 0 && op.Overload < len(def.Prototypes) && len(def.Prototypes[op.Overload]) == argc {
+		return op.Overload
+	}
+	for i, proto := range def.Prototypes {
+		if len(proto) == argc {
+			return i
+		}
+	}
+	return selectPrototypeIndex(def, op)
+}
+
 func returnParamIndex(def FuncDef, op Opcode) int {
 	idx := selectPrototypeIndex(def, op)
+	if idx < 0 || idx >= len(def.ParamFlags) {
+		return -1
+	}
+	for paramIdx, flags := range def.ParamFlags[idx] {
+		for _, flag := range flags {
+			if flag == ParamReturn {
+				return paramIdx
+			}
+		}
+	}
+	return -1
+}
+
+func returnParamIndexForArgc(def FuncDef, op Opcode, argc int) int {
+	idx := selectPrototypeIndexForArgc(def, op, argc)
 	if idx < 0 || idx >= len(def.ParamFlags) {
 		return -1
 	}
@@ -2349,10 +2404,15 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 		default:
 			// If we have a prototype, use sep_str=true for ResStr params.
 			sepStr := false
-			if proto != nil && len(args) < len(proto) && proto[len(args)] == ParamResStr {
+			argIdx := len(args)
+			if proto != nil && argIdx < len(proto) && proto[argIdx] == ParamResStr {
 				sepStr = true
 			}
-			arg, err := r.GetDataSep(sepStr)
+			arg, err := r.getDataSep(
+				sepStr,
+				shouldSplitAdjacentStringParam(proto, argIdx),
+				shouldUseStringQuoteDelimiterParam(proto, argIdx),
+			)
 			if err != nil {
 				// Best-effort: stop reading args on error and let the
 				// outer loop continue from the current position.
@@ -2363,6 +2423,21 @@ func readFuncArgsCtx(r *Reader, argc int, proto []ParamType, op *Opcode) ([]stri
 	}
 
 	return args, nil
+}
+
+func shouldSplitAdjacentStringParam(proto []ParamType, idx int) bool {
+	if proto == nil || idx < 0 || idx+1 >= len(proto) {
+		return false
+	}
+	return isStringParam(proto[idx]) && isStringParam(proto[idx+1])
+}
+
+func shouldUseStringQuoteDelimiterParam(proto []ParamType, idx int) bool {
+	return proto != nil && idx >= 0 && idx < len(proto) && isStringParam(proto[idx])
+}
+
+func isStringParam(pt ParamType) bool {
+	return pt == ParamStr || pt == ParamStrC || pt == ParamStrV || pt == ParamResStr
 }
 
 func (r *Reader) startsStructuralTupleArg() bool {

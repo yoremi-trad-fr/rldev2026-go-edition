@@ -1,4 +1,4 @@
-### Status update: `02/06/2026`
+### Status update: `03/06/2026`
 <table>
   <tr>
     <td align="center" width="100%">
@@ -6,6 +6,8 @@
     </td>
   </tr>
 </table>
+
+Update : 03/06/2026 : Beta 3.0 validates Planetarian (2006) and Kud Wafter (2010 18+) normal SJIS roundtrip support
 
 Update : 02/06/2026 : Beta 2.9 adds Kanon 1999 all-age / 18+ AVG32 support and validates Little Busters! 2007
 
@@ -48,32 +50,37 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ## VN
 
+### -Kanon (1999)
+
+### -Kanon 18+ (1999)
 
 ### -Clannad (2004)
-
-### -Clannad Full Voice (2007)
-
-### -Clannad Steam (2015) 
-
-### -Clannad Side Stories Steam (2011)
 
 ### -AIR 18+ (2005)
 
 ### -Tomoyo After 18+ (2005)
 
+### -Clannad Full Voice (2007)
+
+### -Little Busters! (2007)
+
+### -Planetarian (2006)
+
+### -Kud Wafter (2010 18+)
+
 ### -Tomoyo After Memorial Edition (2010)
 
 ### -Tomoyo After-Steam (2011)
 
-### -Kanon 1999 (all age / AVG32)
+### -Clannad Side Stories Steam (2011)
 
-### -Kanon 1999 18+ (AVG32)
+### -Clannad Steam (2015)
 
-### -Little Busters! (2007)
+## NOT TESTED (contributions)
 
-### -Oni Uta (not tested, Kotsuider contribution)
+### -Oni Uta (Kotsuider contribution)
 
-### -Royal Nekomimi Academy (not tested, CarouselAether contribution)
+### -Royal Nekomimi Academy (CarouselAether contribution)
 
 
 ## Features
@@ -83,6 +90,12 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 ### -List of files in SEEN.txt
 
 ### -Raw bytecode extraction
+
+### -Game ID (-G) key support and autocomplete for protected RealLive titles
+
+### -Compact RealLive debug-line / kidoku preservation for normal roundtrips
+
+### -Packed RealLive interpreter version detection, including Kud Wafter 1.6.3.4
 
 ### -Extraction mode in the GUI for Reallive debug mode (parameter -g)
 
@@ -102,7 +115,9 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 
 
-### Missing original ISOs: I’m looking for these ISOs for my testing.
+
+### Missing original ISOs: I’m looking for these ISOs for my testing.(or .zip archive, as long as I have the original game to run my in-game tests
+, tests that are essential because compilations often produce invisible errors and cause the game to crash during play)
 ### ( If you own the physical version of the game, you could also create an ISO from it – that would be a huge help!)
 
 ###  Clannad Side Stories (non steam)
@@ -125,15 +140,11 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### Little Busters EX ! (2008)
 
-### Kud Wafter (2010 18+)
-
 ### Harmonia 2016
 
 ### Harmonia 2016-Steam
 
 ### Harmonia 2021-Steam HD édition
-
-### Planetarian (2006)
 
 ## Features
 
@@ -143,6 +154,11 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### Full compatibility with files extracted using Rldev OCaml
 
+### UTF-8 support for dialogues contained in .org files
+
+### NWA <-> MP3 conversion (BGM)
+
+### Decoding a TCC <-> UTF (DAT)
 
 
 <table>
@@ -176,6 +192,52 @@ sources, editable `.utf` resources, and rebuild. SJIS and UTF-8/WESTERN
 roundtrips were validated in game, including French accent output. The same
 release also validates Little Busters! 2007 on the RealLive path with the
 original disc/ISO workflow, without executable patching.
+
+Beta 3.0 validates Planetarian 2006 and Kud Wafter 2010 18+ support.
+Planetarian's normal, non-debug roundtrip now preserves compact RealLive line
+and kidoku bytecode markers, so the rebuilt `SEEN.TXT` matches the validated
+`-g` roundtrip without requiring debug-source extraction for translation work.
+Kud Wafter 2010 18+ extracts with `Game ID (-G) = KUDO`, compiles against
+RealLive `1.6.3.4`, rebuilds, and runs in-game with the same normal translation
+workflow.
+
+### Game ID (-G) for protected titles
+
+`Game ID (-G)` selects the per-game XOR key used by `kprl` when protected
+RealLive `SEEN.TXT` entries are extracted or disassembled. If a title is listed
+below, use the exact ID in the GUI field named `Game ID (-G, optionnel)` or on
+the command line, for example:
+
+```bat
+kprl16.exe -d -G KUDO -kfn KFN\reallive.kfn -e CP932 -o Ext-sjis SEEN.TXT
+```
+
+Without the matching `Game ID (-G)`, extraction may still produce files, but the
+bytecode is decrypted with the wrong key and the resulting scripts can fail to
+disassemble or recompile cleanly.
+
+| Game ID | Title / edition |
+| --- | --- |
+| `CFV` | Clannad Full Voice |
+| `LB` | Little Busters! |
+| `LBEX` | Little Busters! EX |
+| `LBME` | Little Busters! Memorial Edition |
+| `LBPE` | Little Busters! PE |
+| `FIVE` | 5 -Faibu- |
+| `SNOW` | Snow Standard Edition |
+| `KUDO` | Kud Wafter 18+ |
+| `KUDA` | Kud Wafter all-ages |
+| `PLHD` | Planetarian HD |
+| `TMPE` | Tomoyo After PE / Memorial Edition |
+| `ONIU` / `ONIUTA` | Oni Uta |
+| `PING` | 3P LOVERS |
+| `KOYO` | Nizuma Koyomi |
+| `SHINO` | Nizuma Shino |
+| `TAMA` | Nizuma Tamaki |
+| `PRIP` | Princess Heart Link package edition |
+| `PRID` | Princess Heart Link DL edition |
+| `HINA` | Hinasawa Tomoka no Zettai Joousei |
+| `LUV` | Lovedori Halation |
 
 
 <table>

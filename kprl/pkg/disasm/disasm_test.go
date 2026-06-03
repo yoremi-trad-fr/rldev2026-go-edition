@@ -194,6 +194,43 @@ func TestReadFuncArgsQuotedStringBeforeExpressionArg(t *testing.T) {
 	}
 }
 
+func TestReadFuncArgsSplitsAdjacentPrototypeStrings(t *testing.T) {
+	var data []byte
+	addInt := func(v int32) {
+		data = append(data, '$', 0xff)
+		var imm [4]byte
+		binary.LittleEndian.PutUint32(imm[:], uint32(v))
+		data = append(data, imm[:]...)
+	}
+
+	data = append(data, '(')
+	addInt(151)
+	data = append(data, ',')
+	data = append(data, []byte("NYEF_6001_01\"NYEF_KD01\"")...)
+	addInt(1)
+	data = append(data, ',')
+	addInt(400)
+	data = append(data, ',')
+	addInt(150)
+	data = append(data, ')')
+
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	proto := []ParamType{ParamAny, ParamStrC, ParamStrC, ParamAny, ParamAny, ParamAny}
+	args, err := readFuncArgsCtx(r, 6, proto, nil)
+	if err != nil {
+		t.Fatalf("readFuncArgsCtx() error: %v", err)
+	}
+	want := []string{"151", "'NYEF_6001_01'", "'NYEF_KD01'", "1", "400", "150"}
+	if len(args) != len(want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("args[%d] = %q, want %q (all args %#v)", i, args[i], want[i], args)
+		}
+	}
+}
+
 func TestReadCommandPrintMarkerAtCommandBoundary(t *testing.T) {
 	for _, marker := range [][]byte{
 		[]byte("###PRINT("),
@@ -370,6 +407,64 @@ func TestMergeSkipsVisibleDebugLines(t *testing.T) {
 	}
 }
 
+func TestMergeStopsAtHiddenKidoku(t *testing.T) {
+	result := &DisassemblyResult{
+		ResStrs: []string{"first"},
+		Commands: []Command{
+			{CType: "textout", Kepago: []CommandElem{ElemString{Value: "#res<0000>"}}},
+			{Hidden: true, CType: "kidoku", Kepago: []CommandElem{ElemString{Value: "{- kidoku 001 -}"}}},
+		},
+	}
+
+	if !addTextoutFails(result, "second") {
+		t.Fatal("addTextoutFails returned false, want hidden kidoku to block merge")
+	}
+	if got, want := result.ResStrs[0], "first"; got != want {
+		t.Fatalf("resource after blocked merge = %q, want %q", got, want)
+	}
+}
+
+func TestReadCommandShowsKidokuWithoutDebugLines(t *testing.T) {
+	data := []byte{'@', 0x00, 0x00}
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	hdr := &bytecode.FileHeader{KidokuLnums: []int32{42}}
+	result := &DisassemblyResult{}
+
+	if err := readCommand(r, hdr, result, Options{}); err != nil {
+		t.Fatalf("readCommand error: %v", err)
+	}
+	if len(result.Commands) != 1 {
+		t.Fatalf("command count = %d, want 1", len(result.Commands))
+	}
+	cmd := result.Commands[0]
+	if cmd.Hidden {
+		t.Fatal("regular kidoku marker was hidden without -g")
+	}
+	if got, want := cmd.Text(), "{- kidoku 000 line 42 -}"; got != want {
+		t.Fatalf("kidoku text = %q, want %q", got, want)
+	}
+}
+
+func TestReadCommandShowsCompactLineWithoutDebugSymbols(t *testing.T) {
+	data := []byte{'\n', 0x81, 0x00}
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	result := &DisassemblyResult{}
+
+	if err := readCommand(r, &bytecode.FileHeader{}, result, Options{}); err != nil {
+		t.Fatalf("readCommand error: %v", err)
+	}
+	if len(result.Commands) != 1 {
+		t.Fatalf("command count = %d, want 1", len(result.Commands))
+	}
+	cmd := result.Commands[0]
+	if cmd.Hidden {
+		t.Fatal("compact line marker was hidden without -g")
+	}
+	if got, want := cmd.Text(), "{- line 129 -}"; got != want {
+		t.Fatalf("line text = %q, want %q", got, want)
+	}
+}
+
 func TestReadSelectKeepsQuotedContinuations(t *testing.T) {
 	data := []byte(`{"ONE"A,"TWO"B,"THREE"C}`)
 	r := NewReader(data, 0, len(data), ModeRealLive)
@@ -524,6 +619,43 @@ func TestFuncRegistryLookup(t *testing.T) {
 	}
 	if def.HasFlag(FlagIsGoto) {
 		t.Error("did not expect FlagIsGoto")
+	}
+}
+
+func TestFuncRegistryLookupOpcodeForArgcPrefersMatchingArity(t *testing.T) {
+	reg := NewFuncRegistry()
+	reg.Register("1:072:01003,2", FuncDef{
+		Name: "objBgOfFileAnm",
+		Prototypes: [][]ParamType{
+			{ParamAny, ParamStrC},
+			{ParamAny, ParamStrC, ParamAny, ParamAny, ParamAny},
+			{ParamAny, ParamStrC, ParamStrC, ParamAny, ParamAny, ParamAny},
+		},
+	})
+	reg.Register("1:072:01003,4", FuncDef{
+		Name: "objBgOfFileGan",
+		Prototypes: [][]ParamType{
+			{ParamAny, ParamStrC, ParamStrC},
+			{ParamAny, ParamStrC, ParamStrC, ParamAny},
+			{ParamAny, ParamStrC, ParamStrC, ParamAny, ParamAny, ParamAny},
+		},
+	})
+
+	op := Opcode{Type: 1, Module: 72, Function: 1003, Overload: 2}
+	def, ok := reg.LookupOpcodeForArgc(op, 3)
+	if !ok {
+		t.Fatal("3-arg opcode not found")
+	}
+	if def.Name != "objBgOfFileGan" {
+		t.Fatalf("3-arg opcode = %q, want objBgOfFileGan", def.Name)
+	}
+
+	def, ok = reg.LookupOpcodeForArgc(op, 6)
+	if !ok {
+		t.Fatal("6-arg opcode not found")
+	}
+	if def.Name != "objBgOfFileAnm" {
+		t.Fatalf("6-arg opcode = %q, want objBgOfFileAnm", def.Name)
 	}
 }
 

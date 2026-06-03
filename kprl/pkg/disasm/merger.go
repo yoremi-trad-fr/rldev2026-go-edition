@@ -90,7 +90,19 @@ func addTextoutFails(result *DisassemblyResult, s string) bool {
 }
 
 func mergeTransparentCommand(cmd Command) bool {
-	return cmd.Hidden || cmd.CType == "dbline" || cmd.CType == "debug"
+	// Debug line records are only source-location noise for merge purposes;
+	// they should not split inline text/control-code resources.
+	if cmd.CType == "dbline" || cmd.CType == "debug" {
+		return true
+	}
+	// A hidden kidoku marker is still a real bytecode boundary. Treating it
+	// as transparent lets non-"-g" disassembly merge two textouts across the
+	// read-marker, so recompilation loses one marker and shifts the kidoku
+	// table. Keep that boundary even when the marker itself is not printed.
+	if cmd.CType == "kidoku" {
+		return false
+	}
+	return cmd.Hidden
 }
 
 func forceTextoutCommand(result *DisassemblyResult, cmd *Command, s string, opts Options) {

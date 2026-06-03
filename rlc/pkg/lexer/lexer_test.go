@@ -390,6 +390,41 @@ func TestLexKidokuCommentDoesNotAdvanceLogicalLine(t *testing.T) {
 	}
 }
 
+func TestLexKidokuCommentWithExplicitLine(t *testing.T) {
+	l := New("{- kidoku 028 line 129 -}\n#res<0027>", "test")
+	tok := l.Next()
+	if tok.Type != token.DWITHEXPR || tok.StrVal != "kidoku_line" {
+		t.Fatalf("kidoku directive: got %s %q, want DWITHEXPR kidoku_line", tok.Type, tok.StrVal)
+	}
+	tok = l.Next()
+	if tok.Type != token.INTEGER || tok.IntVal != 129 {
+		t.Fatalf("kidoku line value: got %s %d, want INTEGER 129", tok.Type, tok.IntVal)
+	}
+	tok = l.Next()
+	if tok.Type != token.DRES || tok.StrVal != "0027" {
+		t.Fatalf("token: got %s %q, want DRES 0027", tok.Type, tok.StrVal)
+	}
+}
+
+func TestLexCompactLineComment(t *testing.T) {
+	l := New("{- line 129 -}\n#res<0027>", "test")
+	tok := l.Next()
+	if tok.Type != token.DWITHEXPR || tok.StrVal != "line_compact" {
+		t.Fatalf("line directive: got %s %q, want DWITHEXPR line_compact", tok.Type, tok.StrVal)
+	}
+	tok = l.Next()
+	if tok.Type != token.INTEGER || tok.IntVal != 129 {
+		t.Fatalf("line value: got %s %d, want INTEGER 129", tok.Type, tok.IntVal)
+	}
+	tok = l.Next()
+	if tok.Type != token.DRES || tok.StrVal != "0027" {
+		t.Fatalf("token: got %s %q, want DRES 0027", tok.Type, tok.StrVal)
+	}
+	if tok.Line != 129 {
+		t.Fatalf("compact line should apply to following token: got %d, want 129", tok.Line)
+	}
+}
+
 func TestLexMagicConstants(t *testing.T) {
 	l := New("__file__", "myfile.org")
 	tok := l.Next()

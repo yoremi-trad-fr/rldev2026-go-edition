@@ -1,6 +1,6 @@
 # RLdev2026-Go bytecode function validation register
 
-Last update: 2026-06-02
+Last update: 2026-06-03
 
 This register only tracks RealLive bytecode function signatures, AVG32
 instruction shapes, overload selection rules, and function-shaped bytecode
@@ -23,7 +23,7 @@ belong elsewhere.
 ### CLANNAD 2007 FV
 
 - Interpreter: RealLive 1.2.3.5.
-- Corpus: 242 FR files and 242 JP SJIS files.
+- Corpus: 242 files.
 - Status: validated for string-return overload selection.
 
 | Function | Opcode | Expected overload | Count FR | Count JP | Status |
@@ -39,7 +39,7 @@ three encoded args; `strsub` with three encoded args uses overload 1.
 ### AIR 1.02
 
 - Interpreter: RealLive 1.2.9.5.
-- Corpus: 96 FR UTF-8 files and 96 JP SJIS files.
+- Corpus: 96 files.
 - Status: route start validated by user; static overload audit matched.
 
 | Function | Opcode | Expected overload | Count FR | Count JP | Status |
@@ -54,8 +54,8 @@ parameters before string assignment rewriting, e.g. `strS[0] = itoa(n, 2)`.
 
 ### CLANNAD Side Stories Steam 2011
 
-- Interpreter: `RealLiveEn.exe`, RealLive file version 1.6.6.8.
-- Corpus: 22 Steam `.org` files extracted from the original `SEEN.TXT`.
+- Interpreter: RealLive 1.6.6.8.
+- Corpus: 22 files
 - Status: user gameplay validation on 2026-05-26 and 2026-05-27.
 
 | Function shape | Evidence | Status |
@@ -68,8 +68,8 @@ pointer payload as ordinary goto/gosub calls.
 
 ### CLANNAD Steam 2015
 
-- Interpreter: `SiglusEngine_Steam.exe`, RealLive file version 1.6.7.3.
-- Corpus: 235 English SJIS `.org` files and 235 English UTF-8 `.org` files.
+- Interpreter: RealLive 1.6.7.3.
+- Corpus: 235 files.
 - Status: user gameplay validation on 2026-05-26; static compiler audit passed.
 
 | Function/bytecode shape | Evidence | Status |
@@ -82,12 +82,14 @@ pointer payload as ordinary goto/gosub calls.
 Validated rule: late Steam bytecode can require argument-list repair when the
 encoded `argc` contradicts a greedy subtraction parse.
 
-### Tomoyo After 2010 / Steam 2011
+### Tomoyo After 2005 18+ / 2010 / Steam 2011
 
-- Interpreters: Tomoyo After Memorial Edition 2010 JP and Tomoyo After Steam
-  2011 English.
-- Corpus: JP 2010 native SJIS, Steam 2011 native UTF-8, FR 2010 patch, and
-  FR 2011 patch.
+- Interpreter-Tomoyo After 2005 18+ : RealLive 1.3.5.4
+- Interpreter : RealLive 1.6.7.3
+- Corpus: 2005 : 260 files
+- Corpus: 2010 : 262 files
+- Corpus: 2011 : 267 files
+
 - Status: user gameplay validation on 2026-05-30.
 
 | Function/prototype shape | Evidence | Status |
@@ -101,8 +103,9 @@ argument count when it is more specific than the prototype.
 
 ### Kanon 1999 / Kanon 1999 18+ AVG32
 
-- Interpreter: AVG32/TPC32 Kanon 1999 family.
-- Corpus: Kanon 1999 all-age and Kanon 1999 18+ roundtrip corpuses.
+- Interpreter: AVG3217M / AVG3216M
+- Corpus: Kanon 1999 all-age : 155 files
+- Corpus: Kanon 1999 18+ : 157 files
 - Status: user gameplay validation on 2026-06-02.
 
 | Instruction shape | Evidence | Status |
@@ -118,9 +121,8 @@ Latin-only dialogue as `text_hankaku` so spacing matches the AVG32 renderer.
 
 ### Little Busters! 2007
 
-- Interpreter: RealLive pre-1.1 family, validated against the Little Busters!
-  2007 corpus.
-- Corpus: Little Busters! 2007 SJIS/UTF-8 extraction and roundtrip corpus.
+- Interpreter: RealLive 1.4.8.8
+- Corpus: 438 files
 - Status: user gameplay validation on 2026-06-02.
 
 | Function/prototype shape | Evidence | Status |
@@ -131,6 +133,43 @@ Latin-only dialogue as `text_hankaku` so spacing matches the AVG32 renderer.
 Validated rule: pre-1.1 RealLive `objBgOfFileAnm` accepts overload ids 0, 1,
 and 2, including the filename + animation-name + visible/x/y form used by
 Little Busters! 2007.
+
+### Planetarian 2006
+
+- Interpreter: RealLive 1.3.9.5.
+- Corpus: 20 files
+- Status: user gameplay validation on 2026-06-03.
+
+| Function/bytecode shape | Evidence | Status |
+| --- | --- | --- |
+| `objBgOfFileGan` short form | Planetarian uses the same encoded opcode family as `objBgOfFileAnm`, but the three-argument bytecode shape matches the GAN prototype. | selected by encoded argc and validated |
+| Compact RealLive line markers | Non-`-g` Planetarian extraction emits `{- line N -}` for bytecode line markers. | recompiles byte-identical to validated `-g` corpus |
+| Compact kidoku line table markers | Non-`-g` extraction emits `{- kidoku N line L -}` so the original read-flag line table values survive recompilation. | table matched value-for-value |
+| `select_w` item separators | Planetarian route select blocks require the original logical line number on each item separator, not the physical `.org` line. | preserved by compact line comments |
+
+Validated rule: RealLive roundtrips that hide full debug sources must still
+preserve bytecode line markers and kidoku line-table values when the source is
+used for recompilation. Compact line comments update the compiler's logical
+line while suppressing physical source-line injection.
+
+### Kud Wafter 2010 18+
+
+- Interpreter: RealLive 1.6.3.4.
+- Corpus: 62 files.
+- Status: user in-game validation on 2026-06-03. Full SJIS roundtrip compiled
+  with 0 errors and 0 warnings.
+
+| Function/bytecode shape | Evidence | Status |
+| --- | --- | --- |
+| `objOfFileGan` overload id 2 | Kud Wafter uses opcode `1:071:01003, 2` with `filename`, `ganname`, `visible`, `x`, and `y`, e.g. `objOfFileGan (153, '_NYED_CT00_02', 'NYED_CT00_02', 1, 0, 0)`. | KFN updated and roundtrip validated |
+| Adjacent KFN `strC` parameters | `objOfFileGan` contains consecutive `strC 'filename'` and `strC 'ganname'` arguments that must remain two quoted source parameters. | source recompiles |
+| Nested special parameter groups | `TIMETABLE2` / `TIMETABLELEN2` use nested forms such as `special<48>(__special[1](...))` inside variadic special-parameter lists. | nested argument counts preserved |
+
+Validated rule: RealLive KFN functions can contain consecutive string
+parameters that must be split by prototype position, not by byte adjacency.
+Variadic `special<N>` parameters can also wrap explicit nested `__special[M]`
+calls; the compiler must emit the inner special call with its own argument
+count before the outer special parameter is emitted.
 
 ## Compatibility Rules
 
@@ -144,6 +183,11 @@ Little Busters! 2007.
 | Old KFN calls may have fewer encoded args than the modern prototype; honour the original encoded `argc`. | Old bytecode/KFN mismatch | Tomoyo `DUMMYCHECK_DISC` |
 | AVG32 Latin-only WESTERN dialogue is emitted as `text_hankaku`; Japanese dialogue remains in the native text form. | AVG32/Kanon | Kanon 1999 all-age / 18+ |
 | pre-1.1 `objBgOfFileAnm` accepts overload id 2 for filename + animation-name + visible/x/y. | RealLive pre-1.1 | Little Busters! 2007 |
+| Same-opcode RealLive function families can require prototype selection by encoded argument count before falling back to the exact overload name. | RealLive KFN overload aliases | Planetarian 2006, Little Busters! 2007 |
+| Non-`-g` RealLive extraction must preserve bytecode line markers and kidoku line-table values when sources are intended for recompilation. | RealLive debug/kidoku bytecode | Planetarian 2006 |
+| `objOfFileGan` accepts overload id 2 for filename + GAN-name + visible/x/y. | RealLive KFN GAN functions | Kud Wafter 2010 18+ |
+| Consecutive KFN string parameters must remain distinct source arguments even when their encoded bytes are adjacent. | RealLive KFN string arguments | Kud Wafter 2010 18+ |
+| Variadic `special<N>` parameters may wrap nested `__special[M]` calls; each special group keeps its own encoded argument count. | RealLive special parameters | Kud Wafter 2010 18+ |
 
 ## To Expand
 

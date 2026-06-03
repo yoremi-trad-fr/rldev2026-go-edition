@@ -357,6 +357,54 @@ func (r *FuncRegistry) LookupOpcode(op Opcode) (FuncDef, bool) {
 	return FuncDef{}, false
 }
 
+// LookupOpcodeForArgc is like LookupOpcode, but prefers definitions whose
+// prototypes can actually render the bytecode argument count. This matters for
+// opcode families where the same encoded opcode was renamed across RealLive
+// generations: the bytecode overload may point at an older exact KFN entry,
+// while the argument count belongs to the newer fallback entry.
+func (r *FuncRegistry) LookupOpcodeForArgc(op Opcode, argc int) (FuncDef, bool) {
+	exact, exactOK := r.funcs[op.String()]
+	if exactOK && funcDefAcceptsArgc(exact, argc) {
+		return exact, true
+	}
+
+	for ov := 0; ov < 8; ov++ {
+		if ov == op.Overload {
+			continue
+		}
+		alt := Opcode{Type: op.Type, Module: op.Module, Function: op.Function, Overload: ov}
+		if d, ok := r.funcs[alt.String()]; ok && funcDefAcceptsArgc(d, argc) {
+			return d, true
+		}
+	}
+
+	if exactOK {
+		return exact, true
+	}
+	for ov := 0; ov < 8; ov++ {
+		if ov == op.Overload {
+			continue
+		}
+		alt := Opcode{Type: op.Type, Module: op.Module, Function: op.Function, Overload: ov}
+		if d, ok := r.funcs[alt.String()]; ok {
+			return d, true
+		}
+	}
+	return FuncDef{}, false
+}
+
+func funcDefAcceptsArgc(def FuncDef, argc int) bool {
+	if len(def.Prototypes) == 0 {
+		return true
+	}
+	for _, proto := range def.Prototypes {
+		if len(proto) == argc {
+			return true
+		}
+	}
+	return false
+}
+
 // RegisterModule sets the name for a module number.
 func (r *FuncRegistry) RegisterModule(num int, name string) {
 	r.modules[num] = name

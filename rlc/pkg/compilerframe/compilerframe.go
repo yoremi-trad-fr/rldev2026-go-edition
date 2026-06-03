@@ -119,6 +119,9 @@ func (c *Compiler) Parse(stmts []ast.Stmt) {
 	if containsKidokuDirective(stmts) {
 		c.Out.SuppressAutoKidoku = true
 	}
+	if containsCompactLineDirective(stmts) {
+		c.Out.SuppressAutoLineRefs = true
+	}
 	for i, s := range stmts {
 		if isKidokuDirective(s) {
 			c.ParseElt(s)
@@ -137,11 +140,12 @@ func isDirectiveNamed(stmt ast.Stmt, name string) bool {
 }
 
 func isKidokuDirective(stmt ast.Stmt) bool {
-	return isDirectiveNamed(stmt, "kidoku")
+	d, ok := stmt.(ast.DirectiveStmt)
+	return ok && (d.Name == "kidoku" || d.Name == "kidoku_line")
 }
 
 func isLineDirective(stmt ast.Stmt) bool {
-	return isDirectiveNamed(stmt, "line")
+	return isDirectiveNamed(stmt, "line") || isDirectiveNamed(stmt, "line_compact")
 }
 
 func nextStmtConsumesKidoku(stmts []ast.Stmt, start int) bool {
@@ -170,12 +174,21 @@ func containsKidokuDirective(stmts []ast.Stmt) bool {
 	return false
 }
 
+func containsCompactLineDirective(stmts []ast.Stmt) bool {
+	for _, s := range stmts {
+		if stmtContainsCompactLineDirective(s) {
+			return true
+		}
+	}
+	return false
+}
+
 func stmtContainsKidokuDirective(stmt ast.Stmt) bool {
 	switch s := stmt.(type) {
 	case nil:
 		return false
 	case ast.DirectiveStmt:
-		return s.Name == "kidoku"
+		return s.Name == "kidoku" || s.Name == "kidoku_line"
 	case ast.IfStmt:
 		return stmtContainsKidokuDirective(s.Then) || stmtContainsKidokuDirective(s.Else)
 	case ast.WhileStmt:
@@ -214,6 +227,55 @@ func stmtContainsKidokuDirective(stmt ast.Stmt) bool {
 			return stmtContainsKidokuDirective(cont)
 		case ast.DElseStmt:
 			return containsKidokuDirective(cont.Body)
+		}
+	}
+	return false
+}
+
+func stmtContainsCompactLineDirective(stmt ast.Stmt) bool {
+	switch s := stmt.(type) {
+	case nil:
+		return false
+	case ast.DirectiveStmt:
+		return s.Name == "line_compact"
+	case ast.IfStmt:
+		return stmtContainsCompactLineDirective(s.Then) || stmtContainsCompactLineDirective(s.Else)
+	case ast.WhileStmt:
+		return stmtContainsCompactLineDirective(s.Body)
+	case ast.RepeatStmt:
+		return containsCompactLineDirective(s.Body)
+	case ast.ForStmt:
+		return containsCompactLineDirective(s.Init) ||
+			containsCompactLineDirective(s.Step) ||
+			stmtContainsCompactLineDirective(s.Body)
+	case ast.CaseStmt:
+		if containsCompactLineDirective(s.Default) {
+			return true
+		}
+		for _, arm := range s.Arms {
+			if containsCompactLineDirective(arm.Body) {
+				return true
+			}
+		}
+	case ast.BlockStmt:
+		return containsCompactLineDirective(s.Stmts)
+	case ast.SeqStmt:
+		return containsCompactLineDirective(s.Stmts)
+	case ast.HidingStmt:
+		return stmtContainsCompactLineDirective(s.Body)
+	case ast.DInlineStmt:
+		return stmtContainsCompactLineDirective(s.Body)
+	case ast.DForStmt:
+		return stmtContainsCompactLineDirective(s.Body)
+	case ast.DIfStmt:
+		if containsCompactLineDirective(s.Body) {
+			return true
+		}
+		switch cont := s.Cont.(type) {
+		case ast.DIfStmt:
+			return stmtContainsCompactLineDirective(cont)
+		case ast.DElseStmt:
+			return containsCompactLineDirective(cont.Body)
 		}
 	}
 	return false
@@ -695,7 +757,7 @@ func (c *Compiler) ParseNormElt(stmt ast.Stmt) {
 
 	// --- Directives ---
 	case ast.DirectiveStmt:
-		if s.Name == "line" {
+		if s.Name == "line" || s.Name == "line_compact" {
 			if v, ok := s.Value.(ast.IntLit); ok {
 				c.Out.AddLine(ast.Loc{File: s.Loc.File, Line: int(v.Val)})
 			} else {
@@ -703,8 +765,16 @@ func (c *Compiler) ParseNormElt(stmt ast.Stmt) {
 			}
 			return
 		}
-		if s.Name == "kidoku" {
-			c.Out.AddKidoku(s.Loc, s.Loc.Line)
+		if s.Name == "kidoku" || s.Name == "kidoku_line" {
+			line := s.Loc.Line
+			if s.Name == "kidoku_line" {
+				if v, ok := s.Value.(ast.IntLit); ok {
+					line = int(v.Val)
+				} else {
+					c.warning(s.Loc, "kidoku_line expects an integer literal")
+				}
+			}
+			c.Out.AddKidoku(s.Loc, line)
 			return
 		}
 		c.Directive.Compile(s)
@@ -1126,17 +1196,7 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 				c.Out.AddCodeRaw(s.Loc, []byte{')'})
 				prevParam = emittedParamOther
 			case ast.SpecialParam:
-				// 0x61 tag followed by either a parenthesised parameter
-				// block (`__special[N]`) or inline bare params
-				// (`special<N>` / OCaml NoParens).
-				c.Out.AddCodeRaw(s.Loc, []byte{0x61, byte(pp.Tag)})
-				if !pp.NoParens {
-					c.Out.AddCodeRaw(s.Loc, []byte{'('})
-				}
-				emitExprListWithSeparators(c.Out, s.Loc, pp.Exprs)
-				if !pp.NoParens {
-					c.Out.AddCodeRaw(s.Loc, []byte{')'})
-				}
+				emitSpecialParam(c.Out, s.Loc, pp)
 				if pp.NoParens {
 					prevParam = emittedParamSpecialNoParens
 				} else {
@@ -1652,8 +1712,9 @@ func uncountParamSet(fd *kfn.FuncDef, overload, nParams int) []bool {
 	if !proto.Defined {
 		return out
 	}
-	for i := 0; i < nParams && i < len(proto.Params); i++ {
-		if proto.Params[i].HasFlag(kfn.FUncount) {
+	defs := fn.BuildParamDefs(proto.Params, nParams)
+	for i := 0; i < nParams && i < len(defs); i++ {
+		if defs[i].HasFlag(kfn.FUncount) {
 			out[i] = true
 		}
 	}
@@ -1945,6 +2006,84 @@ func emitExprListWithSeparators(out *codegen.Output, loc ast.Loc, exprs []ast.Ex
 		}
 		out.EmitExprRaw(inner)
 		prev = classifyEmittedParam(inner)
+	}
+}
+
+func emitSpecialParam(out *codegen.Output, loc ast.Loc, p ast.SpecialParam) {
+	out.AddCodeRaw(loc, []byte{0x61, byte(p.Tag)})
+	if !p.NoParens {
+		out.AddCodeRaw(loc, []byte{'('})
+	}
+	emitSpecialExprListWithSeparators(out, loc, p.Exprs)
+	if !p.NoParens {
+		out.AddCodeRaw(loc, []byte{')'})
+	}
+}
+
+func emitSpecialExprListWithSeparators(out *codegen.Output, loc ast.Loc, exprs []ast.Expr) {
+	prev := emittedParamNone
+	for _, e := range exprs {
+		inner := stripTopLevelParens(e)
+		if needsCommaBeforeParam(out, prev, inner) {
+			out.AddCodeRaw(loc, []byte{','})
+		}
+		if emitBracketSpecialFuncCall(out, loc, inner) {
+			prev = emittedParamOther
+			continue
+		}
+		out.EmitExprRaw(inner)
+		prev = classifyEmittedParam(inner)
+	}
+}
+
+func emitBracketSpecialFuncCall(out *codegen.Output, loc ast.Loc, e ast.Expr) bool {
+	call, ok := e.(ast.FuncCall)
+	if !ok || call.Ident != "__special" || len(call.Params) == 0 {
+		return false
+	}
+	tagParam, ok := call.Params[0].(ast.SimpleParam)
+	if !ok {
+		return false
+	}
+	tagLit, ok := stripTopLevelParens(tagParam.Expr).(ast.IntLit)
+	if !ok {
+		return false
+	}
+	out.AddCodeRaw(loc, []byte{0x61, byte(tagLit.Val)})
+	out.AddCodeRaw(loc, []byte{'('})
+	emitParamListWithSeparators(out, loc, call.Params[1:])
+	out.AddCodeRaw(loc, []byte{')'})
+	return true
+}
+
+func emitParamListWithSeparators(out *codegen.Output, loc ast.Loc, params []ast.Param) {
+	prev := emittedParamNone
+	for _, p := range params {
+		switch pp := p.(type) {
+		case ast.SimpleParam:
+			inner := stripTopLevelParens(pp.Expr)
+			if needsCommaBeforeParam(out, prev, inner) {
+				out.AddCodeRaw(loc, []byte{','})
+			}
+			if emitBracketSpecialFuncCall(out, loc, inner) {
+				prev = emittedParamOther
+				continue
+			}
+			out.EmitExprRaw(inner)
+			prev = classifyEmittedParam(inner)
+		case ast.ComplexParam:
+			out.AddCodeRaw(loc, []byte{'('})
+			emitExprListWithSeparators(out, loc, pp.Exprs)
+			out.AddCodeRaw(loc, []byte{')'})
+			prev = emittedParamOther
+		case ast.SpecialParam:
+			emitSpecialParam(out, loc, pp)
+			if pp.NoParens {
+				prev = emittedParamSpecialNoParens
+			} else {
+				prev = emittedParamOther
+			}
+		}
 	}
 }
 
