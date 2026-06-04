@@ -3,6 +3,50 @@
 This file tracks the RLdev2026 Go Edition beta history and the compatibility
 fixes validated during the project sessions.
 
+## Beta 3.1 - 2026-06-04
+
+Support and workflow updates:
+
+- Added Little Busters! EX 2008 compile/rebuild readiness checks. Final in-game
+  validation remains pending, but it is no longer part of the main remaining
+  blocker list.
+- Added the GAN workflow to the GUI through `rlxml`: `.gan -> .ganxml` export
+  and `.ganxml -> .gan` rebuild.
+- Added NWA BGM export to `vaconv` and the GUI, with MP3 and WAV output modes
+  plus batch conversion for `.nwa` folders.
+- Added selected DAT asset editing through JSON: `mode.cgm` CG tables and
+  `tcdata.tcc` tone curves can be exported, edited, and rebuilt.
+- Added an experimental Babel workflow for old RealLive translation projects:
+  runtime setup, DLL/map copy, optional `GAMEEXE.INI` update, and a minimal
+  `global.kh` helper from the GUI.
+
+Babel compiler/runtime updates:
+
+- Added Go compiler support for `#load 'rlBabel'`, gated behind the explicit
+  Babel load so the normal text workflow remains unchanged.
+- Added runtime text output through `CallDLL`, including `rlBabelF.dll` support
+  for pre-1.2.5 RealLive versions.
+- Added support for text resources referenced by `#res<>`, including CLANNAD
+  style name markers such as `\m{A}` and `\m{B}`.
+- Added a RealLive target-version override in the GUI compile panel, useful for
+  old executables such as CLANNAD 2004 where version detection can be
+  ambiguous.
+- Added `docs/BABEL_BEGINNER_GUIDE.md` with a beginner workflow and CLANNAD
+  2004 notes.
+
+Known Babel limits:
+
+- Gloss/ruby interactive behaviour is not fully ported yet; base text is
+  compiled and warnings are emitted.
+- Babel is opt-in. Scripts without `#load 'rlBabel'` continue to use the normal
+  RealLive text compiler path.
+
+Packaging notes:
+
+- The release Babel pack only needs `BABEL/rtl` with `rlBabel.dll`,
+  `rlBabelF.dll`, and the bundled `.map` files. Historical `genmap` and
+  standalone `rlbabel` helper folders can stay out of the main release archive.
+
 ## Beta 3.0 - 2026-06-03
 
 Support added:

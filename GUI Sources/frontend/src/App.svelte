@@ -7,6 +7,7 @@
     SelectSaveFile,
     StopProcess,
     DefaultKFN,
+    DefaultBabelRoot,
     RldevDisassemble,
     RldevExtract,
     RldevArchive,
@@ -16,7 +17,12 @@
     RldevG00ToPng,
     RldevPngToG00,
     RldevGanToXml,
-    RldevXmlToGan
+    RldevXmlToGan,
+    RldevNwaToAudio,
+    RldevDatToJson,
+    RldevDatJsonToBinary,
+    RldevBabelPrepareRuntime,
+    RldevBabelWriteHeader
   } from '../wailsjs/go/main/App.js';
 
   let rldevSelectedOp = 'kprl_disasm';
@@ -32,6 +38,7 @@
   let rlKfnFile = '';
   let rlGameexe = '';
   let rlInterpreter = '';
+  let rlTargetVersion = '';
   let rlOutputDir = '';
   let rlEncoding = 'UTF-8';
   let rlOutputTransform = 'NONE';
@@ -48,6 +55,23 @@
   let rlPngXmlPath = '';
   let rlG00Format = 'auto';
   let rlGanFile = '';
+  let rlNwaFile = '';
+  let rlNwaDir = '';
+  let rlNwaBatch = false;
+  let rlAudioFormat = 'mp3';
+  let rlDatFile = '';
+  let rlDatDir = '';
+  let rlDatBatch = false;
+  let rlDatJsonFile = '';
+  let rlDatJsonDir = '';
+  let rlDatJsonBatch = false;
+  let rlBabelRoot = '';
+  let rlBabelGameDir = '';
+  let rlBabelVersion = '1.2.3.5';
+  let rlBabelDllMode = 'auto';
+  let rlBabelNameEnc = 'western';
+  let rlBabelUpdateGameexe = true;
+  let rlBabelGlosses = false;
 
   const rldevOperations = [
     { id: '_rs1', label: 'KPRL / RLC', section: true },
@@ -61,7 +85,15 @@
     { id: 'g00_import', label: 'PNG → G00' },
     { id: '_rs4', label: 'ANIMATION (GAN)', section: true },
     { id: 'gan_to_xml', label: 'GAN → XML' },
-    { id: 'gan_from_xml', label: 'XML → GAN' }
+    { id: 'gan_from_xml', label: 'XML → GAN' },
+    { id: '_rs5', label: 'AUDIO (BGM)', section: true },
+    { id: 'nwa_audio', label: 'NWA → MP3/WAV' },
+    { id: '_rs6', label: 'DAT (CG/TCC)', section: true },
+    { id: 'dat_to_json', label: 'CGM/TCC → JSON' },
+    { id: 'dat_from_json', label: 'JSON → CGM/TCC' },
+    { id: '_rs7', label: 'BABEL', section: true },
+    { id: 'babel_runtime', label: 'Runtime setup' },
+    { id: 'babel_header', label: 'global.kh helper' }
   ];
 
   const gameIdOptions = [
@@ -127,6 +159,11 @@
     if (kfn && !rlKfnFile) {
       rlKfnFile = kfn;
       addLine('KFN détecté : ' + kfn);
+    }
+    const babel = await DefaultBabelRoot();
+    if (babel && !rlBabelRoot) {
+      rlBabelRoot = babel;
+      addLine('BABEL détecté : ' + babel);
     }
   });
 
@@ -209,6 +246,41 @@
     const f = await SelectFile('Select .gan/.ganxml', '*.gan;*.ganxml', 'GAN files');
     if (f) rlGanFile = f;
   }
+  async function browseRlNwa() {
+    if (rlNwaBatch) {
+      const d = await SelectDirectory('Select folder with .nwa files');
+      if (d) rlNwaDir = d;
+    } else {
+      const f = await SelectFile('Select .nwa file', '*.nwa;*.NWA', 'NWA audio');
+      if (f) rlNwaFile = f;
+    }
+  }
+  async function browseRlDat() {
+    if (rlDatBatch) {
+      const d = await SelectDirectory('Select folder with .cgm / .tcc files');
+      if (d) rlDatDir = d;
+    } else {
+      const f = await SelectFile('Select .cgm / .tcc file', '*.cgm;*.CGM;*.tcc;*.TCC', 'RealLive DAT assets');
+      if (f) rlDatFile = f;
+    }
+  }
+  async function browseRlDatJson() {
+    if (rlDatJsonBatch) {
+      const d = await SelectDirectory('Select folder with DAT JSON files');
+      if (d) rlDatJsonDir = d;
+    } else {
+      const f = await SelectFile('Select DAT JSON file', '*.json;*.JSON', 'DAT JSON files');
+      if (f) rlDatJsonFile = f;
+    }
+  }
+  async function browseRlBabelRoot() {
+    const d = await SelectDirectory('Select BABEL folder');
+    if (d) rlBabelRoot = d;
+  }
+  async function browseRlBabelGameDir() {
+    const d = await SelectDirectory('Select game folder');
+    if (d) rlBabelGameDir = d;
+  }
 
   async function run(fn) {
     if (running) return;
@@ -239,9 +311,9 @@
   }
   function startRlCompile() {
     if (rlCompileBatch) {
-      run(() => RldevCompileBatch(rlOrgDir, rlKfnFile, rlGameexe, rlInterpreter, rlEncoding, rlOutputTransform, rlForceTransform, rlOutputDir));
+      run(() => RldevCompileBatch(rlOrgDir, rlKfnFile, rlGameexe, rlInterpreter, rlTargetVersion, rlEncoding, rlOutputTransform, rlForceTransform, rlOutputDir));
     } else {
-      run(() => RldevCompile(rlOrgFile, rlKfnFile, rlGameexe, rlInterpreter, rlEncoding, rlOutputTransform, rlForceTransform, rlOutputDir));
+      run(() => RldevCompile(rlOrgFile, rlKfnFile, rlGameexe, rlInterpreter, rlTargetVersion, rlEncoding, rlOutputTransform, rlForceTransform, rlOutputDir));
     }
   }
   function toggleCompileBatch() {
@@ -258,6 +330,18 @@
     rlPngDir = '';
     rlPngXmlPath = '';
   }
+  function toggleNwaBatch() {
+    rlNwaFile = '';
+    rlNwaDir = '';
+  }
+  function toggleDatBatch() {
+    rlDatFile = '';
+    rlDatDir = '';
+  }
+  function toggleDatJsonBatch() {
+    rlDatJsonFile = '';
+    rlDatJsonDir = '';
+  }
   function startG00Extract() {
     run(() => RldevG00ToPng(rlG00Batch ? rlG00Dir : rlG00File, rlOutputDir, rlG00XmlPath, rlG00Batch));
   }
@@ -269,6 +353,21 @@
   }
   function startGanFromXml() {
     run(() => RldevXmlToGan(rlGanFile, rlOutputDir));
+  }
+  function startNwaAudio() {
+    run(() => RldevNwaToAudio(rlNwaBatch ? rlNwaDir : rlNwaFile, rlOutputDir, rlAudioFormat, rlNwaBatch));
+  }
+  function startDatToJson() {
+    run(() => RldevDatToJson(rlDatBatch ? rlDatDir : rlDatFile, rlOutputDir, rlDatBatch));
+  }
+  function startDatFromJson() {
+    run(() => RldevDatJsonToBinary(rlDatJsonBatch ? rlDatJsonDir : rlDatJsonFile, rlOutputDir, rlDatJsonBatch));
+  }
+  function startBabelRuntime() {
+    run(() => RldevBabelPrepareRuntime(rlBabelRoot, rlBabelGameDir, rlBabelVersion, rlBabelDllMode, rlBabelNameEnc, rlBabelUpdateGameexe));
+  }
+  function startBabelHeader() {
+    run(() => RldevBabelWriteHeader(rlOutputDir, rlBabelGlosses));
   }
   async function stopProcess() {
     await StopProcess();
@@ -341,6 +440,7 @@
         <div class="form-group"><label>KFN file :</label><div class="form-row"><input type="text" bind:value={rlKfnFile} readonly placeholder="Auto : ./KFN/reallive.kfn" /><button class="btn" on:click={browseRlKfn}>Select</button></div></div>
         <div class="form-group"><label>GAMEEXE.INI (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlGameexe} readonly /><button class="btn" on:click={browseRlGameexe}>Select</button></div></div>
         <div class="form-group"><label>Interpréteur RealLive / Steam (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlInterpreter} readonly /><button class="btn" on:click={browseRlInterpreter}>Select</button></div><div class="form-hint">Auto si GAMEEXE.INI pointe vers un dossier contenant RealLive.exe ou SiglusEngine_Steam.exe.</div></div>
+        <div class="form-group"><label>Version RealLive (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlTargetVersion} list="rl-target-version-options" placeholder="ex: 1.2.3.5 pour CLANNAD 2004" /></div><datalist id="rl-target-version-options"><option value="1.2.3.5"></option><option value="1.2.5.5"></option><option value="1.2.7.0"></option><option value="1.2.9.5"></option><option value="1.3.1.0"></option><option value="1.4.0.5"></option></datalist></div>
         <div class="form-group"><label>Encodage source :</label><div class="form-row"><select bind:value={rlEncoding}><option value="UTF-8">UTF-8</option><option value="CP932">CP932 / Shift-JIS</option><option value="EUC-JP">EUC-JP</option></select></div></div>
         <div class="form-group"><label>Transformation sortie :</label><div class="form-row"><select bind:value={rlOutputTransform}><option value="NONE">NONE / CP932 original</option><option value="WESTERN">WESTERN / CP1252</option><option value="CHINESE">CHINESE</option><option value="KOREAN">KOREAN</option></select></div></div>
         <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlForceTransform} /> Force transform</label></div></div>
@@ -385,6 +485,60 @@
         <div class="form-group"><label>GANXML file :</label><div class="form-row"><input type="text" bind:value={rlGanFile} readonly /><button class="btn" on:click={browseRlGan}>Select</button></div></div>
         <div class="form-group"><label>Output folder :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
         <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startGanFromXml} disabled={!rlGanFile || !rlOutputDir}>Convert</button>{/if}</div>
+
+      {:else if rldevSelectedOp === 'nwa_audio'}
+        <div class="form-title">NWA → MP3/WAV</div>
+        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlNwaBatch} on:change={toggleNwaBatch} /> Batch mode</label></div></div>
+        {#if rlNwaBatch}
+          <div class="form-group"><label>NWA folder :</label><div class="form-row"><input type="text" bind:value={rlNwaDir} readonly /><button class="btn" on:click={browseRlNwa}>Select</button></div></div>
+        {:else}
+          <div class="form-group"><label>NWA file :</label><div class="form-row"><input type="text" bind:value={rlNwaFile} readonly /><button class="btn" on:click={browseRlNwa}>Select</button></div></div>
+        {/if}
+        <div class="form-group"><label>Output format :</label><div class="form-row"><select bind:value={rlAudioFormat}><option value="mp3">MP3</option><option value="wav">WAV</option></select></div></div>
+        <div class="form-group"><label>Output folder :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
+        <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startNwaAudio} disabled={(rlNwaBatch ? !rlNwaDir : !rlNwaFile) || !rlOutputDir}>Convert</button>{/if}</div>
+
+      {:else if rldevSelectedOp === 'dat_to_json'}
+        <div class="form-title">CGM/TCC → JSON</div>
+        <div class="form-hint" style="margin-bottom:10px">Exporte mode.cgm ou tcdata.tcc vers JSON. TCC expose les courbes RGB ; CGM expose les entrées nom + index quand la table est standard.</div>
+        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlDatBatch} on:change={toggleDatBatch} /> Batch mode</label></div></div>
+        {#if rlDatBatch}
+          <div class="form-group"><label>CGM/TCC folder :</label><div class="form-row"><input type="text" bind:value={rlDatDir} readonly /><button class="btn" on:click={browseRlDat}>Select</button></div></div>
+        {:else}
+          <div class="form-group"><label>CGM/TCC file :</label><div class="form-row"><input type="text" bind:value={rlDatFile} readonly /><button class="btn" on:click={browseRlDat}>Select</button></div></div>
+        {/if}
+        <div class="form-group"><label>Output folder :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
+        <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startDatToJson} disabled={(rlDatBatch ? !rlDatDir : !rlDatFile) || !rlOutputDir}>Export JSON</button>{/if}</div>
+
+      {:else if rldevSelectedOp === 'dat_from_json'}
+        <div class="form-title">JSON → CGM/TCC</div>
+        <div class="form-hint" style="margin-bottom:10px">Reconstruit le fichier binaire à partir du champ type du JSON.</div>
+        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlDatJsonBatch} on:change={toggleDatJsonBatch} /> Batch mode</label></div></div>
+        {#if rlDatJsonBatch}
+          <div class="form-group"><label>JSON folder :</label><div class="form-row"><input type="text" bind:value={rlDatJsonDir} readonly /><button class="btn" on:click={browseRlDatJson}>Select</button></div></div>
+        {:else}
+          <div class="form-group"><label>DAT JSON file :</label><div class="form-row"><input type="text" bind:value={rlDatJsonFile} readonly /><button class="btn" on:click={browseRlDatJson}>Select</button></div></div>
+        {/if}
+        <div class="form-group"><label>Output folder :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
+        <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startDatFromJson} disabled={(rlDatJsonBatch ? !rlDatJsonDir : !rlDatJsonFile) || !rlOutputDir}>Rebuild DAT</button>{/if}</div>
+
+      {:else if rldevSelectedOp === 'babel_runtime'}
+        <div class="form-title">Babel runtime setup</div>
+        <div class="form-hint" style="margin-bottom:10px">Copie rlBabel dans le dossier du jeu, ajoute la map de version si elle existe, et peut préparer GAMEEXE.INI.</div>
+        <div class="form-group"><label>BABEL folder :</label><div class="form-row"><input type="text" bind:value={rlBabelRoot} readonly placeholder="Auto : ...\ResCODEX\Rldev2026-go\BABEL" /><button class="btn" on:click={browseRlBabelRoot}>Select</button></div></div>
+        <div class="form-group"><label>Game folder :</label><div class="form-row"><input type="text" bind:value={rlBabelGameDir} readonly /><button class="btn" on:click={browseRlBabelGameDir}>Select</button></div></div>
+        <div class="form-group"><label>RealLive version :</label><div class="form-row"><input type="text" bind:value={rlBabelVersion} list="babel-version-options" placeholder="ex: 1.2.3.5" /></div><datalist id="babel-version-options"><option value="1.2.3.5"></option><option value="1.2.5.5"></option><option value="1.2.6.4"></option><option value="1.2.7.0"></option><option value="1.2.9.5"></option><option value="1.3.1.0"></option><option value="1.3.2.0"></option><option value="1.4.0.5"></option></datalist></div>
+        <div class="form-group"><label>DLL :</label><div class="form-row"><select bind:value={rlBabelDllMode}><option value="auto">Auto by version</option><option value="old">rlBabelF.dll / RealLive 1.2.x</option><option value="new">rlBabel.dll / RealLive 1.2.5+</option></select></div></div>
+        <div class="form-group"><label>#NAME_ENC :</label><div class="form-row"><select bind:value={rlBabelNameEnc}><option value="western">Western</option><option value="chinese">Chinese</option><option value="korean">Korean</option><option value="none">No change</option></select></div></div>
+        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlBabelUpdateGameexe} /> Update GAMEEXE.INI</label></div><div class="form-hint">Une sauvegarde .bak est créée avant modification.</div></div>
+        <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startBabelRuntime} disabled={!rlBabelRoot || !rlBabelGameDir}>Prepare Runtime</button>{/if}</div>
+
+      {:else if rldevSelectedOp === 'babel_header'}
+        <div class="form-title">Babel global.kh helper</div>
+        <div class="form-hint" style="margin-bottom:10px">Crée un global.kh minimal pour activer la lineation dynamique et charger le module rlBabel.</div>
+        <div class="form-group"><label>Output folder :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
+        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlBabelGlosses} /> Enable glosses</label></div></div>
+        <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startBabelHeader} disabled={!rlOutputDir}>Create global.kh</button>{/if}</div>
       {/if}
     </div>
   </div>

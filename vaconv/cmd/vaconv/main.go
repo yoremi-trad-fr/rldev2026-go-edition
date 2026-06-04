@@ -1,4 +1,4 @@
-// Command vaconv converts RealLive G00 images to/from PNG.
+// Command vaconv converts RealLive G00 images, NWA audio, and selected DAT assets.
 //
 // Ported from vaconv (OCaml + C++).
 //
@@ -8,6 +8,10 @@
 //	vaconv -d outdir *.g00       → outdir/file.png (batch)
 //	vaconv -i file.png -m file.xml -o file.g00  → PNG+XML to G00
 //	vaconv -g 2 -o file.g00 file.png            → force G00 format 2
+//	vaconv file.nwa              → file.mp3
+//	vaconv mode.cgm              → mode.json
+//	vaconv tcdata.tcc            → tcdata.json
+//	vaconv mode.json             → mode.cgm or mode.tcc depending on JSON type
 package main
 
 import (
@@ -17,7 +21,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/yoremi/rldev-go/vaconv/pkg/datasset"
 	"github.com/yoremi/rldev-go/vaconv/pkg/g00"
+	"github.com/yoremi/rldev-go/vaconv/pkg/nwaaudio"
 )
 
 const (
@@ -29,9 +35,10 @@ func main() {
 	verbose := flag.Bool("v", false, "verbose output")
 	outdir := flag.String("d", "", "output directory")
 	outfile := flag.String("o", "", "output filename")
-	inputOrFmt := flag.String("i", "", "input file, or input format (png/g00) when a file argument is also supplied")
+	inputOrFmt := flag.String("i", "", "input file, or input format (png/g00/nwa/cgm/tcc/json) when a file argument is also supplied")
 	g00Fmt := flag.String("f", "auto", "G00 format: 0, 1, 2, or auto")
 	g00FmtAlias := flag.String("g", "", "G00 format: 0, 1, 2, or auto (alias for -f)")
+	audioFmt := flag.String("audio", "auto", "NWA audio output format: mp3, wav, or auto")
 	metafile := flag.String("m", "", "metadata XML file")
 	noMeta := flag.Bool("q", false, "disable metadata")
 
@@ -42,6 +49,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s [options] -d DIR *.g00         → batch convert to PNG\n", appName)
 		fmt.Fprintf(os.Stderr, "  %s -i file.png -m file.xml -o file.g00 → convert PNG+XML to G00\n", appName)
 		fmt.Fprintf(os.Stderr, "  %s -g 2 -o file.g00 file.png      → convert PNG to G00 format 2\n\n", appName)
+		fmt.Fprintf(os.Stderr, "  %s [options] <file.nwa>           → convert to MP3 or WAV\n\n", appName)
+		fmt.Fprintf(os.Stderr, "  %s [options] <mode.cgm|tcdata.tcc> → export DAT asset to JSON\n", appName)
+		fmt.Fprintf(os.Stderr, "  %s [options] <file.json>          → rebuild CGM/TCC from JSON\n\n", appName)
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 	}
@@ -75,29 +85,69 @@ func main() {
 	}
 
 	for _, f := range files {
-		if err := convert(f, *verbose, *outdir, *outfile, inFmt, *g00Fmt, *metafile, *noMeta); err != nil {
+		if err := convert(f, *verbose, *outdir, *outfile, inFmt, *g00Fmt, *audioFmt, *metafile, *noMeta); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", f, err)
 			os.Exit(1)
 		}
 	}
 }
 
-func convert(file string, verbose bool, outdir, outfile, inFmt, g00Fmt, metafile string, noMeta bool) error {
+func convert(file string, verbose bool, outdir, outfile, inFmt, g00Fmt, audioFmt, metafile string, noMeta bool) error {
 	ext := strings.ToLower(filepath.Ext(file))
 	base := strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
 
 	// Detect direction
 	isG00 := ext == ".g00"
 	isPNG := ext == ".png"
+	isNWA := ext == ".nwa"
+	isCGM := ext == ".cgm"
+	isTCC := ext == ".tcc"
+	isDATJSON := ext == ".json"
 
 	if inFmt != "" {
 		switch strings.ToLower(inFmt) {
 		case "g00":
 			isG00 = true
 			isPNG = false
+			isNWA = false
+			isCGM = false
+			isTCC = false
+			isDATJSON = false
 		case "png":
 			isPNG = true
 			isG00 = false
+			isNWA = false
+			isCGM = false
+			isTCC = false
+			isDATJSON = false
+		case "nwa":
+			isNWA = true
+			isG00 = false
+			isPNG = false
+			isCGM = false
+			isTCC = false
+			isDATJSON = false
+		case "cgm", "cgtable":
+			isCGM = true
+			isG00 = false
+			isPNG = false
+			isNWA = false
+			isTCC = false
+			isDATJSON = false
+		case "tcc", "tonecurve":
+			isTCC = true
+			isG00 = false
+			isPNG = false
+			isNWA = false
+			isCGM = false
+			isDATJSON = false
+		case "json", "dat-json":
+			isDATJSON = true
+			isG00 = false
+			isPNG = false
+			isNWA = false
+			isCGM = false
+			isTCC = false
 		}
 	}
 
@@ -105,8 +155,14 @@ func convert(file string, verbose bool, outdir, outfile, inFmt, g00Fmt, metafile
 		return g00ToPNG(file, base, outdir, outfile, metafile, noMeta, verbose)
 	} else if isPNG {
 		return pngToG00(file, base, outdir, outfile, metafile, noMeta, verbose, g00Fmt)
+	} else if isNWA {
+		return nwaToAudio(file, base, outdir, outfile, audioFmt, verbose)
+	} else if isCGM || isTCC {
+		return datToJSON(file, base, outdir, outfile, verbose)
+	} else if isDATJSON {
+		return datJSONToBinary(file, base, outdir, outfile, verbose)
 	}
-	return fmt.Errorf("unknown file type '%s' (expected .g00 or .png)", ext)
+	return fmt.Errorf("unknown file type '%s' (expected .g00, .png, .nwa, .cgm, .tcc, or .json)", ext)
 }
 
 func g00ToPNG(inFile, base, outdir, outfile, metafile string, noMeta bool, verbose bool) error {
@@ -213,6 +269,103 @@ func pngToG00(inFile, base, outdir, outfile, metafile string, noMeta bool, verbo
 	return g00.WriteFile(out, img)
 }
 
+func nwaToAudio(inFile, base, outdir, outfile, audioFmt string, verbose bool) error {
+	format, err := resolveAudioFormat(audioFmt, outfile)
+	if err != nil {
+		return err
+	}
+
+	if verbose {
+		fmt.Fprintf(os.Stderr, "Reading NWA: %s\n", inFile)
+	}
+
+	out := resolveOutput(base, "."+format, outdir, outfile)
+	if err := ensureOutputDir(out); err != nil {
+		return err
+	}
+
+	info, err := nwaaudio.ConvertFile(inFile, out, format)
+	if err != nil {
+		return err
+	}
+
+	if verbose {
+		fmt.Fprintf(os.Stderr, "  Format: %d Hz, %d channel(s), %d-bit\n", info.Frequency, info.Channels, info.BitsPerSample)
+		fmt.Fprintf(os.Stderr, "Writing %s: %s\n", strings.ToUpper(format), out)
+	}
+	return nil
+}
+
+func datToJSON(inFile, base, outdir, outfile string, verbose bool) error {
+	if verbose {
+		fmt.Fprintf(os.Stderr, "Reading DAT asset: %s\n", inFile)
+	}
+
+	out := resolveOutput(base, ".json", outdir, outfile)
+	if err := ensureOutputDir(out); err != nil {
+		return err
+	}
+	if err := datasset.WriteJSONFile(inFile, out); err != nil {
+		return err
+	}
+	if verbose {
+		fmt.Fprintf(os.Stderr, "Writing JSON: %s\n", out)
+	}
+	return nil
+}
+
+func datJSONToBinary(inFile, base, outdir, outfile string, verbose bool) error {
+	ext, err := datasset.BinaryExtForJSONFile(inFile)
+	if err != nil {
+		return err
+	}
+	base = trimBaseSuffix(base, ext)
+	out := resolveOutput(base, ext, outdir, outfile)
+	if err := ensureOutputDir(out); err != nil {
+		return err
+	}
+
+	if verbose {
+		fmt.Fprintf(os.Stderr, "Reading DAT JSON: %s\n", inFile)
+	}
+	writtenExt, err := datasset.WriteBinaryFromJSONFile(inFile, out)
+	if err != nil {
+		return err
+	}
+	if verbose {
+		label := strings.TrimPrefix(strings.ToUpper(writtenExt), ".")
+		fmt.Fprintf(os.Stderr, "Writing %s: %s\n", label, out)
+	}
+	return nil
+}
+
+func trimBaseSuffix(base, ext string) string {
+	if strings.HasSuffix(strings.ToLower(base), strings.ToLower(ext)) {
+		return base[:len(base)-len(ext)]
+	}
+	return base
+}
+
+func resolveAudioFormat(audioFmt, outfile string) (string, error) {
+	format := strings.ToLower(strings.TrimSpace(audioFmt))
+	if format == "" || format == "auto" {
+		switch strings.ToLower(filepath.Ext(outfile)) {
+		case ".wav":
+			format = "wav"
+		case ".mp3":
+			format = "mp3"
+		default:
+			format = "mp3"
+		}
+	}
+	switch format {
+	case "mp3", "wav":
+		return format, nil
+	default:
+		return "", fmt.Errorf("unknown NWA audio format %q (expected mp3, wav, or auto)", audioFmt)
+	}
+}
+
 func resolveOutput(base, ext, outdir, outfile string) string {
 	if outfile != "" {
 		return outfile
@@ -265,7 +418,7 @@ func ensureOutputDir(path string) error {
 
 func looksLikeInputFile(value string) bool {
 	ext := strings.ToLower(filepath.Ext(value))
-	return ext == ".png" || ext == ".g00" || fileExists(value)
+	return ext == ".png" || ext == ".g00" || ext == ".nwa" || ext == ".cgm" || ext == ".tcc" || ext == ".json" || fileExists(value)
 }
 
 func fileExists(path string) bool {

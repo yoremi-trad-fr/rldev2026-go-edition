@@ -2,6 +2,7 @@ package compilerframe
 
 import (
 	"bytes"
+	"path/filepath"
 	"testing"
 
 	"github.com/yoremi/rldev-go/pkg/encoding"
@@ -1781,4 +1782,190 @@ func TestTextStubDynLinError(t *testing.T) {
 	if !c.HasErrors() {
 		t.Error("should error when dynlin=1 but no library")
 	}
+}
+
+func TestLoadRLBabelModuleDefinesFlags(t *testing.T) {
+	c := newComp()
+	c.Parse([]ast.Stmt{ast.LoadFileStmt{Loc: ast.Loc{File: "t", Line: 1}, Path: ast.StrLit{
+		Loc: ast.Loc{File: "t", Line: 1},
+		Tokens: []ast.StrToken{
+			ast.TextToken{Loc: ast.Loc{File: "t", Line: 1}, Text: "rlBabel"},
+		},
+	}}})
+	if c.HasErrors() {
+		t.Fatalf("errors: %v", c.Errors)
+	}
+	for _, name := range []string{"__RLBABEL_KH__", "__DynamicLineation__", "rlBabelDLL"} {
+		if !c.Mem.Defined(name) {
+			t.Fatalf("%s was not defined", name)
+		}
+	}
+}
+
+func TestRLBabelTextEmitsCallDLLRuntime(t *testing.T) {
+	c := newComp()
+	registerRLBabelRuntimeKFN(c)
+	c.Compile([]ast.Stmt{
+		ast.LoadFileStmt{Loc: ast.Loc{File: "t", Line: 1}, Path: ast.StrLit{
+			Loc: ast.Loc{File: "t", Line: 1},
+			Tokens: []ast.StrToken{
+				ast.TextToken{Loc: ast.Loc{File: "t", Line: 1}, Text: "rlBabel"},
+			},
+		}},
+		ast.ReturnStmt{Loc: ast.Loc{File: "t", Line: 2}, Expr: ast.StrLit{
+			Loc: ast.Loc{File: "t", Line: 2},
+			Tokens: []ast.StrToken{
+				ast.SpeakerToken{Loc: ast.Loc{File: "t", Line: 2}},
+				ast.TextToken{Loc: ast.Loc{File: "t", Line: 2}, Text: "Name"},
+				ast.RCurToken{Loc: ast.Loc{File: "t", Line: 2}},
+				ast.SpaceToken{Loc: ast.Loc{File: "t", Line: 2}, Count: 1},
+				ast.TextToken{Loc: ast.Loc{File: "t", Line: 2}, Text: "Hello"},
+				ast.CodeToken{Loc: ast.Loc{File: "t", Line: 2}, Ident: "n"},
+				ast.TextToken{Loc: ast.Loc{File: "t", Line: 2}, Text: "World"},
+			},
+		}},
+	})
+	if c.HasErrors() {
+		t.Fatalf("errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	if !bytes.Contains(got, []byte{'#', 2, 0, 12, 0}) {
+		t.Fatalf("CallDLL opcode was not emitted: % x", got)
+	}
+	if !hasLabel(c, rlBabelDisplayLabel) {
+		t.Fatalf("runtime label %s was not emitted", rlBabelDisplayLabel)
+	}
+	if !c.rlBabelRuntimeDone {
+		t.Fatal("Babel runtime was not marked emitted")
+	}
+}
+
+func TestRLBabelResourceNameMarkerLetters(t *testing.T) {
+	oldMode := texttransforms.GetMode()
+	oldForce := texttransforms.ForceEncode
+	texttransforms.SetMode(texttransforms.EncWestern)
+	texttransforms.ForceEncode = true
+	defer func() {
+		texttransforms.SetMode(oldMode)
+		texttransforms.ForceEncode = oldForce
+	}()
+
+	c := newComp()
+	registerRLBabelRuntimeKFN(c)
+	c.Out.ResolveRes = func(key string) (string, bool) {
+		if key == "0000" {
+			return `\{\m{B}}Hello`, true
+		}
+		return "", false
+	}
+	c.Compile([]ast.Stmt{
+		ast.LoadFileStmt{Loc: ast.Loc{File: "t", Line: 1}, Path: ast.StrLit{
+			Tokens: []ast.StrToken{ast.TextToken{Text: "rlBabel"}},
+		}},
+		ast.ReturnStmt{Loc: ast.Loc{File: "t", Line: 2}, Expr: ast.ResRef{Loc: ast.Loc{File: "t", Line: 2}, Key: "0000"}},
+	})
+	if c.HasErrors() {
+		t.Fatalf("errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	want := []byte{0x01, 0x81, 0x96, 0x82, 0x61, 0x02}
+	if !bytes.Contains(got, want) {
+		t.Fatalf("Babel resource name marker should preserve \\m{B}: got % x, want contains % x", got, want)
+	}
+	if bytes.Contains(got, []byte(`\m{B}`)) {
+		t.Fatalf("Babel resource name marker leaked as plain text: % x", got)
+	}
+}
+
+func TestRLBabelRuntimeEmitsBeforeEOF(t *testing.T) {
+	c := newComp()
+	registerRLBabelRuntimeKFN(c)
+	c.EmitEOFMarkers = true
+	c.Compile([]ast.Stmt{
+		ast.LoadFileStmt{Loc: ast.Loc{File: "t", Line: 1}, Path: ast.StrLit{
+			Tokens: []ast.StrToken{ast.TextToken{Text: "rlBabel"}},
+		}},
+		ast.ReturnStmt{Loc: ast.Loc{File: "t", Line: 2}, Expr: ast.StrLit{
+			Tokens: []ast.StrToken{ast.TextToken{Text: "Hello"}},
+		}},
+		ast.EOFStmt{Loc: ast.Loc{File: "t", Line: 3}},
+	})
+	if c.HasErrors() {
+		t.Fatalf("errors: %v", c.Errors)
+	}
+	runtimeIdx := labelIRIndex(c, rlBabelDisplayLabel)
+	trailerIdx := codeIRIndex(c, SeenEndTrailerBytes())
+	if runtimeIdx < 0 || trailerIdx < 0 {
+		t.Fatalf("runtimeIdx=%d trailerIdx=%d", runtimeIdx, trailerIdx)
+	}
+	if runtimeIdx > trailerIdx {
+		t.Fatalf("runtime label should be emitted before SeenEnd trailer")
+	}
+}
+
+func TestRLBabelCompilesWithRealKFN(t *testing.T) {
+	kfnPath := filepath.Join("..", "..", "..", "KFN", "reallive.kfn")
+	reg, err := kfn.ParseFile(kfnPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := New(reg, ini.NewTable())
+	c.Compile([]ast.Stmt{
+		ast.LoadFileStmt{Loc: ast.Loc{File: "t", Line: 1}, Path: ast.StrLit{
+			Tokens: []ast.StrToken{ast.TextToken{Text: "rlBabel"}},
+		}},
+		ast.ReturnStmt{Loc: ast.Loc{File: "t", Line: 2}, Expr: ast.StrLit{
+			Tokens: []ast.StrToken{ast.TextToken{Text: "Hello"}},
+		}},
+	})
+	if c.HasErrors() {
+		t.Fatalf("errors: %v", c.Errors)
+	}
+	if !hasLabel(c, rlBabelDisplayLabel) {
+		t.Fatalf("runtime label %s was not emitted", rlBabelDisplayLabel)
+	}
+}
+
+func hasLabel(c *Compiler, label string) bool {
+	return labelIRIndex(c, label) >= 0
+}
+
+func labelIRIndex(c *Compiler, label string) int {
+	for i, ir := range c.Out.IR {
+		if ir.Type == codegen.IRLabel && ir.Label == label {
+			return i
+		}
+	}
+	return -1
+}
+
+func codeIRIndex(c *Compiler, want []byte) int {
+	for i, ir := range c.Out.IR {
+		if ir.Type == codegen.IRCode && bytes.Equal(ir.Bytes, want) {
+			return i
+		}
+	}
+	return -1
+}
+
+func registerRLBabelRuntimeKFN(c *Compiler) {
+	reg := c.Reg
+	reg.Register(&kfn.FuncDef{Ident: "CallDLL", Flags: []kfn.FuncFlag{kfn.FlagPushStore}, OpType: 2, OpModule: 0, OpCode: 12})
+	reg.Register(&kfn.FuncDef{Ident: "LoadDLL", Flags: []kfn.FuncFlag{kfn.FlagPushStore}, OpType: 2, OpModule: 0, OpCode: 10})
+	reg.Register(&kfn.FuncDef{Ident: "strout", OpType: 1, OpModule: 10, OpCode: 100})
+	reg.Register(&kfn.FuncDef{Ident: "strcpy", OpType: 1, OpModule: 10, OpCode: 0})
+	reg.Register(&kfn.FuncDef{Ident: "itoa", OpType: 1, OpModule: 10, OpCode: 17})
+	reg.Register(&kfn.FuncDef{Ident: "FontSize", OpType: 0, OpModule: 0, OpCode: 101})
+	reg.Register(&kfn.FuncDef{Ident: "DisableAutoSavepoints", OpType: 1, OpModule: 0, OpCode: 3502})
+	reg.Register(&kfn.FuncDef{Ident: "EnableAutoSavepoints", OpType: 1, OpModule: 0, OpCode: 3501})
+	reg.Register(&kfn.FuncDef{Ident: "TextPos", OpType: 0, OpModule: 0, OpCode: 310})
+	reg.Register(&kfn.FuncDef{Ident: "TextPosX", OpType: 0, OpModule: 0, OpCode: 311})
+	reg.Register(&kfn.FuncDef{Ident: "SetIndent", OpType: 0, OpModule: 0, OpCode: 300})
+	reg.Register(&kfn.FuncDef{Ident: "ClearIndent", OpType: 0, OpModule: 0, OpCode: 301})
+	reg.Register(&kfn.FuncDef{Ident: "br", OpType: 0, OpModule: 0, OpCode: 201})
+	reg.Register(&kfn.FuncDef{Ident: "page", OpType: 0, OpModule: 0, OpCode: 210})
+	reg.Register(&kfn.FuncDef{Ident: "goto", OpType: 0, OpModule: 0, OpCode: 0})
+	reg.Register(&kfn.FuncDef{Ident: "gosub", OpType: 0, OpModule: 0, OpCode: 5})
+	reg.Register(&kfn.FuncDef{Ident: "goto_case", OpType: 0, OpModule: 0, OpCode: 4})
+	reg.Register(&kfn.FuncDef{Ident: "ret", OpType: 0, OpModule: 0, OpCode: 10})
 }

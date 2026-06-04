@@ -1,4 +1,4 @@
-### Status update: `03/06/2026`
+### Status update: `04/06/2026`
 <table>
   <tr>
     <td align="center" width="100%">
@@ -7,7 +7,9 @@
   </tr>
 </table>
 
-Update : 03/06/2026 : Beta 3.0 validates Planetarian (2006) and Kud Wafter (2010 18+) normal SJIS roundtrip support
+Update : 04/06/2026 : Beta 3.1 adds bonus workflows: GAN XML roundtrip, NWA audio export, DAT CGM/TCC JSON editing, and experimental Babel GUI support
+
+Update : 03/06/2026 : Beta 3.0 validates Planetarian (2006) and Kud Wafter (2010 18+)
 
 Update : 02/06/2026 : Beta 2.9 adds Kanon 1999 all-age / 18+ AVG32 support and validates Little Busters! 2007
 
@@ -64,6 +66,8 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### -Little Busters! (2007)
 
+### -Little Busters! EX (2008) - compile/rebuild ready, final in-game validation pending
+
 ### -Planetarian (2006)
 
 ### -Kud Wafter (2010 18+)
@@ -95,13 +99,23 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### -Compact RealLive debug-line / kidoku preservation for normal roundtrips
 
-### -Packed RealLive interpreter version detection, including Kud Wafter 1.6.3.4
+### -Packed RealLive interpreter version detection
 
 ### -Extraction mode in the GUI for Reallive debug mode (parameter -g)
 
 ### -AVG32 / Kanon workflow: PACL/PACK archive list, extract, rebuild, TPC32 `.avg` disassembly, `.utf` resources, and `.avg` compilation
 
 ### -Kanon UTF-8 / WESTERN text workflow with French accent support
+
+### -GAN workflow: `.gan` to `.ganxml` export and `.ganxml` to `.gan` rebuild through `rlxml`, with GUI actions
+
+### -NWA audio workflow: `.nwa` BGM export to `.mp3` or `.wav` through `vaconv`, with GUI batch mode
+
+### -DAT asset workflow: `mode.cgm` and `tcdata.tcc` export to editable JSON and rebuild back to binary
+
+### -Babel workflow: runtime setup helper, `global.kh` helper, RealLive version override, and experimental `#load 'rlBabel'` compiler path for old RealLive translation work
+
+### -BABEL release folder support: bundled runtime files are expected under `BABEL/rtl`
 
 
 
@@ -138,8 +152,6 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### AIR (2000 18+)
 
-### Little Busters EX ! (2008)
-
 ### Harmonia 2016
 
 ### Harmonia 2016-Steam
@@ -148,17 +160,9 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ## Features
 
-### Support for GAN workflow
-
-### Support for Babel module (for old version of ReaLlive)
-
 ### Full compatibility with files extracted using Rldev OCaml
 
 ### UTF-8 support for dialogues contained in .org files
-
-### NWA <-> MP3 conversion (BGM)
-
-### Decoding a TCC <-> UTF (DAT)
 
 
 <table>
@@ -200,6 +204,34 @@ and kidoku bytecode markers, so the rebuilt `SEEN.TXT` matches the validated
 Kud Wafter 2010 18+ extracts with `Game ID (-G) = KUDO`, compiles against
 RealLive `1.6.3.4`, rebuilds, and runs in-game with the same normal translation
 workflow.
+
+Beta 3.1 adds the optional asset and advanced translation workflows. `rlxml`
+handles `GAN <-> GANXML` roundtrips. `vaconv` can export NWA BGM files to MP3
+or WAV, and can export/import selected DAT-side assets (`mode.cgm` CG tables
+and `tcdata.tcc` tone curves) through editable JSON. The GUI also includes an
+experimental Babel tab for older RealLive translation projects: it prepares the
+runtime DLL/map files, can update `GAMEEXE.INI`, writes a minimal `global.kh`
+helper, and the compiler recognises `#load 'rlBabel'` without affecting the
+normal text workflow.
+
+### BABEL runtime folder
+
+For releases, the Babel runtime pack should keep only the runtime files needed
+by the GUI:
+
+```text
+BABEL/
+  rtl/
+    rlBabel.dll
+    rlBabelF.dll
+    1.2.3.5.map
+    ...
+    1.4.0.5.map
+```
+
+Historical helper folders such as `genmap` or standalone `rlbabel` tests are
+not required by the integrated GUI workflow. Keep them in a separate advanced
+tools archive if needed.
 
 ### Game ID (-G) for protected titles
 

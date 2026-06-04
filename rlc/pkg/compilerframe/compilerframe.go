@@ -54,6 +54,11 @@ type Compiler struct {
 	continueStack      []string // continue targets (label idents)
 	noLineForNextPause bool
 	afterEOFMarker     bool
+	rlBabelLoaded      bool
+	rlBabelUsed        bool
+	rlBabelRuntimeDone bool
+	rlBabelInitDone    bool
+	rlBabelVars        *rlBabelRuntimeVars
 
 	// EmitEOFMarkers controls whether the source-level `eof` marker writes
 	// the SeenEnd trailer. The CLI wires this to debug-info generation.
@@ -107,6 +112,9 @@ func New(reg *kfn.Registry, iniTable *ini.Table) *Compiler {
 // Compile compiles a full program and merges sub-compiler diagnostics.
 func (c *Compiler) Compile(stmts []ast.Stmt) {
 	c.Parse(stmts)
+	if c.rlBabelUsed && !c.rlBabelRuntimeDone {
+		c.emitRLBabelRuntime(ast.Nowhere)
+	}
 	if c.Directive != nil {
 		c.Errors = append(c.Errors, c.Directive.Errors...)
 		c.Warnings = append(c.Warnings, c.Directive.Warnings...)
@@ -353,8 +361,7 @@ func (c *Compiler) handleTextout(ret ast.ReturnStmt) {
 			// TODO: full Textout.compile with DTO tokens
 			c.compileTextStub(ret)
 		} else if c.Mem.Defined(rlbabelKH) {
-			// TODO: full RlBabel.compile with VWF tokens
-			c.compileTextStub(ret)
+			c.compileRLBabelText(ret)
 		} else {
 			c.error(ret.Loc, "__DynamicLineation__ defined, but no recognised dynamic lineation library loaded")
 		}
@@ -792,6 +799,9 @@ func (c *Compiler) ParseNormElt(stmt ast.Stmt) {
 		}
 
 	case ast.EOFStmt:
+		if c.rlBabelUsed && !c.rlBabelRuntimeDone {
+			c.emitRLBabelRuntime(s.Loc)
+		}
 		if c.EmitEOFMarkers {
 			c.Out.AddCodeRaw(s.Loc, SeenEndTrailerBytes())
 		}
@@ -1273,6 +1283,9 @@ func (c *Compiler) compileLoadFile(s ast.LoadFileStmt) {
 	path, err := c.Norm.NormalizeAndGetStr(s.Path)
 	if err != nil {
 		c.error(s.Loc, fmt.Sprintf("#load: cannot evaluate path: %v", err))
+		return
+	}
+	if c.compileKnownLoadFile(s.Loc, path) {
 		return
 	}
 	// TODO: read file, lex, parse, and call c.ParseElt on the resulting AST.
