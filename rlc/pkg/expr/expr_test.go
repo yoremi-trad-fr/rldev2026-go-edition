@@ -276,6 +276,32 @@ func TestConditionalUnitCmp(t *testing.T) {
 	}
 }
 
+func TestConditionalUnitChainWrapsBareOperands(t *testing.T) {
+	chain := ast.ChainExpr{
+		LHS: ast.CmpExpr{LHS: ast.IntLit{Val: 1}, Op: ast.CmpNeq, RHS: ast.IntLit{Val: 0}},
+		Op:  ast.ChainAnd,
+		RHS: ast.IntVar{Bank: 5, Index: ast.IntLit{Val: 1006}},
+	}
+	e := ConditionalUnit(chain)
+	got, ok := e.(ast.ChainExpr)
+	if !ok {
+		t.Fatalf("cond(chain): got %T", e)
+	}
+	if _, ok := got.LHS.(ast.CmpExpr); !ok {
+		t.Fatalf("left operand = %T, want CmpExpr", got.LHS)
+	}
+	rhs, ok := got.RHS.(ast.CmpExpr)
+	if !ok {
+		t.Fatalf("right operand = %T, want CmpExpr", got.RHS)
+	}
+	if rhs.Op != ast.CmpNeq {
+		t.Fatalf("right cmp op = %v, want !=", rhs.Op)
+	}
+	if lit, ok := rhs.RHS.(ast.IntLit); !ok || lit.Val != 0 {
+		t.Fatalf("right cmp rhs = %#v, want 0", rhs.RHS)
+	}
+}
+
 func TestConditionalUnitNot(t *testing.T) {
 	inner := ast.CmpExpr{LHS: ast.IntLit{Val: 1}, Op: ast.CmpEqu, RHS: ast.IntLit{Val: 2}}
 	e := ConditionalUnit(ast.UnaryExpr{Op: ast.UnaryNot, Val: inner})

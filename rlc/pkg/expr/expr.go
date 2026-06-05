@@ -438,8 +438,15 @@ func (n *Normalizer) foldUnaryExpr(loc ast.Loc, op ast.UnaryOp, val ast.Expr) as
 // Wraps non-boolean expressions as (expr != 0).
 func ConditionalUnit(e ast.Expr) ast.Expr {
 	switch x := e.(type) {
-	case ast.CmpExpr, ast.ChainExpr:
+	case ast.CmpExpr:
 		return e // already boolean
+	case ast.ChainExpr:
+		return ast.ChainExpr{
+			Loc: x.Loc,
+			LHS: ConditionalUnit(x.LHS),
+			Op:  x.Op,
+			RHS: ConditionalUnit(x.RHS),
+		}
 	case ast.UnaryExpr:
 		if x.Op == ast.UnaryNot {
 			return UnaryToLogOp(x.Loc, ConditionalUnit(x.Val))
