@@ -500,7 +500,7 @@ func TestExplicitReturnParamChoosesFullOverload(t *testing.T) {
 	}
 }
 
-func TestLegacyRealLiveItoaLengthUsesOverloadZero(t *testing.T) {
+func TestLegacyRealLiveItoaLengthUsesKFNOverload(t *testing.T) {
 	c := newComp()
 	c.Reg.Version = kfn.Version{1, 2, 3, 5}
 	registerItoa(c)
@@ -517,8 +517,8 @@ func TestLegacyRealLiveItoaLengthUsesOverloadZero(t *testing.T) {
 	if c.HasErrors() {
 		t.Fatalf("compile errors: %v", c.Errors)
 	}
-	if findCodeIR(c, codegen.EncodeOpcode(1, 10, 17, 3, 0)) < 0 {
-		t.Fatal("RealLive 1.2.3 itoa length form should use legacy overload 0")
+	if findCodeIR(c, codegen.EncodeOpcode(1, 10, 17, 3, 1)) < 0 {
+		t.Fatal("RealLive 1.2.3 itoa length form should use the KFN overload")
 	}
 }
 
@@ -657,7 +657,7 @@ func registerSetLocalNameForTest(c *Compiler) {
 	})
 }
 
-func TestFunctionCallSeparatesIntThenUnquotedStringParam(t *testing.T) {
+func TestFunctionCallDoesNotSeparateIntThenUnquotedStringParam(t *testing.T) {
 	c := newComp()
 	registerSetLocalNameForTest(c)
 	loc := ast.Loc{File: "t", Line: 1}
@@ -680,13 +680,20 @@ func TestFunctionCallSeparatesIntThenUnquotedStringParam(t *testing.T) {
 		t.Fatalf("encode name: %v", err)
 	}
 	args := append([]byte{'('}, codegen.EncodeInt32(0)...)
-	args = append(args, ',')
 	args = append(args, encodedName...)
 	args = append(args, ')')
 	want := append(codegen.EncodeOpcode(1, 13, 11, 2, 0), args...)
 	got := compilerOutputBytes(c)
 	if !bytes.Contains(got, want) {
-		t.Fatalf("SetLocalName unquoted args missing separator:\n got  % x\n want % x", got, want)
+		t.Fatalf("SetLocalName unquoted args changed:\n got  % x\n want % x", got, want)
+	}
+	forbiddenArgs := append([]byte{'('}, codegen.EncodeInt32(0)...)
+	forbiddenArgs = append(forbiddenArgs, ',')
+	forbiddenArgs = append(forbiddenArgs, encodedName...)
+	forbiddenArgs = append(forbiddenArgs, ')')
+	forbidden := append(codegen.EncodeOpcode(1, 13, 11, 2, 0), forbiddenArgs...)
+	if bytes.Contains(got, forbidden) {
+		t.Fatalf("SetLocalName unquoted args should not have separator:\n got       % x\n forbidden % x", got, forbidden)
 	}
 }
 
@@ -718,7 +725,7 @@ func TestFunctionCallDoesNotSeparateQuotedStringParam(t *testing.T) {
 	}
 }
 
-func TestFunctionCallSeparatesStringVarThenUnquotedStringParam(t *testing.T) {
+func TestFunctionCallDoesNotSeparateStringVarThenUnquotedStringParam(t *testing.T) {
 	c := newComp()
 	c.Reg.Register(&kfn.FuncDef{
 		Ident:    "CompareForTest",
@@ -750,11 +757,17 @@ func TestFunctionCallSeparatesStringVarThenUnquotedStringParam(t *testing.T) {
 	strVar := append([]byte{'$', 11, '['}, codegen.EncodeInt32(1)...)
 	strVar = append(strVar, ']')
 	wantArgs := append([]byte{'('}, strVar...)
-	wantArgs = append(wantArgs, ',', 'A', ')')
+	wantArgs = append(wantArgs, 'A', ')')
 	want := append(codegen.EncodeOpcode(1, 10, 4, 2, 0), wantArgs...)
 	got := compilerOutputBytes(c)
 	if !bytes.Contains(got, want) {
-		t.Fatalf("string-var + unquoted string args missing separator:\n got  % x\n want % x", got, want)
+		t.Fatalf("string-var + unquoted string args changed:\n got  % x\n want % x", got, want)
+	}
+	forbiddenArgs := append([]byte{'('}, strVar...)
+	forbiddenArgs = append(forbiddenArgs, ',', 'A', ')')
+	forbidden := append(codegen.EncodeOpcode(1, 10, 4, 2, 0), forbiddenArgs...)
+	if bytes.Contains(got, forbidden) {
+		t.Fatalf("string-var + unquoted string args should not have separator:\n got       % x\n forbidden % x", got, forbidden)
 	}
 }
 
@@ -779,7 +792,7 @@ func TestFunctionCallSeparatesIntThenUnaryParam(t *testing.T) {
 		Ident: "UnaryParamForTest",
 		Params: []ast.Param{
 			ast.SimpleParam{Loc: loc, Expr: ast.IntLit{Loc: loc, Val: 7}},
-			ast.SimpleParam{Loc: loc, Expr: ast.UnaryExpr{Loc: loc, Op: ast.UnarySub, Val: ast.IntLit{Loc: loc, Val: 1}}},
+			ast.SimpleParam{Loc: loc, Expr: ast.UnaryExpr{Loc: loc, Op: ast.UnarySub, Val: ast.IntVar{Loc: loc, Bank: 0, Index: ast.IntLit{Loc: loc, Val: 1}}}},
 		},
 	}})
 	if c.HasErrors() {
@@ -788,7 +801,9 @@ func TestFunctionCallSeparatesIntThenUnaryParam(t *testing.T) {
 	wantArgs := append([]byte{'('}, codegen.EncodeInt32(7)...)
 	wantArgs = append(wantArgs, ',')
 	wantArgs = append(wantArgs, '\\', codegen.OpCode(ast.OpSub))
+	wantArgs = append(wantArgs, '$', 0x00, '[')
 	wantArgs = append(wantArgs, codegen.EncodeInt32(1)...)
+	wantArgs = append(wantArgs, ']')
 	wantArgs = append(wantArgs, ')')
 	want := append(codegen.EncodeOpcode(1, 10, 6, 2, 0), wantArgs...)
 	got := compilerOutputBytes(c)
@@ -1738,13 +1753,9 @@ func TestBracketSpecialParamSeparatesNegativeArg(t *testing.T) {
 		t.Fatalf("errors: %v", c.Errors)
 	}
 	got := compilerOutputBytes(c)
-	want := []byte{
-		0x24, 0xff, 0x10, 0x27, 0x00, 0x00,
-		',', '\\', codegen.OpCode(ast.OpSub),
-		0x24, 0xff, 0x20, 0x03, 0x00, 0x00,
-	}
+	want := append([]byte{0x24, 0xff, 0x10, 0x27, 0x00, 0x00}, codegen.EncodeInt32(-800)...)
 	if !bytes.Contains(got, want) {
-		t.Fatalf("negative special arg should be comma-separated:\n got  % x\n want % x", got, want)
+		t.Fatalf("negative special arg should be direct int literal:\n got  % x\n want % x", got, want)
 	}
 }
 

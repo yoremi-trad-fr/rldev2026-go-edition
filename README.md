@@ -154,9 +154,6 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### Harmonia 2016
 
-### Harmonia 2016-Steam
-
-### Harmonia 2021-Steam HD édition
 
 ## Features
 

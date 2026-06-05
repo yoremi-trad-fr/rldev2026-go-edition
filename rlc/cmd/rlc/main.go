@@ -20,6 +20,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"flag"
 	"fmt"
@@ -284,13 +285,14 @@ func compileFile(opts *Options, srcPath string) error {
 	// and lose its original code point. Codegen relies on TextToken.Text
 	// being a true Unicode string so it can re-encode to bytecode via
 	// TextTransforms.
-	srcString, err := decodeSource(srcBytes, opts.Encoding, srcPath)
+	sourceEncoding := sourceEncodingFromHeader(srcBytes, opts.Encoding)
+	srcString, err := decodeSource(srcBytes, sourceEncoding, srcPath)
 	if err != nil {
-		return fmt.Errorf("decoding source (%s): %w", opts.Encoding, err)
+		return fmt.Errorf("decoding source (%s): %w", sourceEncoding, err)
 	}
 
 	// 4. Lex + parse
-	diag.Phase("lexing %s (%d bytes, encoding %s)", srcPath, len(srcBytes), opts.Encoding)
+	diag.Phase("lexing %s (%d bytes, encoding %s)", srcPath, len(srcBytes), sourceEncoding)
 	lx := lexer.New(srcString, srcPath)
 
 	p := parser.New(lx)
@@ -310,7 +312,7 @@ func compileFile(opts *Options, srcPath string) error {
 	// the actual caption (288 occurrences in SEEN0414 alone).
 	if compiler.Directive != nil {
 		compiler.Directive.SourceDir = filepath.Dir(srcPath)
-		compiler.Directive.SourceEnc = opts.Encoding
+		compiler.Directive.SourceEnc = sourceEncoding
 	}
 
 	// Wire codegen's ResolveRes callback to State.Resources so EmitExpr
@@ -619,6 +621,52 @@ func main() {
 
 	if errors > 0 {
 		os.Exit(1)
+	}
+}
+
+// sourceEncodingFromHeader returns the encoding declared by a Kepago source
+// header when present. Disassembly writes headers such as:
+//
+//	{-# cp utf8 #- Disassembled with rldev-go -}
+//
+// The marker is ASCII, so it can be inspected before the file itself is
+// decoded. Falling back to the command-line encoding preserves existing
+// behaviour for hand-written sources without a pragma.
+func sourceEncodingFromHeader(data []byte, fallback string) string {
+	if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
+		data = data[3:]
+	}
+
+	lineEnd := bytes.IndexByte(data, '\n')
+	if lineEnd < 0 {
+		lineEnd = len(data)
+	}
+	if lineEnd > 512 {
+		lineEnd = 512
+	}
+	line := strings.TrimSpace(strings.TrimSuffix(string(data[:lineEnd]), "\r"))
+	if !strings.HasPrefix(line, "{-#") {
+		return fallback
+	}
+	commentEnd := strings.Index(line, "-}")
+	if commentEnd < 0 {
+		return fallback
+	}
+	fields := strings.Fields(line[3:commentEnd])
+	if len(fields) < 2 || !strings.EqualFold(fields[0], "cp") {
+		return fallback
+	}
+	return canonicalSourceEncodingName(fields[1])
+}
+
+func canonicalSourceEncodingName(encName string) string {
+	switch strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(encName), "_", "-")) {
+	case "UTF-8", "UTF8":
+		return "UTF-8"
+	case "CP932", "SHIFT-JIS", "SJIS", "SHIFTJIS":
+		return "CP932"
+	default:
+		return encName
 	}
 }
 

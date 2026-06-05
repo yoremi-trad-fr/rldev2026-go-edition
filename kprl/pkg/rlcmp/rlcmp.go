@@ -48,13 +48,104 @@ func Decompress(arr *binarray.Buffer, keys []gamedef.XORSubkey, archived bool) (
 		return nil, fmt.Errorf("decompression failed: %w", err)
 	}
 
-	// Step 4: Apply per-game XOR keys if this was in an archive
+	// Step 4: Apply per-game XOR keys if this was in an archive.
 	if hdr.Archived && len(keys) > 0 {
-		dstBuf := binarray.FromBytes(rv.Data[hdr.DataOffset:])
-		compression.ApplyXORKeys(dstBuf, keys)
+		applyArchiveXORKeys(rv, hdr, keys)
 	}
 
 	return rv, nil
+}
+
+func applyArchiveXORKeys(rv *binarray.Buffer, hdr bytecode.FileHeader, keys []gamedef.XORSubkey) {
+	payload := rv.Data[hdr.DataOffset:]
+	keyed := append([]byte(nil), payload...)
+	compression.ApplyXORKeys(binarray.FromBytes(keyed), keys)
+	if preferPlainXORCandidate(payload, keyed, keys) {
+		return
+	}
+	copy(payload, keyed)
+}
+
+func preferPlainXORCandidate(plain, keyed []byte, keys []gamedef.XORSubkey) bool {
+	plainScore, keyedScore, covered := scoreXORKeyRanges(plain, keyed, keys)
+	if covered < 32 {
+		return false
+	}
+	margin := covered / 8
+	if margin < 32 {
+		margin = 32
+	}
+	return plainScore > keyedScore+margin
+}
+
+func scoreXORKeyRanges(plain, keyed []byte, keys []gamedef.XORSubkey) (int, int, int) {
+	plainScore := 0
+	keyedScore := 0
+	covered := 0
+	for _, sk := range keys {
+		start := sk.Offset
+		if start < 0 || start >= len(plain) || start >= len(keyed) {
+			continue
+		}
+		end := start + sk.Length
+		if end > len(plain) {
+			end = len(plain)
+		}
+		if end > len(keyed) {
+			end = len(keyed)
+		}
+		if end <= start {
+			continue
+		}
+		plainScore += scoreRealLivePayload(plain[start:end])
+		keyedScore += scoreRealLivePayload(keyed[start:end])
+		covered += end - start
+	}
+	return plainScore, keyedScore, covered
+}
+
+func scoreRealLivePayload(data []byte) int {
+	score := 0
+	for i := 0; i < len(data); i++ {
+		b := data[i]
+		switch {
+		case b == 0x0a && i+2 < len(data):
+			line := int(data[i+1]) | int(data[i+2])<<8
+			if line > 0 && line < 10000 {
+				score += 6
+				i += 2
+				continue
+			}
+		case b == '#' && i+7 < len(data):
+			opType := data[i+1]
+			argc := int(data[i+5]) | int(data[i+6])<<8
+			if opType <= 2 && argc < 64 {
+				score += 10
+				continue
+			}
+		case b == '$' && i+1 < len(data):
+			if data[i+1] == 0xff {
+				score += 3
+				continue
+			}
+			if i+2 < len(data) && data[i+2] == '[' {
+				score += 4
+				continue
+			}
+		case b == '\\' && i+1 < len(data):
+			op := data[i+1]
+			if op <= 0x3d || (op >= 0x14 && op <= 0x1e) {
+				score += 3
+				continue
+			}
+		case b == '(' || b == ')' || b == '[' || b == ']' || b == '@' || b == '{' || b == '}' || b == '"':
+			score++
+			continue
+		case b < 0x20 && b != 0 && b != 1 && b != 2:
+			score--
+		}
+	}
+	return score
 }
 
 // Compress returns the compressed bytecode file data.

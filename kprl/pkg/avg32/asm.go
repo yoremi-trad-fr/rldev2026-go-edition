@@ -171,11 +171,14 @@ func sourceInstructionLines(src []byte) []sourceLine {
 
 func patchInstructionFromSource(inst Instruction, line string, resources map[string]string, opts Options) ([]byte, bool, error) {
 	if inst.Code == 0xfe || inst.Code == 0xff {
-		text, targetCode, legacyID, ok, err := parseTopLevelTextLine(line, resources)
-		if err != nil || !ok || legacyID {
-			return nil, ok && !legacyID, err
+		text, targetCode, textID, ok, err := parseTopLevelTextLine(line, resources)
+		if err != nil || !ok {
+			return nil, ok, err
 		}
-		encoded, err := encodeTopLevelText(targetCode, text, opts)
+		if containsReplacementRune(text) {
+			return append([]byte(nil), inst.Raw...), true, nil
+		}
+		encoded, err := encodeTopLevelText(targetCode, text, textID, opts)
 		return encoded, true, err
 	}
 	if inst.Code == 0x58 && (inst.Subcode == 0x01 || inst.Subcode == 0x02) {
@@ -189,11 +192,11 @@ func patchInstructionFromSource(inst Instruction, line string, resources map[str
 	return nil, false, nil
 }
 
-func parseTopLevelTextLine(line string, resources map[string]string) (text string, targetCode byte, legacyID bool, ok bool, err error) {
+func parseTopLevelTextLine(line string, resources map[string]string) (text string, targetCode byte, textID *uint32, ok bool, err error) {
 	open := strings.IndexByte(line, '(')
 	close := strings.LastIndexByte(line, ')')
 	if open < 0 || close < open {
-		return "", 0, false, false, nil
+		return "", 0, nil, false, nil
 	}
 	name := strings.ToLower(strings.TrimSpace(line[:open]))
 	switch name {
@@ -202,30 +205,39 @@ func parseTopLevelTextLine(line string, resources map[string]string) (text strin
 	case "text_zenkaku", "op_ff":
 		targetCode = 0xff
 	default:
-		return "", 0, false, false, nil
+		return "", 0, nil, false, nil
 	}
 	args := strings.TrimSpace(line[open+1 : close])
+	if strings.HasPrefix(strings.ToLower(args), "id:") {
+		comma := strings.IndexByte(args, ',')
+		if comma < 0 {
+			return "", targetCode, nil, true, fmt.Errorf("missing text after id prefix")
+		}
+		id, parseErr := strconv.ParseUint(strings.TrimSpace(args[len("id:"):comma]), 10, 32)
+		if parseErr != nil {
+			return "", targetCode, nil, true, fmt.Errorf("invalid text id: %w", parseErr)
+		}
+		id32 := uint32(id)
+		textID = &id32
+		args = strings.TrimSpace(args[comma+1:])
+	}
 	if strings.HasPrefix(strings.ToLower(args), "#res<") {
 		text, err = resolveResourceRef(args, resources)
-		return text, targetCode, false, true, err
+		return text, targetCode, textID, true, err
 	}
 	qStart := strings.IndexByte(args, '"')
 	if qStart < 0 {
-		return "", targetCode, false, true, fmt.Errorf("missing quoted text")
-	}
-	prefix := strings.TrimSpace(strings.TrimSuffix(args[:qStart], ","))
-	if strings.HasPrefix(strings.ToLower(prefix), "id:") {
-		legacyID = true
+		return "", targetCode, textID, true, fmt.Errorf("missing quoted text")
 	}
 	quoted, _, err := readQuotedLiteral(args[qStart:])
 	if err != nil {
-		return "", targetCode, false, true, err
+		return "", targetCode, textID, true, err
 	}
 	text, err = strconv.Unquote(quoted)
 	if err != nil {
-		return "", targetCode, false, true, err
+		return "", targetCode, textID, true, err
 	}
-	return text, targetCode, legacyID, true, nil
+	return text, targetCode, textID, true, nil
 }
 
 func patchSingleFormattedArgInstruction(raw []byte, line string, resources map[string]string, opts Options, prefixLen int, names ...string) ([]byte, bool, error) {
@@ -323,14 +335,19 @@ func readQuotedLiteral(s string) (literal string, consumed int, err error) {
 	return "", 0, fmt.Errorf("unterminated quoted text")
 }
 
-func encodeTopLevelText(code byte, text string, opts Options) ([]byte, error) {
+func encodeTopLevelText(code byte, text string, textID *uint32, opts Options) ([]byte, error) {
 	code = avg32WesternTextTag(text, opts, code)
 	encoded, err := encodeAVG32Text(text, opts, code)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]byte, 0, 1+len(encoded)+1)
+	out := make([]byte, 0, 1+4+len(encoded)+1)
 	out = append(out, code)
+	if textID != nil {
+		var idBytes [4]byte
+		binary.LittleEndian.PutUint32(idBytes[:], *textID)
+		out = append(out, idBytes[:]...)
+	}
 	out = append(out, encoded...)
 	out = append(out, 0x00)
 	return out, nil
@@ -362,12 +379,20 @@ func patchFormattedTextBytes(raw []byte, block string, resources map[string]stri
 		}
 		switch tag {
 		case 0xfe, 0xff:
+			stringStart := pos
 			end := bytes.IndexByte(raw[pos:], 0x00)
 			if end < 0 {
 				return nil, fmt.Errorf("unterminated formatted text string")
 			}
 			if repl >= len(replacements) {
 				return nil, fmt.Errorf("formatted text string count changed")
+			}
+			if containsReplacementRune(replacements[repl]) {
+				out = append(out, tag)
+				out = append(out, raw[stringStart:stringStart+end+1]...)
+				pos += end + 1
+				repl++
+				continue
 			}
 			outTag := avg32WesternTextTag(replacements[repl], opts, tag)
 			out = append(out, outTag)
@@ -389,6 +414,10 @@ func patchFormattedTextBytes(raw []byte, block string, resources map[string]stri
 			pos = next
 		}
 	}
+}
+
+func containsReplacementRune(s string) bool {
+	return strings.ContainsRune(s, '\uFFFD')
 }
 
 func formattedTextEnd(raw []byte) (int, error) {
@@ -427,7 +456,13 @@ func skipFormattedTextPayload(raw []byte, pos int, tag byte) (int, error) {
 		}
 		sub := raw[pos]
 		pos++
-		count := map[byte]int{0x01: 1, 0x02: 2, 0x03: 1, 0x11: 1, 0x13: 0}[sub]
+		if sub == 0x22 {
+			if pos >= len(raw) {
+				return 0, fmt.Errorf("truncated formatted command")
+			}
+			return pos + 1, nil
+		}
+		count := map[byte]int{0x01: 1, 0x02: 2, 0x03: 1, 0x11: 1, 0x13: 0, 0x29: 0}[sub]
 		if _, ok := formattedTextNames[sub]; !ok {
 			return 0, fmt.Errorf("unknown formatted text command 0x%02X", sub)
 		}

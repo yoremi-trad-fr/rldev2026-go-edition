@@ -34,6 +34,47 @@ func TestDefaultOptions(t *testing.T) {
 	}
 }
 
+func TestSourceEncodingFromHeader(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   []byte
+		fallback string
+		want     string
+	}{
+		{
+			name:     "utf8 pragma from disassembly",
+			source:   []byte("{-# cp utf8 #- Disassembled with rldev-go -}\nSetLocalName (0, 'Fille âgée')\n"),
+			fallback: "CP932",
+			want:     "UTF-8",
+		},
+		{
+			name:     "utf8 pragma with BOM",
+			source:   append([]byte{0xEF, 0xBB, 0xBF}, []byte("{-# cp UTF-8 #-}\n")...),
+			fallback: "CP932",
+			want:     "UTF-8",
+		},
+		{
+			name:     "cp932 pragma",
+			source:   []byte("{-# cp cp932 #- Disassembled with rldev-go -}\n"),
+			fallback: "UTF-8",
+			want:     "CP932",
+		},
+		{
+			name:     "no pragma",
+			source:   []byte("SetLocalName (0, 'Fille')\n"),
+			fallback: "CP932",
+			want:     "CP932",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sourceEncodingFromHeader(tt.source, tt.fallback); got != tt.want {
+				t.Fatalf("sourceEncodingFromHeader() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseFlagsBasic(t *testing.T) {
 	opts, err := parseFlags([]string{"-v", "test.org"})
 	if err != nil {

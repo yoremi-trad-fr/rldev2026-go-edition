@@ -19,6 +19,8 @@ var formattedTextNames = map[byte]string{
 	0x03: "draw_text_pointer",
 	0x11: "draw_value_unknown1",
 	0x13: "draw_value_unknown2",
+	0x22: "draw_raw_0x22",
+	0x29: "draw_raw_0x29",
 }
 
 var fadeNames = map[byte]string{

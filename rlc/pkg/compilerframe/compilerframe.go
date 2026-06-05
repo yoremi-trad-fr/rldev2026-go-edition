@@ -1204,13 +1204,13 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 				c.Out.AddCodeRaw(s.Loc, []byte{'('})
 				emitExprListWithSeparators(c.Out, s.Loc, pp.Exprs)
 				c.Out.AddCodeRaw(s.Loc, []byte{')'})
-				prevParam = emittedParamOther
+				prevParam = emittedParamList
 			case ast.SpecialParam:
 				emitSpecialParam(c.Out, s.Loc, pp)
 				if pp.NoParens {
 					prevParam = emittedParamSpecialNoParens
 				} else {
-					prevParam = emittedParamOther
+					prevParam = emittedParamSpecialParens
 				}
 			}
 		}
@@ -1754,34 +1754,7 @@ func chooseOverloadForCall(fd *kfn.FuncDef, params []ast.Param, hasReturnDest bo
 	if err != nil {
 		return 0, err
 	}
-	if overload, ok := compatibilityOverload(fd, params, hasReturnDest, selected, reg); ok {
-		return overload, nil
-	}
 	return selected, nil
-}
-
-func compatibilityOverload(fd *kfn.FuncDef, params []ast.Param, hasReturnDest bool, selected int, reg *kfn.Registry) (int, bool) {
-	if fd == nil || fd.OpType != 1 || fd.OpModule != 10 {
-		return selected, false
-	}
-	argc := len(params)
-	if hasReturnDest && funcHasReturnParam(fd) {
-		argc++
-	}
-	switch fd.OpCode {
-	case 14, 15, 16, 17: // itoa_ws / itoa_s / itoa_w / itoa
-		if argc == 3 {
-			v, ok := knownRegistryVersion(reg)
-			if !ok {
-				return selected, false
-			}
-			if versionAtLeast(v, kfn.Version{1, 2, 9, 0}) {
-				return 1, true
-			}
-			return 0, true
-		}
-	}
-	return selected, false
 }
 
 func knownRegistryVersion(reg *kfn.Registry) (kfn.Version, bool) {
@@ -1789,18 +1762,6 @@ func knownRegistryVersion(reg *kfn.Registry) (kfn.Version, bool) {
 		return kfn.Version{}, false
 	}
 	return reg.Version, true
-}
-
-func versionAtLeast(v, min kfn.Version) bool {
-	for i := range v {
-		if v[i] > min[i] {
-			return true
-		}
-		if v[i] < min[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func funcHasReturnParam(fd *kfn.FuncDef) bool {
@@ -1992,22 +1953,29 @@ const (
 	emittedParamOther
 	emittedParamInteger
 	emittedParamStringLiteral
+	emittedParamList
+	emittedParamSpecialParens
 	emittedParamSpecialNoParens
 )
 
 func needsCommaBeforeParam(out *codegen.Output, prev emittedParamKind, e ast.Expr) bool {
-	if prev != emittedParamNone && simpleParamNeedsSeparator(e) {
-		return true
+	if prev == emittedParamNone {
+		return false
+	}
+	if simpleParamNeedsSeparator(e) {
+		switch prev {
+		case emittedParamStringLiteral, emittedParamList, emittedParamSpecialParens:
+			return false
+		default:
+			return true
+		}
 	}
 	switch prev {
-	case emittedParamNone:
-		return false
 	case emittedParamStringLiteral, emittedParamSpecialNoParens:
 		_, ok := out.EncodeStringExpr(e)
 		return ok
-	default:
-		return out.StringExprNeedsSeparator(e)
 	}
+	return false
 }
 
 func emitExprListWithSeparators(out *codegen.Output, loc ast.Loc, exprs []ast.Expr) {
@@ -2041,7 +2009,7 @@ func emitSpecialExprListWithSeparators(out *codegen.Output, loc ast.Loc, exprs [
 			out.AddCodeRaw(loc, []byte{','})
 		}
 		if emitBracketSpecialFuncCall(out, loc, inner) {
-			prev = emittedParamOther
+			prev = emittedParamSpecialParens
 			continue
 		}
 		out.EmitExprRaw(inner)
@@ -2079,7 +2047,7 @@ func emitParamListWithSeparators(out *codegen.Output, loc ast.Loc, params []ast.
 				out.AddCodeRaw(loc, []byte{','})
 			}
 			if emitBracketSpecialFuncCall(out, loc, inner) {
-				prev = emittedParamOther
+				prev = emittedParamSpecialParens
 				continue
 			}
 			out.EmitExprRaw(inner)
@@ -2088,13 +2056,13 @@ func emitParamListWithSeparators(out *codegen.Output, loc ast.Loc, params []ast.
 			out.AddCodeRaw(loc, []byte{'('})
 			emitExprListWithSeparators(out, loc, pp.Exprs)
 			out.AddCodeRaw(loc, []byte{')'})
-			prev = emittedParamOther
+			prev = emittedParamList
 		case ast.SpecialParam:
 			emitSpecialParam(out, loc, pp)
 			if pp.NoParens {
 				prev = emittedParamSpecialNoParens
 			} else {
-				prev = emittedParamOther
+				prev = emittedParamSpecialParens
 			}
 		}
 	}
@@ -2111,8 +2079,13 @@ func stripTopLevelParens(e ast.Expr) ast.Expr {
 }
 
 func simpleParamNeedsSeparator(e ast.Expr) bool {
-	switch e.(type) {
+	switch x := e.(type) {
 	case ast.UnaryExpr:
+		if x.Op == ast.UnarySub {
+			if _, ok := x.Val.(ast.IntLit); ok {
+				return false
+			}
+		}
 		return true
 	}
 	return false

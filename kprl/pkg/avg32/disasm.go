@@ -61,12 +61,13 @@ type ResourceEntry struct {
 }
 
 type parser struct {
-	data       []byte
-	pos        int
-	codeStart  int
-	funcReg    *disasm.FuncRegistry
-	sysVersion int
-	textMode   texttransforms.EncMode
+	data        []byte
+	pos         int
+	codeStart   int
+	funcReg     *disasm.FuncRegistry
+	sysVersion  int
+	textMode    texttransforms.EncMode
+	textIDLimit int
 }
 
 func Disassemble(data []byte, opts Options) (*Result, error) {
@@ -190,6 +191,12 @@ func renderInstructionArgs(inst Instruction, resources *resourceCollector) []str
 	if (inst.Code == 0xfe || inst.Code == 0xff) && len(args) == 1 {
 		if text, ok := unquoteSourceString(args[0]); ok {
 			args[0] = resources.add(text)
+		}
+		return args
+	}
+	if (inst.Code == 0xfe || inst.Code == 0xff) && len(args) == 2 && strings.HasPrefix(strings.ToLower(strings.TrimSpace(args[0])), "id:") {
+		if text, ok := unquoteSourceString(args[1]); ok {
+			args[1] = resources.add(text)
 		}
 		return args
 	}
@@ -322,6 +329,7 @@ func (p *parser) parseHeader() (Header, error) {
 	if err != nil {
 		return Header{}, err
 	}
+	p.textIDLimit = int(labelCount)
 	counterStart, err := p.readU32()
 	if err != nil {
 		return Header{}, err
@@ -413,7 +421,7 @@ func (p *parser) parseInstruction() (Instruction, error) {
 
 	switch code {
 	case 0x01, 0x02, 0x03, 0x05, 0x06, 0x08, 0x18, 0x1a, 0x21, 0x22, 0x23, 0x24, 0x25,
-		0x26, 0x27, 0x28, 0x29, 0x2c, 0x2d, 0x30, 0x5b, 0x5e, 0x63,
+		0x26, 0x27, 0x28, 0x29, 0x2c, 0x2d, 0x30, 0x5e, 0x63,
 		0x65, 0x66, 0x69, 0x6f, 0x7f:
 		// no operands
 	case 0x0c:
@@ -477,6 +485,8 @@ func (p *parser) parseInstruction() (Instruction, error) {
 		name, inst.Subcode, inst.Args, err = p.parseChoice(code)
 	case 0x59:
 		name, inst.Subcode, inst.Args, err = p.parseString(code)
+	case 0x5b:
+		name, inst.Subcode, inst.Args, err = p.parseOp5B(code)
 	case 0x5c:
 		name, inst.Subcode, inst.Args, err = p.parseSetMulti(code)
 	case 0x5d:
@@ -514,7 +524,7 @@ func (p *parser) parseInstruction() (Instruction, error) {
 	case 0x76:
 		name, inst.Subcode, inst.Args, err = p.parseNovel(code)
 	case 0xfe, 0xff:
-		if p.sysVersion >= 1714 {
+		if p.shouldReadTopLevelTextID() {
 			var idx uint32
 			idx, err = p.readU32()
 			inst.Args = append(inst.Args, fmt.Sprintf("id:%d", idx))
@@ -608,7 +618,11 @@ func (p *parser) parseFormattedTextCmd(code byte) (string, int, []string, error)
 		args, err = p.readVals(1)
 	case 0x02:
 		args, err = p.readVals(2)
-	case 0x13:
+	case 0x13, 0x29:
+	case 0x22:
+		var raw byte
+		raw, err = p.readByte()
+		args = []string{fmt.Sprintf("raw:0x%02X", raw)}
 	default:
 		err = fmt.Errorf("unknown formatted text subcommand 0x%02X", sub)
 	}
@@ -899,6 +913,26 @@ func (p *parser) parseString(code byte) (string, int, []string, error) {
 	return p.lookup(code, int(sub), stringNames[sub]), int(sub), args, err
 }
 
+func (p *parser) parseOp5B(code byte) (string, int, []string, error) {
+	if p.atEnd() || p.peek() != 0x01 {
+		return p.lookup(code, -1, "op_5B"), -1, nil, nil
+	}
+	sub, err := p.readByte()
+	if err != nil {
+		return "", 0, nil, err
+	}
+	start := p.pos
+	for !p.atEnd() && p.peek() != 0x00 {
+		p.pos++
+	}
+	if p.atEnd() {
+		return "", 0, nil, fmt.Errorf("unterminated op_5b_01 payload")
+	}
+	payload := append([]byte(nil), p.data[start:p.pos]...)
+	p.pos++
+	return p.lookup(code, int(sub), "op_5b_01"), int(sub), []string{"raw:" + hexBytes(payload)}, nil
+}
+
 func (p *parser) parseSetMulti(code byte) (string, int, []string, error) {
 	sub, err := p.readByte()
 	if err != nil {
@@ -941,6 +975,19 @@ func (p *parser) parseOp5F(code byte) (string, int, []string, error) {
 			return "", 0, nil, err
 		}
 		return p.lookup(code, int(sub), op5FNames[sub]), int(sub), []string{"[" + strings.Join(vals, ", ") + "]"}, nil
+	}
+	if !p.atEnd() && p.peek() == 0x20 {
+		sub, err := p.readByte()
+		if err != nil {
+			return "", 0, nil, err
+		}
+		count, err := p.readByte()
+		if err != nil {
+			return "", 0, nil, err
+		}
+		vals, err := p.readVals(int(count) + 2)
+		args := append([]string{fmt.Sprintf("count:%d", count)}, vals...)
+		return p.lookup(code, int(sub), op5FNames[sub]), int(sub), args, err
 	}
 	args, err := p.readVals(8)
 	return p.lookup(code, -1, "op_5f"), -1, args, err
@@ -1427,7 +1474,7 @@ func (p *parser) looksLikeOpcodeAt(pos int) bool {
 	}
 	code := p.data[pos]
 	switch code {
-	case 0x01, 0x02, 0x03, 0x05, 0x06, 0x08, 0x18, 0x1a, 0x21, 0x22, 0x23, 0x24, 0x25,
+	case 0x01, 0x02, 0x03, 0x05, 0x06, 0x08, 0x0c, 0x18, 0x1a, 0x21, 0x22, 0x23, 0x24, 0x25,
 		0x26, 0x27, 0x28, 0x29, 0x2c, 0x2d, 0x30, 0x5b, 0x5e, 0x63, 0x65, 0x66, 0x69, 0x6f, 0x7f:
 		return true
 	case 0x0b:
@@ -1438,9 +1485,9 @@ func (p *parser) looksLikeOpcodeAt(pos int) bool {
 		return pos+1 < len(p.data) && formattedTextNames[p.data[pos+1]] != ""
 	case 0x13:
 		return pos+1 < len(p.data) && fadeNames[p.data[pos+1]] != ""
-	case 0x15, 0x1b, 0x1c, 0x1d, 0x1e, 0x37, 0x39, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42,
+	case 0x15, 0x17, 0x1b, 0x1c, 0x1d, 0x1e, 0x20, 0x37, 0x39, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42,
 		0x43, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x56, 0x57, 0x58, 0x59,
-		0x5c, 0x5d, 0x5f, 0x64, 0x67, 0x68, 0x6a, 0x6c, 0x70, 0x72, 0x73, 0x74, 0x75, 0x76,
+		0x5c, 0x5d, 0x5f, 0x64, 0x67, 0x68, 0x6a, 0x6c, 0x6e, 0x70, 0x72, 0x73, 0x74, 0x75, 0x76,
 		0xea, 0xfe, 0xff:
 		return true
 	case 0x04:
@@ -1461,6 +1508,30 @@ func (p *parser) looksLikeOpcodeAt(pos int) bool {
 		return pos+1 < len(p.data) && mouseNames[p.data[pos+1]] != ""
 	}
 	return false
+}
+
+func (p *parser) shouldReadTopLevelTextID() bool {
+	if p.sysVersion >= 1714 {
+		return true
+	}
+	if p.pos+4 >= len(p.data) {
+		return false
+	}
+	id := binary.LittleEndian.Uint32(p.data[p.pos:])
+	if p.textIDLimit > 0 {
+		if id >= uint32(p.textIDLimit) {
+			return false
+		}
+	} else if p.data[p.pos+1] != 0x00 || p.data[p.pos+2] != 0x00 || p.data[p.pos+3] != 0x00 {
+		return false
+	}
+	textStart := p.pos + 4
+	end := bytes.IndexByte(p.data[textStart:], 0x00)
+	if end < 0 {
+		return false
+	}
+	next := textStart + end + 1
+	return next >= len(p.data) || p.data[next] == 0x00 || p.looksLikeOpcodeAt(next)
 }
 
 func (p *parser) readSceneText() (string, error) {

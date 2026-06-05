@@ -166,7 +166,7 @@ func TestOutputEmitExprNegativeIntLiteral(t *testing.T) {
 	for _, ir := range o.IR {
 		got = append(got, ir.Bytes...)
 	}
-	want := append([]byte{'\\', OpCode(ast.OpSub)}, EncodeInt32(1)...)
+	want := EncodeInt32(-1)
 	if !bytes.Equal(got, want) {
 		t.Errorf("negative literal bytes: got % x, want % x", got, want)
 	}

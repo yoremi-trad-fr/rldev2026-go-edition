@@ -361,6 +361,10 @@ func (o *Output) EmitExprRaw(e ast.Expr) {
 		o.EmitExprRaw(x.RHS)
 	case ast.UnaryExpr:
 		if x.Op == ast.UnarySub {
+			if lit, ok := x.Val.(ast.IntLit); ok {
+				o.AddCodeRaw(x.Loc, EncodeInt32(-lit.Val))
+				break
+			}
 			o.AddCodeRaw(x.Loc, []byte{'\\', OpCode(ast.OpSub)})
 			o.EmitExprRaw(x.Val)
 		}
