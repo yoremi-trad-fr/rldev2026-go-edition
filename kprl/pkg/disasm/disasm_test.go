@@ -848,6 +848,40 @@ func TestWriterConvertTextUsesWesternTransform(t *testing.T) {
 	}
 }
 
+func TestReadStrAssignAcceptsWesternSingleByteText(t *testing.T) {
+	data := []byte{
+		'(',
+		'$', 0x12, '[', '$', 0xff, 0x0e, 0x06, 0x00, 0x00, ']',
+		',',
+		0x8e, 0xfc, 0x88, 0xcd, 0x82, 0x52, 0xb8, 0x82, 0x52,
+		0x82, 0xc9, 0x83, 0x5f, 0x83, 0x81, 0x81, 0x5b, 0x83, 0x57,
+		')',
+	}
+
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	result := &DisassemblyResult{TextTransform: texttransforms.EncWestern}
+	opts := DefaultOptions()
+	opts.Encoding = "UTF-8"
+	r.SetContext(result, &opts)
+
+	op := Opcode{Type: 1, Module: 10, Function: 0, Overload: 0}
+	if err := readFunction(r, result, 0, op, 2, opts); err != nil {
+		t.Fatalf("readFunction() error: %v", err)
+	}
+	if r.Pos() != len(data) {
+		t.Fatalf("reader stopped at 0x%x, want 0x%x", r.Pos(), len(data))
+	}
+	if len(result.Commands) != 1 {
+		t.Fatalf("commands = %#v", result.Commands)
+	}
+
+	got := formatCommand(result.Commands[0], nil, opts, result)
+	want := "strS[1550] = '周囲３×３にダメージ'"
+	if got != want {
+		t.Fatalf("command = %q, want %q", got, want)
+	}
+}
+
 func TestWriterEmitsVal0x2CDirective(t *testing.T) {
 	dir := t.TempDir()
 	opts := DefaultOptions()

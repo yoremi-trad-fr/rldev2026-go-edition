@@ -672,7 +672,7 @@ func (r *Reader) getDataSep(sepStr bool, splitAdjacentString bool, quoteDelimite
 			}
 			return fmt.Sprintf("special<%d>(%s)", idx, inner), nil
 
-		case b == '"' || isAsciiStringStart(b) || isShiftJISLead(b):
+		case r.isStringStartByte(b):
 			// Roll back nothing — readStringUnquot starts at this byte.
 			return r.readStringUnquot(sepStr, splitAdjacentString, quoteDelimiter)
 
@@ -789,6 +789,10 @@ unquotLoop:
 			b.WriteByte(c)
 			b.WriteByte(c2)
 
+		case r.isTransformedSingleByteText(c):
+			r.Next()
+			b.WriteByte(c)
+
 		default:
 			break unquotLoop
 		}
@@ -898,7 +902,7 @@ func quotedStringCanContinue(r *Reader) bool {
 	if err != nil {
 		return false
 	}
-	return next == '#' || isAsciiStringStart(next) || isShiftJISLead(next)
+	return next == '#' || isAsciiStringStart(next) || isShiftJISLead(next) || r.isTransformedSingleByteText(next)
 }
 
 func quotedStringCloseDelimiter(b byte) bool {
@@ -920,6 +924,25 @@ func (r *Reader) hasQuoteBeforeCloseDelimiter() bool {
 		}
 	}
 	return false
+}
+
+func (r *Reader) isStringStartByte(b byte) bool {
+	return b == '"' || isAsciiStringStart(b) || isShiftJISLead(b) || r.isTransformedSingleByteText(b)
+}
+
+func (r *Reader) isTransformedSingleByteText(b byte) bool {
+	if b < 0x80 || isShiftJISLead(b) {
+		return false
+	}
+
+	transform := texttransforms.EncNone
+	if r.result != nil {
+		transform = r.result.TextTransform
+	}
+	if transform == texttransforms.EncNone && r.opts != nil {
+		transform = r.opts.TextTransform
+	}
+	return transform != texttransforms.EncNone
 }
 
 // LookAhead reports whether the next len(s) bytes match s without
