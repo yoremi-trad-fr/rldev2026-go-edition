@@ -116,8 +116,17 @@ type SpecialDef struct {
 
 // Prototype is one overload of a function (nil = undefined for this overload).
 type Prototype struct {
-	Defined bool
-	Params  []Parameter
+	Defined    bool
+	Params     []Parameter
+	FakeParams []FakeParameter
+}
+
+// FakeParameter is a KFN '=' discriminator parameter. The compiler accepts it
+// in source aliases such as MsgBox(..., ALERT_OKCANCEL), but strips it before
+// emitting the opcode payload.
+type FakeParameter struct {
+	Index int
+	Param Parameter
 }
 
 // ============================================================
@@ -978,7 +987,9 @@ func (p *kfnParser) processFunDef(constraints []TargetConstraint, raw rawFunDef)
 		ccStr = raw.ccName
 	}
 
-	// Filter out Fake params
+	// Filter out Fake params while keeping enough metadata to recognise and
+	// strip public alias discriminators emitted by kprl, e.g.
+	// MsgBox(title, text, ALERT_OKCANCEL).
 	var protos []Prototype
 	for _, proto := range raw.protos {
 		if !proto.Defined {
@@ -986,19 +997,15 @@ func (p *kfnParser) processFunDef(constraints []TargetConstraint, raw rawFunDef)
 			continue
 		}
 		var filtered []Parameter
-		for _, param := range proto.Params {
-			isFake := false
-			for _, fl := range param.Flags {
-				if fl == FFake {
-					isFake = true
-					break
-				}
-			}
-			if !isFake {
+		var fakes []FakeParameter
+		for idx, param := range proto.Params {
+			if param.HasFlag(FFake) {
+				fakes = append(fakes, FakeParameter{Index: idx, Param: param})
+			} else {
 				filtered = append(filtered, param)
 			}
 		}
-		protos = append(protos, Prototype{Defined: true, Params: filtered})
+		protos = append(protos, Prototype{Defined: true, Params: filtered, FakeParams: fakes})
 	}
 
 	allFlags := append(raw.ccFlags, raw.funFlags...)
@@ -1014,7 +1021,7 @@ func (p *kfnParser) processFunDef(constraints []TargetConstraint, raw rawFunDef)
 		Targets:    constraints,
 	})
 
-	if raw.alias != "" && raw.alias != ident && !prototypesHaveFakeParams(raw.protos) {
+	if raw.alias != "" && raw.alias != ident {
 		aliasCCStr := ccStr
 		if raw.ccName == "__self__" {
 			aliasCCStr = raw.alias
@@ -1030,19 +1037,6 @@ func (p *kfnParser) processFunDef(constraints []TargetConstraint, raw rawFunDef)
 			Targets:    constraints,
 		})
 	}
-}
-
-func prototypesHaveFakeParams(protos []Prototype) bool {
-	for _, proto := range protos {
-		for _, param := range proto.Params {
-			for _, flag := range param.Flags {
-				if flag == FFake {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }
 
 func parseFuncFlag(s string) FuncFlag {

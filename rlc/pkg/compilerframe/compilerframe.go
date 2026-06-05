@@ -1092,6 +1092,11 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 		// captured overload directly.
 		overload = fd.SyntheticOverload
 	}
+	if fd.SyntheticOverload == 0 && overload >= 0 && overload < len(fd.Prototypes) {
+		if stripped, ok := fn.StripFakeParams(fd.Prototypes[overload], params); ok {
+			params = stripped
+		}
+	}
 	if s.Dest != nil {
 		var injected bool
 		params, injected, err = injectReturnParam(fd, overload, params, s.Dest, s.Loc)

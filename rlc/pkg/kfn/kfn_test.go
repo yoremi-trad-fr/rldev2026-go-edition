@@ -82,8 +82,10 @@ fun __shkud ShakeScreen <1:012:01100, 0> (='DOWNUP', 'amount')
 	if _, ok := reg.Lookup("GetCursorPos"); !ok {
 		t.Fatal("public GetCursorPos alias not registered")
 	}
-	if _, ok := reg.Lookup("ShakeScreen"); ok {
-		t.Fatal("fake-parameter aliases should stay on their internal identifier")
+	if fn, ok := reg.Lookup("ShakeScreen"); !ok {
+		t.Fatal("fake-parameter public alias not registered")
+	} else if len(fn.Prototypes) != 1 || len(fn.Prototypes[0].FakeParams) != 1 {
+		t.Fatalf("fake alias metadata missing: %#v", fn.Prototypes)
 	}
 }
 

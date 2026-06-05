@@ -278,6 +278,40 @@ func TestChooseOverloadByParams(t *testing.T) {
 	}
 }
 
+func TestLookupFakeAliasByDiscriminator(t *testing.T) {
+	reg, err := kfn.Parse(strings.NewReader(`
+module 000 = Sys
+fun MESSAGEBOX_OK MsgBox <0:Sys:00400, 1> ? (strC, strC)
+fun MESSAGEBOX_OKCANCEL MsgBox (store) <0:Sys:00401, 1> ? (strC, strC, ='ALERT_OKCANCEL')
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := []ast.Param{
+		ast.SimpleParam{Expr: ast.StrLit{}},
+		ast.SimpleParam{Expr: ast.StrLit{}},
+		ast.SimpleParam{Expr: ast.VarOrFunc{Ident: "ALERT_OKCANCEL"}},
+	}
+	fd, err := LookupFuncDef(reg, "MsgBox", params, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fd.OpCode != 401 {
+		t.Fatalf("MsgBox ALERT_OKCANCEL opcode = %d, want 401", fd.OpCode)
+	}
+	overload, err := ChooseOverloadByParams(fd.Prototypes, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stripped, ok := StripFakeParams(fd.Prototypes[overload], params)
+	if !ok {
+		t.Fatal("expected ALERT_OKCANCEL fake param to be stripped")
+	}
+	if len(stripped) != 2 {
+		t.Fatalf("stripped params = %d, want 2", len(stripped))
+	}
+}
+
 // ============================================================
 // Assembly tests
 // ============================================================

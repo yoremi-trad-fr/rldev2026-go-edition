@@ -304,21 +304,16 @@ func ChooseOverloadByParams(protos []kfn.Prototype, params []ast.Param) (int, er
 	}
 	infos := AnalyzeOverloads(protos)
 
-	// Count simple params (skip nested function calls)
-	paramCount := 0
-	for _, p := range params {
-		if sp, ok := p.(ast.SimpleParam); ok {
-			if _, isFunc := sp.Expr.(ast.FuncCall); !isFunc {
-				paramCount++
-			}
-		}
-	}
-
 	// Search defined overloads by param count range
 	for _, info := range infos {
 		if !info.Defined {
 			continue
 		}
+		matchParams := params
+		if stripped, ok := StripFakeParams(protos[info.Index], params); ok {
+			matchParams = stripped
+		}
+		paramCount := simpleParamCount(matchParams)
 		if paramCount >= info.Total-info.Optional && paramCount <= info.Total {
 			return info.Index, nil
 		}
@@ -331,7 +326,72 @@ func ChooseOverloadByParams(protos []kfn.Prototype, params []ast.Param) (int, er
 		}
 	}
 
-	return 0, fmt.Errorf("no overload matches %d parameters", paramCount)
+	return 0, fmt.Errorf("no overload matches %d parameters", simpleParamCount(params))
+}
+
+// StripFakeParams removes KFN '=' discriminator parameters from a source call.
+// kprl can emit public aliases such as MsgBox(title, text, ALERT_OKCANCEL);
+// the final ALERT_* token selects the opcode but is not part of the bytecode
+// argument list.
+func StripFakeParams(proto kfn.Prototype, params []ast.Param) ([]ast.Param, bool) {
+	if !proto.Defined || len(proto.FakeParams) == 0 {
+		return params, false
+	}
+	if len(params) != len(proto.Params)+len(proto.FakeParams) {
+		return params, false
+	}
+	out := make([]ast.Param, 0, len(proto.Params))
+	fakeByIndex := make(map[int]kfn.Parameter, len(proto.FakeParams))
+	for _, fake := range proto.FakeParams {
+		fakeByIndex[fake.Index] = fake.Param
+	}
+	for i, p := range params {
+		if fake, ok := fakeByIndex[i]; ok {
+			if !paramMatchesFake(p, fake) {
+				return params, false
+			}
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, true
+}
+
+func paramMatchesFake(param ast.Param, fake kfn.Parameter) bool {
+	sp, ok := param.(ast.SimpleParam)
+	if !ok {
+		return false
+	}
+	tag := fake.Tag
+	if tag == "" {
+		return false
+	}
+	expr := sp.Expr
+	for {
+		pe, ok := expr.(ast.ParenExpr)
+		if !ok {
+			break
+		}
+		expr = pe.Expr
+	}
+	switch e := expr.(type) {
+	case ast.VarOrFunc:
+		return e.Ident == tag
+	case ast.StrLit:
+		return len(e.Tokens) == 1 && textTokenEquals(e.Tokens[0], tag)
+	case ast.IntLit:
+		if v, err := strconv.Atoi(tag); err == nil {
+			return int(e.Val) == v
+		}
+	}
+	return false
+}
+
+func textTokenEquals(tok ast.StrToken, want string) bool {
+	if tt, ok := tok.(ast.TextToken); ok {
+		return tt.Text == want
+	}
+	return false
 }
 
 // ============================================================
@@ -636,11 +696,20 @@ func funcDefAcceptsParams(fd *kfn.FuncDef, params []ast.Param) bool {
 	if fd == nil || len(fd.Prototypes) == 0 {
 		return true
 	}
-	paramCount := simpleParamCount(params)
-	for _, info := range AnalyzeOverloads(fd.Prototypes) {
+	infos := AnalyzeOverloads(fd.Prototypes)
+	hasUndefined := false
+	hasDefined := false
+	for _, info := range infos {
 		if !info.Defined {
-			return true
+			hasUndefined = true
+			continue
 		}
+		hasDefined = true
+		matchParams := params
+		if stripped, ok := StripFakeParams(fd.Prototypes[info.Index], params); ok {
+			matchParams = stripped
+		}
+		paramCount := simpleParamCount(matchParams)
 		min := info.Total - info.Optional
 		if paramCount < min {
 			continue
@@ -649,7 +718,7 @@ func funcDefAcceptsParams(fd *kfn.FuncDef, params []ast.Param) bool {
 			return true
 		}
 	}
-	return false
+	return hasUndefined && !hasDefined
 }
 
 func simpleParamCount(params []ast.Param) int {
