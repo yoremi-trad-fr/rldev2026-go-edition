@@ -106,6 +106,24 @@ func TestParseDirective(t *testing.T) {
 	}
 }
 
+func TestBareOpLiteralCompilesWithoutUnresolvedWarning(t *testing.T) {
+	c := newComp()
+	c.ParseElt(ast.VarOrFuncStmt{
+		Loc:   ast.Loc{File: "SEEN8005.ke", Line: 2645},
+		Ident: "op<1:060:00111,0>",
+	})
+
+	if c.HasErrors() {
+		t.Fatalf("bare op literal should not error: %v", c.Errors)
+	}
+	if len(c.Warnings) != 0 {
+		t.Fatalf("bare op literal should not warn: %v", c.Warnings)
+	}
+	if findCodeIR(c, codegen.EncodeOpcode(1, 60, 111, 0, 0)) < 0 {
+		t.Fatalf("bare op literal did not emit raw opcode, IR=%#v", c.Out.IR)
+	}
+}
+
 func TestParseLineDirectiveEmitsForcedLineRef(t *testing.T) {
 	c := newComp()
 	c.Parse([]ast.Stmt{

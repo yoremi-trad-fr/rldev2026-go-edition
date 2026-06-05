@@ -323,6 +323,15 @@ func (c *Compiler) ParseElt(stmt ast.Stmt) {
 			c.ParseNormElt(ast.FuncCallStmt{
 				Loc: vf.Loc, Ident: vf.Ident,
 			})
+		} else if strings.HasPrefix(vf.Ident, "op<") {
+			if _, err := fn.LookupFuncDef(c.Reg, vf.Ident, nil, false); err == nil {
+				c.ParseNormElt(ast.FuncCallStmt{
+					Loc: vf.Loc, Ident: vf.Ident,
+				})
+				return
+			}
+			// Unknown identifier — treat as textout if defined, else error
+			c.warning(vf.Loc, fmt.Sprintf("unresolved identifier '%s'", vf.Ident))
 		} else {
 			// Unknown identifier — treat as textout if defined, else error
 			c.warning(vf.Loc, fmt.Sprintf("unresolved identifier '%s'", vf.Ident))

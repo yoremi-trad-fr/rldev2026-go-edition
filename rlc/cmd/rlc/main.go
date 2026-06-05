@@ -377,7 +377,8 @@ func compileFile(opts *Options, srcPath string) error {
 	// bytecode header in the target encoding (Shift-JIS / CP932): the
 	// engine reads names as raw SJIS bytes. If the source file is in a
 	// non-SJIS encoding (UTF-8, EUC-JP…), transcode each name now.
-	if compiler.State != nil && len(compiler.State.DramatisPersonae) > 0 {
+	if genOpts.DebugInfo && genOpts.Target == kfn.TargetRealLive &&
+		compiler.State != nil && len(compiler.State.DramatisPersonae) > 0 {
 		names := encodeDramatisPersonae(compiler.State.DramatisPersonae)
 		genOpts.DramatisPersonae = names
 	}
@@ -441,6 +442,10 @@ func encodeDramatisPersonae(src []string) []string {
 	for _, n := range src {
 		sjis, err := encoding.UTF8ToSJS(n)
 		if err != nil {
+			if texttransforms.ForceEncode {
+				names = append(names, " ")
+				continue
+			}
 			diag.Warning(diag.Loc{}, "could not transcode #character '%s' to Shift-JIS: %v — using raw bytes", n, err)
 			names = append(names, n)
 			continue

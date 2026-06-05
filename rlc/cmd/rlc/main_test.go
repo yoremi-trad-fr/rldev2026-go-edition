@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"testing"
 
+	"github.com/yoremi/rldev-go/pkg/diag"
+	"github.com/yoremi/rldev-go/pkg/texttransforms"
 	"github.com/yoremi/rldev-go/rlc/pkg/kfn"
 )
 
@@ -72,6 +75,28 @@ func TestSourceEncodingFromHeader(t *testing.T) {
 				t.Fatalf("sourceEncodingFromHeader() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestEncodeDramatisPersonaeForceTransformReplacesUnencodable(t *testing.T) {
+	oldForce := texttransforms.ForceEncode
+	texttransforms.ForceEncode = true
+	defer func() { texttransforms.ForceEncode = oldForce }()
+
+	var buf bytes.Buffer
+	diag.SetOutput(&buf)
+	defer diag.SetOutput(nil)
+	diag.Reset()
+
+	got := encodeDramatisPersonae([]string{"女", "毁", "みすず"})
+	if len(got) != 3 {
+		t.Fatalf("names len = %d, want 3", len(got))
+	}
+	if got[1] != " " {
+		t.Fatalf("unencodable name = %q, want CP932-safe replacement", got[1])
+	}
+	if diag.Warnings() != 0 {
+		t.Fatalf("force-transform replacement should not warn, got %d warning(s): %s", diag.Warnings(), buf.String())
 	}
 }
 
