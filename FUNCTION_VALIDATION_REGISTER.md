@@ -1,6 +1,6 @@
 # RLdev2026-Go bytecode function validation register
 
-Last update: 2026-06-03
+Last update: 2026-06-11
 
 This register only tracks RealLive bytecode function signatures, AVG32
 instruction shapes, overload selection rules, and function-shaped bytecode
@@ -48,9 +48,16 @@ three encoded args; `strsub` with three encoded args uses overload 1.
 | `strcpy` | `1:010:00000` | 0 | 22199 | 22199 | matched |
 | `strcat` | `1:010:00002` | 0 | 10552 | 10552 | matched |
 
+| Function/bytecode shape | Evidence | Status |
+| --- | --- | --- |
+| Static textout followed by `pause` | `pause` immediately after a static textout must share the previous text/kidoku line instead of receiving a fresh debug line marker. | route start validated |
+
 Validated rule: RealLive 1.2.9.5 uses overload 1 for `itoa` calls with
 three encoded args. KFN return parameters such as `>str` are encoded as real
 parameters before string assignment rewriting, e.g. `strS[0] = itoa(n, 2)`.
+When a static textout is followed immediately by `pause`, the `pause` opcode
+does not receive a separate source-line marker; the preceding text/kidoku line
+covers that display step.
 
 ### CLANNAD Side Stories Steam 2011
 
@@ -90,16 +97,27 @@ encoded `argc` contradicts a greedy subtraction parse.
 - Corpus: 2010 : 262 files
 - Corpus: 2011 : 267 files
 
-- Status: user gameplay validation on 2026-05-30.
+- Status: user gameplay validation on 2026-05-30; Tomoyo 2010 R5 OCaml-source
+  roundtrip validated in game on 2026-06-06; legacy OCaml pause syntax
+  validated for Go recompilation on 2026-06-11.
 
 | Function/prototype shape | Evidence | Status |
 | --- | --- | --- |
 | KFN continuation prototypes | Multi-line prototypes such as `zentohan`. | parsed as one function definition |
 | `DUMMYCHECK_DISC` argc mismatch | Old bytecode can report `argc = 1` while the KFN prototype has three args. | encoded argc is respected |
 | Quoted arg followed by `$ff <int>` | Tomoyo/late KFN calls where `$` starts the next encoded argument. | argument boundary preserved |
+| Legacy OCaml brace special params | Tomoyo 2010 R5 OCaml sources emit `index_series(..., {0, 10000, 0, 0})` and `GetSaveFlag(..., {intF[0], intL[10], 1})`; these must encode as KFN-selected `__special[2](...)` / `__special[0](...)`, not as ordinary tuples. | in-game R5 validated |
+| Legacy OCaml inline special args | Tomoyo 2010 R5 `SEEN9032` emits bare `farcall_with(9042, 0, 0, 1)` / `gosub_with(0, 1000) @93` source args for KFN `special(0:#{intC}, 1:#{strC})+`; these must encode as inline `special<0>(...)` without parens. | menu/options/new-game path validated |
+| Legacy OCaml attached pause control | Old sources can write `text\pnext` without a separating space or line split; this must emit the pause control opcode rather than a literal backslash/Yen glyph. | compiler compatibility validated |
 
 Validated rule: old KFN/prototype mismatches must follow the encoded bytecode
-argument count when it is more specific than the prototype.
+argument count when it is more specific than the prototype. OCaml-origin
+RealLive sources can also use legacy `special(...)` syntax: brace groups in a
+KFN `PSpecial` slot select a parenthesised `__special[N](...)` case by arity and
+type, while bare simple args in `#{...}` special slots select inline
+`special<N>(...)` encoding. Attached legacy `\p` controls remain accepted so
+old OCaml-origin source can be decompiled with Go and recompiled without manual
+pause spacing fixes.
 
 ### Kanon 1999 / Kanon 1999 18+ AVG32
 
@@ -138,7 +156,8 @@ Little Busters! 2007.
 
 - Interpreter: RealLive 1.3.9.5.
 - Corpus: 20 files
-- Status: user gameplay validation on 2026-06-03.
+- Status: user gameplay validation on 2026-06-03; R1/R2 GUI options freeze
+  fixed and user-validated on 2026-06-11.
 
 | Function/bytecode shape | Evidence | Status |
 | --- | --- | --- |
@@ -146,11 +165,18 @@ Little Busters! 2007.
 | Compact RealLive line markers | Non-`-g` Planetarian extraction emits `{- line N -}` for bytecode line markers. | recompiles byte-identical to validated `-g` corpus |
 | Compact kidoku line table markers | Non-`-g` extraction emits `{- kidoku N line L -}` so the original read-flag line table values survive recompilation. | table matched value-for-value |
 | `select_w` item separators | Planetarian route select blocks require the original logical line number on each item separator, not the physical `.org` line. | preserved by compact line comments |
+| Omitted nested argument slots | `SEEN9034` contains tuple shapes such as `InitExFrames((0, , -880, ...))`; the empty slot must remain an omitted slot, not literal `0`. | opcode redump matched |
+| Unquoted ASCII string parameters | GUI scripts contain calls such as `objOfFile(0, SIROS)` / `strcmp(strS[n], NONE)` where the bytecode requires a comma before an unquoted ASCII string after a previous argument. | GUI R1/R2 validated |
+| `CCOM_LOCAL_FLAG_EXCOPY(str, str)` | `SEEN9040` original bytecode uses opcode `0:004:02000,3` for the string-pair form, although the KFN internal prototype index is the third defined prototype. | GUI R1/R2 validated |
 
 Validated rule: RealLive roundtrips that hide full debug sources must still
 preserve bytecode line markers and kidoku line-table values when the source is
 used for recompilation. Compact line comments update the compiler's logical
 line while suppressing physical source-line injection.
+Planetarian also proves that empty tuple slots are bytecode separators, not
+zero literals; same-arity overloads must be type-checked before falling back to
+argument count; and unquoted ASCII string arguments need an explicit separator
+when they follow another argument.
 
 ### Kud Wafter 2010 18+
 
@@ -188,6 +214,14 @@ count before the outer special parameter is emitted.
 | `objOfFileGan` accepts overload id 2 for filename + GAN-name + visible/x/y. | RealLive KFN GAN functions | Kud Wafter 2010 18+ |
 | Consecutive KFN string parameters must remain distinct source arguments even when their encoded bytes are adjacent. | RealLive KFN string arguments | Kud Wafter 2010 18+ |
 | Variadic `special<N>` parameters may wrap nested `__special[M]` calls; each special group keeps its own encoded argument count. | RealLive special parameters | Kud Wafter 2010 18+ |
+| A `pause` immediately following static textout does not receive a fresh debug line marker. | RealLive debug-line bytecode | AIR 1.02 |
+| Legacy OCaml brace groups in KFN `special(...)` slots select parenthesised `__special[N](...)` by special-case arity/type, not ordinary tuple encoding. | RealLive special parameters | Tomoyo After 2010 R5 |
+| Legacy OCaml bare args in `special(0:#{intC}, 1:#{strC})+` slots select inline `special<N>(...)` encoding without parens. | RealLive inline special parameters | Tomoyo After 2010 R5 |
+| Legacy attached `\p` pause controls remain accepted and emit the pause opcode even when glued to following text. | RealLive text control bytecode | Tomoyo After / OCaml-source compatibility |
+| Empty tuple/parameter slots are preserved as omitted bytecode separators instead of being compiled as literal zero. | RealLive complex parameters | Planetarian 2006 |
+| Same-arity overloads with different argument types are selected by full parameter type when the source expression type is known. | RealLive overload selection | Planetarian 2006 |
+| `CCOM_LOCAL_FLAG_EXCOPY` string-pair form encodes as overload byte `3` for opcode `0:004:02000`. | RealLive system CCOM | Planetarian 2006 `SEEN9040` |
+| Unquoted ASCII string expressions following another argument require an argument separator; native non-ASCII string bytecode keeps historical adjacency. | RealLive argument serialization | Planetarian 2006 GUI scripts |
 
 ## To Expand
 

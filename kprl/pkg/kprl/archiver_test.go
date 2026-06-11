@@ -198,6 +198,47 @@ func TestAddPreservesTemplateTrailer(t *testing.T) {
 	}
 }
 
+func TestAddPreservesTemplateHeaderMetadata(t *testing.T) {
+	dir := t.TempDir()
+	template := filepath.Join(dir, "template.SEEN.TXT")
+	output := filepath.Join(dir, "rebuilt.SEEN.TXT")
+	input := filepath.Join(dir, "SEEN0001.TXT")
+	oldSeen := minimalRealLiveBytecode([]byte("old scenario"))
+	newSeen := minimalRealLiveBytecode([]byte("new scenario"))
+	binary.LittleEndian.PutUint32(oldSeen[0x2c:], 21)
+	binary.LittleEndian.PutUint32(oldSeen[0x30:], 24)
+
+	writeTestArchive(t, template, map[int][]byte{
+		1: oldSeen,
+	}, nil)
+	if err := os.WriteFile(input, newSeen, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Add(output, []string{input}, Options{TemplateArchive: template}); err != nil {
+		t.Fatal(err)
+	}
+
+	arc, err := LoadArchive(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := arc.Subfile(1)
+	if sub == nil {
+		t.Fatal("rebuilt archive is missing SEEN0001")
+	}
+	hdr, err := bytecode.ReadFileHeader(sub, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr.Int0x2C != 21 {
+		t.Fatalf("Int0x2C = %d, want 21", hdr.Int0x2C)
+	}
+	if got := sub.GetInt(0x30); got != 24 {
+		t.Fatalf("companion header field = %d, want 24", got)
+	}
+}
+
 func TestExtractUsesParsedCompressionFlag(t *testing.T) {
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "SEEN.TXT")

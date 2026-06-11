@@ -3,6 +3,68 @@
 This file tracks the RLdev2026 Go Edition beta history and the compatibility
 fixes validated during the project sessions.
 
+## v1.0.0 - 2026-06-11
+
+Release status:
+
+- Closed the Audit V1 compatibility pass that prepares the project to leave
+  beta. The tested table is green on the audited titles; the remaining manual
+  user-side check is the Little Busters entry still marked for final local
+  testing.
+- Added `docs/AUDIT_V1_RELEASE_REPORT.md` with the cross-session audit record:
+  fixes, validation evidence, and retest risk notes.
+
+RealLive compatibility fixes:
+
+- Fixed UTF-8/WESTERN extraction of speaker-name tags when a CP932 Japanese
+  name contains bytes that can be mistaken for Western accent prefixes.
+- Preserved accented speaker names in UTF-8/WESTERN roundtrips while still
+  keeping native Japanese speaker names readable.
+- Added compatibility for legacy OCaml `\p` pause controls glued to following
+  text, so old sources such as `phrase\pfin` recompile as a pause opcode
+  instead of displaying a Yen/backslash glyph.
+- Added `OmittedExpr` support so empty tuple slots such as
+  `InitExFrames((0, , -880, ...))` remain omitted bytecode separators instead
+  of becoming literal zeroes.
+- Fixed function argument serialization before unquoted ASCII string
+  parameters, covering Planetarian GUI calls such as `objOfFile(0, SIROS)` and
+  string comparisons against unquoted ASCII labels.
+- Improved same-arity overload selection by checking source argument types
+  before falling back to argument count.
+- Fixed Planetarian `CCOM_LOCAL_FLAG_EXCOPY(str, str)` to emit opcode
+  `0:004:02000,3`, matching the original `SEEN9040` bytecode.
+- Parsed KFN `special(...)` case definitions and used them to coerce legacy
+  OCaml brace/simple special parameters into the correct RealLive
+  `__special[N](...)` / `special<N>(...)` encodings.
+
+Resource and textout fixes:
+
+- Fixed Planetarian resource textout compilation for plain Japanese resources
+  and simple `\{name}body` speaker resources so the bytecode stays bare where
+  the original RealLive scripts are bare.
+- Kept `#res<>` string arguments quoted where RealLive expects string
+  arguments, including Japanese title/menu resource arguments.
+- Classified resource references as string literals for KFN type selection.
+
+Archive/rebuild fixes:
+
+- Preserved template SEEN header metadata such as `#val_0x2c` during archive
+  rebuilds, preventing known-good original metadata from being zeroed when the
+  compiled replacement file does not carry it.
+- Continued preserving RealLive archive trailers from the template archive.
+
+Validation:
+
+- Planetarian R1/R2 GUI options freeze fixed and user-validated.
+- Planetarian GUI/system scripts present in the original archive redump with
+  zero normalized opcode diffs after Go compile/re-extract, excluding the
+  translated main script where text differs by design.
+- Tomoyo After legacy OCaml-source compatibility improved for special params
+  and attached pause controls.
+- CLANNAD Steam R1/R2 and Dangopedia regressions were confirmed resolved during
+  the wider audit.
+- Full automated suite passed with `go test ./rlc/... ./kprl/...`.
+
 ## Beta 3.1 - 2026-06-04
 
 Support and workflow updates:

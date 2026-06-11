@@ -14,18 +14,42 @@ func TestLocString(t *testing.T) {
 }
 
 func TestOperatorStrings(t *testing.T) {
-	if OpAdd.String() != "+" { t.Error("OpAdd") }
-	if OpShl.String() != "<<" { t.Error("OpShl") }
-	if UnarySub.String() != "-" { t.Error("UnarySub") }
-	if UnaryNot.String() != "!" { t.Error("UnaryNot") }
-	if UnaryInv.String() != "~" { t.Error("UnaryInv") }
-	if AssignSet.String() != "=" { t.Error("AssignSet") }
-	if AssignAdd.String() != "+=" { t.Error("AssignAdd") }
-	if AssignShl.String() != "<<=" { t.Error("AssignShl") }
-	if CmpEqu.String() != "==" { t.Error("CmpEqu") }
-	if CmpLtn.String() != "<" { t.Error("CmpLtn") }
-	if ChainAnd.String() != "&&" { t.Error("ChainAnd") }
-	if ChainOr.String() != "||" { t.Error("ChainOr") }
+	if OpAdd.String() != "+" {
+		t.Error("OpAdd")
+	}
+	if OpShl.String() != "<<" {
+		t.Error("OpShl")
+	}
+	if UnarySub.String() != "-" {
+		t.Error("UnarySub")
+	}
+	if UnaryNot.String() != "!" {
+		t.Error("UnaryNot")
+	}
+	if UnaryInv.String() != "~" {
+		t.Error("UnaryInv")
+	}
+	if AssignSet.String() != "=" {
+		t.Error("AssignSet")
+	}
+	if AssignAdd.String() != "+=" {
+		t.Error("AssignAdd")
+	}
+	if AssignShl.String() != "<<=" {
+		t.Error("AssignShl")
+	}
+	if CmpEqu.String() != "==" {
+		t.Error("CmpEqu")
+	}
+	if CmpLtn.String() != "<" {
+		t.Error("CmpLtn")
+	}
+	if ChainAnd.String() != "&&" {
+		t.Error("ChainAnd")
+	}
+	if ChainOr.String() != "||" {
+		t.Error("ChainOr")
+	}
 }
 
 func TestExprInterface(t *testing.T) {
@@ -34,6 +58,7 @@ func TestExprInterface(t *testing.T) {
 	// Verify all expression types satisfy the Expr interface
 	exprs := []Expr{
 		IntLit{Loc: loc, Val: 42},
+		OmittedExpr{Loc: loc},
 		StrLit{Loc: loc},
 		ResRef{Loc: loc, Key: "key"},
 		StoreRef{Loc: loc},
@@ -101,9 +126,13 @@ func TestStmtInterface(t *testing.T) {
 	}
 	// SeqStmt and HidingStmt return Nowhere
 	seq := SeqStmt{}
-	if seq.StmtLoc() != Nowhere { t.Error("SeqStmt should return Nowhere") }
+	if seq.StmtLoc() != Nowhere {
+		t.Error("SeqStmt should return Nowhere")
+	}
 	hid := HidingStmt{Loc: loc}
-	if hid.StmtLoc() != Nowhere { t.Error("HidingStmt should return Nowhere") }
+	if hid.StmtLoc() != Nowhere {
+		t.Error("HidingStmt should return Nowhere")
+	}
 }
 
 func TestParamInterface(t *testing.T) {
@@ -143,28 +172,54 @@ func TestVariableName(t *testing.T) {
 }
 
 func TestIsConst(t *testing.T) {
-	if !IsConst(IntLit{Val: 42}) { t.Error("IntLit should be const") }
-	if !IsConst(StrLit{}) { t.Error("StrLit should be const") }
-	if !IsConst(ParenExpr{Expr: IntLit{Val: 1}}) { t.Error("ParenExpr(IntLit) should be const") }
-	if IsConst(VarOrFunc{Ident: "x"}) { t.Error("VarOrFunc should not be const") }
-	if IsConst(IntVar{Bank: 0, Index: IntLit{Val: 0}}) { t.Error("IntVar should not be const") }
+	if !IsConst(IntLit{Val: 42}) {
+		t.Error("IntLit should be const")
+	}
+	if !IsConst(StrLit{}) {
+		t.Error("StrLit should be const")
+	}
+	if !IsConst(ParenExpr{Expr: IntLit{Val: 1}}) {
+		t.Error("ParenExpr(IntLit) should be const")
+	}
+	if IsConst(VarOrFunc{Ident: "x"}) {
+		t.Error("VarOrFunc should not be const")
+	}
+	if IsConst(IntVar{Bank: 0, Index: IntLit{Val: 0}}) {
+		t.Error("IntVar should not be const")
+	}
 }
 
 func TestIsStore(t *testing.T) {
-	if !IsStore(StoreRef{}) { t.Error("StoreRef should be store") }
-	if IsStore(IntLit{Val: 0}) { t.Error("IntLit should not be store") }
+	if !IsStore(StoreRef{}) {
+		t.Error("StoreRef should be store")
+	}
+	if IsStore(IntLit{Val: 0}) {
+		t.Error("IntLit should not be store")
+	}
 }
 
 func TestTypeOf(t *testing.T) {
-	if TypeOf(IntLit{Val: 1}) != TypeInt { t.Error("IntLit → TypeInt") }
-	if TypeOf(StoreRef{}) != TypeInt { t.Error("StoreRef → TypeInt") }
-	if TypeOf(StrLit{}) != TypeLiteral { t.Error("StrLit → TypeLiteral") }
-	if TypeOf(StrVar{Bank: 0x12, Index: IntLit{Val: 0}}) != TypeStr { t.Error("StrVar → TypeStr") }
-	if TypeOf(VarOrFunc{Ident: "x"}) != TypeInvalid { t.Error("VarOrFunc → TypeInvalid") }
+	if TypeOf(IntLit{Val: 1}) != TypeInt {
+		t.Error("IntLit → TypeInt")
+	}
+	if TypeOf(StoreRef{}) != TypeInt {
+		t.Error("StoreRef → TypeInt")
+	}
+	if TypeOf(StrLit{}) != TypeLiteral {
+		t.Error("StrLit → TypeLiteral")
+	}
+	if TypeOf(StrVar{Bank: 0x12, Index: IntLit{Val: 0}}) != TypeStr {
+		t.Error("StrVar → TypeStr")
+	}
+	if TypeOf(VarOrFunc{Ident: "x"}) != TypeInvalid {
+		t.Error("VarOrFunc → TypeInvalid")
+	}
 	if TypeOf(BinOp{LHS: IntLit{Val: 1}, Op: OpAdd, RHS: IntLit{Val: 2}}) != TypeInt {
 		t.Error("BinOp(int) → TypeInt")
 	}
-	if TypeOf(ParenExpr{Expr: StrLit{}}) != TypeLiteral { t.Error("Parens(StrLit) → TypeLiteral") }
+	if TypeOf(ParenExpr{Expr: StrLit{}}) != TypeLiteral {
+		t.Error("Parens(StrLit) → TypeLiteral")
+	}
 }
 
 func TestStrTokenInterface(t *testing.T) {
@@ -196,8 +251,16 @@ func TestStrTokenInterface(t *testing.T) {
 }
 
 func TestDeclDirString(t *testing.T) {
-	if DeclDirString(DirZero) != "zero" { t.Error("DirZero") }
-	if DeclDirString(DirBlock) != "block" { t.Error("DirBlock") }
-	if DeclDirString(DirExt) != "ext" { t.Error("DirExt") }
-	if DeclDirString(DirLabel) != "labelled" { t.Error("DirLabel") }
+	if DeclDirString(DirZero) != "zero" {
+		t.Error("DirZero")
+	}
+	if DeclDirString(DirBlock) != "block" {
+		t.Error("DirBlock")
+	}
+	if DeclDirString(DirExt) != "ext" {
+		t.Error("DirExt")
+	}
+	if DeclDirString(DirLabel) != "labelled" {
+		t.Error("DirLabel")
+	}
 }

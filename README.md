@@ -1,4 +1,4 @@
-### Status update: `04/06/2026`
+### Status update: `11/06/2026`
 <table>
   <tr>
     <td align="center" width="100%">
@@ -6,6 +6,8 @@
     </td>
   </tr>
 </table>
+
+Update : 11/06/2026 : v1.0.0 closes the Audit V1 compatibility pass, fixes Planetarian GUI R1/R2, improves OCaml <-> Go source compatibility, and documents the release validation notes
 
 Update : 04/06/2026 : Beta 3.1 adds bonus workflows: GAN XML roundtrip, NWA audio export, DAT CGM/TCC JSON editing, and experimental Babel GUI support
 

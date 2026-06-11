@@ -995,6 +995,30 @@ func TestConvertTextSpeakerNameBypassesTransform(t *testing.T) {
 	}
 }
 
+func TestConvertTextSpeakerNameUsesWesternTransform(t *testing.T) {
+	w := NewWriter("", Options{Encoding: "UTF-8"})
+	got := w.convertText("\\{Homme \xc3g\xca}Salut", texttransforms.EncWestern)
+	if got != `\{Homme âgé}Salut` {
+		t.Fatalf("speaker name transform = %q", got)
+	}
+}
+
+func TestConvertTextNativeSpeakerNameWithWesternPrefixLead(t *testing.T) {
+	name := "河"
+	sjsName, err := encoding.UTF8ToSJS(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sjsName) == 0 || sjsName[0] != 0x89 {
+		t.Fatalf("test fixture must start with byte 0x89, got % x", sjsName)
+	}
+	w := NewWriter("", Options{Encoding: "UTF-8"})
+	got := w.convertText(`\{`+string(sjsName)+`}text`, texttransforms.EncWestern)
+	if got != `\{`+name+`}text` {
+		t.Fatalf("native speaker name transform = %q", got)
+	}
+}
+
 func TestConvertTextSpeakerNameWithBraceTrailByte(t *testing.T) {
 	name := "美佐枝"
 	sjsName, err := encoding.UTF8ToSJS(name)

@@ -570,6 +570,27 @@ func TestParseComplexParam(t *testing.T) {
 	}
 }
 
+func TestParseTupleComplexParamKeepsOmittedSlot(t *testing.T) {
+	sf := parse("InitExFrames ((0, , -880, 0, 14000))")
+	fc := sf.Stmts[0].(ast.FuncCallStmt)
+	if len(fc.Params) != 1 {
+		t.Fatalf("params: got %d", len(fc.Params))
+	}
+	cp, ok := fc.Params[0].(ast.ComplexParam)
+	if !ok {
+		t.Fatalf("param: got %T", fc.Params[0])
+	}
+	if len(cp.Exprs) != 5 {
+		t.Fatalf("complex exprs: got %d", len(cp.Exprs))
+	}
+	if _, ok := cp.Exprs[1].(ast.OmittedExpr); !ok {
+		t.Fatalf("empty tuple slot = %T, want ast.OmittedExpr", cp.Exprs[1])
+	}
+	if neg, ok := cp.Exprs[2].(ast.UnaryExpr); !ok || neg.Op != ast.UnarySub {
+		t.Fatalf("third tuple slot = %T, want unary subtraction", cp.Exprs[2])
+	}
+}
+
 func TestParseRaw(t *testing.T) {
 	sf := parse("raw #ff 0 endraw")
 	rs, ok := sf.Stmts[0].(ast.RawCodeStmt)

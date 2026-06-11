@@ -497,6 +497,43 @@ func TestConditionalParamSetOnlyConditionTags(t *testing.T) {
 	}
 }
 
+func TestUnquotedStringParamAfterIntegerGetsComma(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "objOfFile",
+		OpType:   1,
+		OpModule: 71,
+		OpCode:   1000,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+			Params: []kfn.Parameter{
+				{Type: kfn.PIntC},
+				{Type: kfn.PStrC},
+			},
+		}},
+	})
+	loc := ast.Loc{File: "t", Line: 1}
+	c.Parse([]ast.Stmt{ast.FuncCallStmt{
+		Loc:   loc,
+		Ident: "objOfFile",
+		Params: []ast.Param{
+			ast.SimpleParam{Loc: loc, Expr: ast.IntLit{Loc: loc, Val: 0}},
+			ast.SimpleParam{Loc: loc, Expr: ast.StrLit{Loc: loc, Tokens: []ast.StrToken{
+				ast.TextToken{Loc: loc, Text: "SIROS"},
+			}}},
+		},
+	}})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	want := append([]byte{'('}, codegen.EncodeInt32(0)...)
+	want = append(want, ',')
+	want = append(want, []byte("SIROS)")...)
+	if !bytes.Contains(compilerOutputBytes(c), want) {
+		t.Fatalf("compiled call missing comma before unquoted string; want sequence % x in % x", want, compilerOutputBytes(c))
+	}
+}
+
 func TestExplicitReturnParamChoosesFullOverload(t *testing.T) {
 	c := newComp()
 	registerItoa(c)
@@ -659,6 +696,75 @@ func TestStrsubFourArgUsesLongOverload(t *testing.T) {
 	}
 }
 
+func TestSameArityOverloadUsesStringTypes(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "TypedPair",
+		OpType:   0,
+		OpModule: 4,
+		OpCode:   1999,
+		Prototypes: []kfn.Prototype{
+			{Defined: true, Params: []kfn.Parameter{{Type: kfn.PIntC}}},
+			{Defined: true, Params: []kfn.Parameter{{Type: kfn.PIntC}, {Type: kfn.PIntC}}},
+			{Defined: true, Params: []kfn.Parameter{{Type: kfn.PStr}, {Type: kfn.PStr}}},
+		},
+	})
+	loc := ast.Loc{File: "t", Line: 1}
+	c.ParseElt(ast.FuncCallStmt{
+		Loc:   loc,
+		Ident: "TypedPair",
+		Params: []ast.Param{
+			ast.SimpleParam{Loc: loc, Expr: ast.StrVar{Loc: loc, Bank: 10, Index: ast.IntLit{Loc: loc, Val: 1011}}},
+			ast.SimpleParam{Loc: loc, Expr: ast.StrVar{Loc: loc, Bank: 10, Index: ast.IntLit{Loc: loc, Val: 1012}}},
+		},
+	})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	if findCodeIR(c, codegen.EncodeOpcode(0, 4, 1999, 2, 2)) < 0 {
+		t.Fatal("same-arity string overload should use the string prototype")
+	}
+	if findCodeIR(c, codegen.EncodeOpcode(0, 4, 1999, 2, 1)) >= 0 {
+		t.Fatal("same-arity string overload used the integer prototype")
+	}
+}
+
+func TestPlanetarianLocalFlagExcopyStringUsesOverload3(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "CCOM_LOCAL_FLAG_EXCOPY",
+		OpType:   0,
+		OpModule: 4,
+		OpCode:   2000,
+		Prototypes: []kfn.Prototype{
+			{Defined: true, Params: []kfn.Parameter{{Type: kfn.PInt}}},
+			{Defined: true, Params: []kfn.Parameter{{Type: kfn.PInt}, {Type: kfn.PInt}}},
+			{Defined: true, Params: []kfn.Parameter{{Type: kfn.PStr}, {Type: kfn.PStr}}},
+		},
+	})
+	loc := ast.Loc{File: "t", Line: 1}
+	c.ParseElt(ast.FuncCallStmt{
+		Loc:   loc,
+		Ident: "CCOM_LOCAL_FLAG_EXCOPY",
+		Params: []ast.Param{
+			ast.SimpleParam{Loc: loc, Expr: ast.StrVar{Loc: loc, Bank: 10, Index: ast.IntLit{Loc: loc, Val: 1011}}},
+			ast.SimpleParam{Loc: loc, Expr: ast.StrVar{Loc: loc, Bank: 10, Index: ast.IntLit{Loc: loc, Val: 1011}}},
+		},
+	})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	if findCodeIR(c, codegen.EncodeOpcode(0, 4, 2000, 2, 3)) < 0 {
+		t.Fatal("Planetarian CCOM_LOCAL_FLAG_EXCOPY(str,str) should emit overload 3")
+	}
+	if findCodeIR(c, codegen.EncodeOpcode(0, 4, 2000, 2, 1)) >= 0 {
+		t.Fatal("Planetarian CCOM_LOCAL_FLAG_EXCOPY(str,str) used the integer-pair overload")
+	}
+	if findCodeIR(c, codegen.EncodeOpcode(0, 4, 2000, 2, 2)) >= 0 {
+		t.Fatal("Planetarian CCOM_LOCAL_FLAG_EXCOPY(str,str) used the internal prototype index as the bytecode overload")
+	}
+}
+
 func registerSetLocalNameForTest(c *Compiler) {
 	c.Reg.Register(&kfn.FuncDef{
 		Ident:    "SetLocalName",
@@ -743,7 +849,7 @@ func TestFunctionCallDoesNotSeparateQuotedStringParam(t *testing.T) {
 	}
 }
 
-func TestFunctionCallDoesNotSeparateStringVarThenUnquotedStringParam(t *testing.T) {
+func TestFunctionCallSeparatesStringVarThenASCIIStringParam(t *testing.T) {
 	c := newComp()
 	c.Reg.Register(&kfn.FuncDef{
 		Ident:    "CompareForTest",
@@ -775,17 +881,17 @@ func TestFunctionCallDoesNotSeparateStringVarThenUnquotedStringParam(t *testing.
 	strVar := append([]byte{'$', 11, '['}, codegen.EncodeInt32(1)...)
 	strVar = append(strVar, ']')
 	wantArgs := append([]byte{'('}, strVar...)
-	wantArgs = append(wantArgs, 'A', ')')
+	wantArgs = append(wantArgs, ',', 'A', ')')
 	want := append(codegen.EncodeOpcode(1, 10, 4, 2, 0), wantArgs...)
 	got := compilerOutputBytes(c)
 	if !bytes.Contains(got, want) {
-		t.Fatalf("string-var + unquoted string args changed:\n got  % x\n want % x", got, want)
+		t.Fatalf("string-var + ASCII string args changed:\n got  % x\n want % x", got, want)
 	}
 	forbiddenArgs := append([]byte{'('}, strVar...)
-	forbiddenArgs = append(forbiddenArgs, ',', 'A', ')')
+	forbiddenArgs = append(forbiddenArgs, 'A', ')')
 	forbidden := append(codegen.EncodeOpcode(1, 10, 4, 2, 0), forbiddenArgs...)
 	if bytes.Contains(got, forbidden) {
-		t.Fatalf("string-var + unquoted string args should not have separator:\n got       % x\n forbidden % x", got, forbidden)
+		t.Fatalf("string-var + ASCII string args should have separator:\n got       % x\n forbidden % x", got, forbidden)
 	}
 }
 
@@ -827,6 +933,61 @@ func TestFunctionCallSeparatesIntThenUnaryParam(t *testing.T) {
 	got := compilerOutputBytes(c)
 	if !bytes.Contains(got, want) {
 		t.Fatalf("int + unary args missing separator:\n got  % x\n want % x", got, want)
+	}
+}
+
+func TestComplexParamPreservesOmittedSlotBeforeNegativeLiteral(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "InitExFramesForTest",
+		OpType:   1,
+		OpModule: 4,
+		OpCode:   620,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+			Params:  []kfn.Parameter{{Type: kfn.PComplex}},
+		}},
+	})
+	loc := ast.Loc{File: "t", Line: 1}
+	c.Parse([]ast.Stmt{ast.FuncCallStmt{
+		Loc:   loc,
+		Ident: "InitExFramesForTest",
+		Params: []ast.Param{
+			ast.ComplexParam{Loc: loc, Exprs: []ast.Expr{
+				ast.IntLit{Loc: loc, Val: 0},
+				ast.OmittedExpr{Loc: loc},
+				ast.UnaryExpr{Loc: loc, Op: ast.UnarySub, Val: ast.IntLit{Loc: loc, Val: 880}},
+				ast.IntLit{Loc: loc, Val: 0},
+				ast.IntLit{Loc: loc, Val: 14000},
+			}},
+		},
+	}})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+
+	wantArgs := []byte{'(', '('}
+	wantArgs = append(wantArgs, codegen.EncodeInt32(0)...)
+	wantArgs = append(wantArgs, ',', '\\', codegen.OpCode(ast.OpSub))
+	wantArgs = append(wantArgs, codegen.EncodeInt32(880)...)
+	wantArgs = append(wantArgs, codegen.EncodeInt32(0)...)
+	wantArgs = append(wantArgs, codegen.EncodeInt32(14000)...)
+	wantArgs = append(wantArgs, ')', ')')
+	want := append(codegen.EncodeOpcode(1, 4, 620, 1, 0), wantArgs...)
+	got := compilerOutputBytes(c)
+	if !bytes.Contains(got, want) {
+		t.Fatalf("omitted tuple slot was not preserved:\n got  % x\n want % x", got, want)
+	}
+
+	forbiddenArgs := []byte{'(', '('}
+	forbiddenArgs = append(forbiddenArgs, codegen.EncodeInt32(0)...)
+	forbiddenArgs = append(forbiddenArgs, codegen.EncodeInt32(0)...)
+	forbiddenArgs = append(forbiddenArgs, codegen.EncodeInt32(-880)...)
+	forbiddenArgs = append(forbiddenArgs, codegen.EncodeInt32(0)...)
+	forbiddenArgs = append(forbiddenArgs, codegen.EncodeInt32(14000)...)
+	forbiddenArgs = append(forbiddenArgs, ')', ')')
+	if bytes.Contains(got, forbiddenArgs) {
+		t.Fatalf("omitted tuple slot was compiled as literal zero:\n got       % x\n forbidden % x", got, forbiddenArgs)
 	}
 }
 
@@ -1313,6 +1474,67 @@ func TestCompileResTextRawByteEscapes(t *testing.T) {
 	}
 }
 
+func TestTextStubPlainJapaneseResourceTextoutIsBare(t *testing.T) {
+	c := newComp()
+	c.Out.SuppressAutoKidoku = true
+	c.Out.ResolveRes = func(key string) (string, bool) {
+		if key == "0000" {
+			return "俺は息を詰め、引き金を絞った。", true
+		}
+		return "", false
+	}
+	loc := ast.Loc{File: "t", Line: 1}
+	c.ParseElt(ast.ReturnStmt{Loc: loc, Expr: ast.ResRef{Loc: loc, Key: "0000"}})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	want, err := encoding.UTF8ToSJS("俺は息を詰め、引き金を絞った。")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := compilerOutputBytes(c)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("plain Japanese textout resource should be bare:\n got  % x\n want % x", got, want)
+	}
+	if len(got) > 0 && got[0] == '"' {
+		t.Fatalf("plain Japanese textout resource started with quote: % x", got)
+	}
+}
+
+func TestTextStubSpeakerResourceTextoutIsBare(t *testing.T) {
+	c := newComp()
+	c.Out.SuppressAutoKidoku = true
+	c.Out.ResolveRes = func(key string) (string, bool) {
+		if key == "0000" {
+			return `\{ゆめみ}「ようこそ、プラネタリウムへ。」`, true
+		}
+		return "", false
+	}
+	loc := ast.Loc{File: "t", Line: 1}
+	c.ParseElt(ast.ReturnStmt{Loc: loc, Expr: ast.ResRef{Loc: loc, Key: "0000"}})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	name, err := encoding.UTF8ToSJS("ゆめみ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := encoding.UTF8ToSJS("「ようこそ、プラネタリウムへ。」")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append([]byte{0x81, 0x79}, name...)
+	want = append(want, 0x81, 0x7A)
+	want = append(want, body...)
+	got := compilerOutputBytes(c)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("speaker resource textout should be bare:\n got  % x\n want % x", got, want)
+	}
+	if bytes.Contains(got, []byte{'"'}) {
+		t.Fatalf("speaker resource textout contained a quote byte: % x", got)
+	}
+}
+
 func TestTextStubResourceRawByteEscapesSkipEmptyQuoteRun(t *testing.T) {
 	c := newComp()
 	c.Out.SuppressAutoKidoku = true
@@ -1435,6 +1657,38 @@ func TestCompileResTextKeepsSpacesAfterParamlessControl(t *testing.T) {
 	}
 	if !bytes.Contains(got, []byte("  after")) {
 		t.Fatalf("spaces after paramless control were not preserved: % x", got)
+	}
+}
+
+func TestCompileResTextAcceptsLegacyAttachedPause(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "spause",
+		CCStr:    "p",
+		OpType:   0,
+		OpModule: 0,
+		OpCode:   205,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+		}},
+	})
+
+	tc := &textCompiler{c: c, loc: ast.Loc{File: "t", Line: 1}}
+	tc.compileResText(`avant\papres`)
+	tc.flush()
+
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	if !bytes.Contains(got, []byte("avant")) || !bytes.Contains(got, []byte("apres")) {
+		t.Fatalf("attached pause changed surrounding text: % x", got)
+	}
+	if !bytes.Contains(got, codegen.EncodeOpcode(0, 0, 205, 0, 0)) {
+		t.Fatalf("pause opcode was not emitted: % x", got)
+	}
+	if bytes.Contains(got, []byte{'\\'}) {
+		t.Fatalf("legacy attached pause left a literal backslash: % x", got)
 	}
 }
 
@@ -1597,7 +1851,14 @@ func registerFarcallWith(c *Compiler) {
 			Params: []kfn.Parameter{
 				{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FUncount, kfn.FTagged}, Tag: "scenario"},
 				{Type: kfn.PIntC, Flags: []kfn.ParamFlag{kfn.FUncount, kfn.FTagged}, Tag: "entrypoint"},
-				{Type: kfn.PSpecial, Flags: []kfn.ParamFlag{kfn.FArgc}},
+				{
+					Type:  kfn.PSpecial,
+					Flags: []kfn.ParamFlag{kfn.FArgc},
+					Specials: []kfn.SpecialDef{
+						{ID: 0, Params: []kfn.Parameter{{Type: kfn.PIntC}}, Flags: []kfn.SpecialFlag{kfn.SFNoParens}},
+						{ID: 1, Params: []kfn.Parameter{{Type: kfn.PStrC}}, Flags: []kfn.SpecialFlag{kfn.SFNoParens}},
+					},
+				},
 			},
 		}},
 	})
@@ -1634,6 +1895,40 @@ func TestAngleSpecialParamEmitsInlineNoParens(t *testing.T) {
 	}
 	if bytes.Contains(got, []byte{0x61, 0x00, '('}) {
 		t.Fatalf("inline special was emitted as parenthesised __special form: % x", got)
+	}
+}
+
+func TestLegacyInlineSpecialParamCoercesSimpleArgs(t *testing.T) {
+	c := newComp()
+	registerFarcallWith(c)
+	c.ParseElt(ast.FuncCallStmt{
+		Loc:   ast.Loc{Line: 1},
+		Ident: "farcall_with",
+		Params: []ast.Param{
+			ast.SimpleParam{Expr: ast.IntLit{Val: 9600}},
+			ast.SimpleParam{Expr: ast.IntLit{Val: 0}},
+			ast.SimpleParam{Expr: ast.IntLit{Val: 41400000}},
+			ast.SimpleParam{Expr: ast.IntLit{Val: 0}},
+		},
+	})
+	if c.HasErrors() {
+		t.Fatalf("errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	want := []byte{
+		0x23, 0x00, 0x01, 0x12, 0x00, 0x02, 0x00, 0x00,
+		'(',
+		0x24, 0xff, 0x80, 0x25, 0x00, 0x00,
+		0x24, 0xff, 0x00, 0x00, 0x00, 0x00,
+		0x61, 0x00, 0x24, 0xff, 0xc0, 0xb6, 0x77, 0x02,
+		0x61, 0x00, 0x24, 0xff, 0x00, 0x00, 0x00, 0x00,
+		')',
+	}
+	if !bytes.Contains(got, want) {
+		t.Fatalf("legacy simple args should become inline specials:\n got  % x\n want % x", got, want)
+	}
+	if bytes.Contains(got, []byte{0x61, 0x00, '('}) {
+		t.Fatalf("legacy inline special was emitted with parens: % x", got)
 	}
 }
 
@@ -1774,6 +2069,101 @@ func TestBracketSpecialParamSeparatesNegativeArg(t *testing.T) {
 	want := append([]byte{0x24, 0xff, 0x10, 0x27, 0x00, 0x00}, codegen.EncodeInt32(-800)...)
 	if !bytes.Contains(got, want) {
 		t.Fatalf("negative special arg should be direct int literal:\n got  % x\n want % x", got, want)
+	}
+}
+
+func TestLegacyBraceSpecialParamCoercesByKFNArity(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "index_series",
+		Flags:    []kfn.FuncFlag{kfn.FlagPushStore},
+		OpType:   1,
+		OpModule: 0,
+		OpCode:   800,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+			Params: []kfn.Parameter{
+				{Type: kfn.PIntC},
+				{Type: kfn.PIntC},
+				{Type: kfn.PIntC},
+				{
+					Type:  kfn.PSpecial,
+					Flags: []kfn.ParamFlag{kfn.FArgc},
+					Specials: []kfn.SpecialDef{
+						{ID: 0, Params: []kfn.Parameter{{Type: kfn.PIntC}}},
+						{ID: 1, Params: []kfn.Parameter{{Type: kfn.PIntC}, {Type: kfn.PIntC}, {Type: kfn.PIntC}}},
+						{ID: 2, Params: []kfn.Parameter{{Type: kfn.PIntC}, {Type: kfn.PIntC}, {Type: kfn.PIntC}, {Type: kfn.PIntC}}},
+					},
+				},
+			},
+		}},
+	})
+	c.ParseElt(ast.FuncCallStmt{
+		Loc:   ast.Loc{Line: 1},
+		Ident: "index_series",
+		Dest:  ast.IntVar{Bank: 2, Index: ast.IntLit{Val: 0}},
+		Params: []ast.Param{
+			ast.SimpleParam{Expr: ast.IntVar{Bank: 2, Index: ast.IntLit{Val: 1}}},
+			ast.SimpleParam{Expr: ast.IntLit{Val: 0}},
+			ast.SimpleParam{Expr: ast.IntLit{Val: 255}},
+			ast.ComplexParam{Exprs: []ast.Expr{
+				ast.IntLit{Val: 0},
+				ast.IntLit{Val: 10000},
+				ast.IntLit{Val: 0},
+				ast.IntLit{Val: 0},
+			}},
+		},
+	})
+	if c.HasErrors() {
+		t.Fatalf("errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	if !bytes.Contains(got, []byte{0x61, 0x02, '('}) {
+		t.Fatalf("legacy brace special should emit tag 2, not a tuple:\n got % x", got)
+	}
+}
+
+func TestLegacyBraceSpecialParamChoosesTypedKFNCase(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "GetSaveFlag",
+		Flags:    []kfn.FuncFlag{kfn.FlagPushStore},
+		OpType:   1,
+		OpModule: 0,
+		OpCode:   1414,
+		Prototypes: []kfn.Prototype{{
+			Defined: true,
+			Params: []kfn.Parameter{
+				{Type: kfn.PIntC},
+				{
+					Type:  kfn.PSpecial,
+					Flags: []kfn.ParamFlag{kfn.FArgc},
+					Specials: []kfn.SpecialDef{
+						{ID: 0, Params: []kfn.Parameter{{Type: kfn.PInt}, {Type: kfn.PInt}, {Type: kfn.PIntC}}},
+						{ID: 1, Params: []kfn.Parameter{{Type: kfn.PStr}, {Type: kfn.PStr}, {Type: kfn.PIntC}}},
+					},
+				},
+			},
+		}},
+	})
+	c.ParseElt(ast.FuncCallStmt{
+		Loc:   ast.Loc{Line: 1},
+		Ident: "GetSaveFlag",
+		Params: []ast.Param{
+			ast.SimpleParam{Expr: ast.IntLit{Val: 30}},
+			ast.ComplexParam{Exprs: []ast.Expr{
+				ast.IntVar{Bank: 5, Index: ast.IntLit{Val: 0}},
+				ast.IntVar{Bank: 2, Index: ast.IntLit{Val: 10}},
+				ast.IntLit{Val: 1},
+			}},
+		},
+	})
+	if c.HasErrors() {
+		t.Fatalf("errors: %v", c.Errors)
+	}
+	got := compilerOutputBytes(c)
+	if !bytes.Contains(got, []byte{0x61, 0x00, '('}) {
+		t.Fatalf("legacy typed brace special should emit int tag 0:\n got % x", got)
 	}
 }
 

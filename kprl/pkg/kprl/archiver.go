@@ -637,7 +637,7 @@ func rebuildArc(arc *binarray.Buffer, arcName string, sources map[int]interface{
 			}
 		case string:
 			// Read and compress file
-			fileData, err := readAndCompress(s, opts)
+			fileData, err := readAndCompress(s, idx, opts, templateSubfile(arc, idx))
 			if err != nil {
 				fmt.Printf("Warning: %v\n", err)
 				continue
@@ -732,8 +732,19 @@ func archiveTrailingData(arc *binarray.Buffer) []byte {
 	return arc.Data[end:]
 }
 
+func templateSubfile(arc *binarray.Buffer, idx int) *binarray.Buffer {
+	if arc == nil || idx < 0 || idx >= MaxSeens || arc.Len() < IndexSize {
+		return nil
+	}
+	entry := getSubfileInfo(arc, idx)
+	if entry.Length <= 0 || entry.Offset < 0 || entry.Offset+entry.Length > arc.Len() {
+		return nil
+	}
+	return arc.Sub(entry.Offset, entry.Length)
+}
+
 // readAndCompress reads a bytecode file and compresses it if needed.
-func readAndCompress(fname string, opts Options) ([]byte, error) {
+func readAndCompress(fname string, idx int, opts Options, template *binarray.Buffer) ([]byte, error) {
 	arr, err := binarray.ReadFile(fname)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read '%s': %w", fname, err)
@@ -742,6 +753,8 @@ func readAndCompress(fname string, opts Options) ([]byte, error) {
 	if !bytecode.IsBytecode(arr, 0) {
 		return nil, fmt.Errorf("unable to add '%s': not a bytecode file", fname)
 	}
+
+	preserveTemplateHeaderMetadata(arr, template, idx, opts)
 
 	// If already compressed, use as-is
 	if arr.Len() >= 4 && !bytecode.UncompressedHeader(arr.Read(0, 4)) {
@@ -754,6 +767,36 @@ func readAndCompress(fname string, opts Options) ([]byte, error) {
 		return nil, fmt.Errorf("failed to compress '%s': %w", fname, err)
 	}
 	return compressed.Data, nil
+}
+
+func preserveTemplateHeaderMetadata(arr, template *binarray.Buffer, idx int, opts Options) {
+	if template == nil {
+		return
+	}
+
+	dstHdr, err := bytecode.ReadFileHeader(arr, false)
+	if err != nil || dstHdr.Int0x2C != 0 {
+		return
+	}
+	srcHdr, err := bytecode.ReadFileHeader(template, true)
+	if err != nil || srcHdr.Int0x2C == 0 || srcHdr.HeaderVersion != dstHdr.HeaderVersion {
+		return
+	}
+
+	switch dstHdr.HeaderVersion {
+	case bytecode.HeaderV1:
+		arr.PutInt(0x28, int32(srcHdr.Int0x2C))
+		arr.PutInt(0x2c, int32(srcHdr.Int0x2C+5))
+	case bytecode.HeaderV2:
+		arr.PutInt(0x2c, int32(srcHdr.Int0x2C))
+		arr.PutInt(0x30, int32(srcHdr.Int0x2C+3))
+	default:
+		return
+	}
+
+	if opts.Verbose > 0 {
+		fmt.Printf("Preserving SEEN%04d header val_0x2c=%d from template\n", idx, srcHdr.Int0x2C)
+	}
 }
 
 // writeEmptyArc writes an empty archive (all zero index + empty marker).

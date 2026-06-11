@@ -546,6 +546,8 @@ func ClassifyExpr(e ast.Expr) ExprType {
 		return ETInt
 	case ast.StrLit:
 		return ETLiteral
+	case ast.ResRef:
+		return ETLiteral
 	case ast.StrVar:
 		return ETStr
 	case ast.BinOp:

@@ -89,6 +89,35 @@ fun __shkud ShakeScreen <1:012:01100, 0> (='DOWNUP', 'amount')
 	}
 }
 
+func TestParseSpecialDefinitions(t *testing.T) {
+	src := `
+module 000 = Sys
+fun index_series (store) <1:Sys:00800, 0> (<'index', <'offset', <'init', special(0:{'val'}, 1:{'start', 'end', 'endval'}, 2:{'start', 'end', 'endval', 'mode'})+)
+fun gosub_with (store goto) <0:Sys:00016, 0> (special(0:#{intC}, 1:#{strC})+)
+`
+	reg, err := Parse(strings.NewReader(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, ok := reg.Lookup("index_series")
+	if !ok {
+		t.Fatal("index_series not registered")
+	}
+	if got := idx.Prototypes[0].Params[3].Specials; len(got) != 3 {
+		t.Fatalf("index_series specials = %#v, want 3 cases", got)
+	} else if got[2].ID != 2 || len(got[2].Params) != 4 || got[2].Params[3].Tag != "mode" {
+		t.Fatalf("bad index_series tag 2 special: %#v", got[2])
+	}
+	gosub, ok := reg.Lookup("gosub_with")
+	if !ok {
+		t.Fatal("gosub_with not registered")
+	}
+	got := gosub.Prototypes[0].Params[0].Specials
+	if len(got) != 2 || !got[0].HasFlag(SFNoParens) || got[0].Params[0].Type != PIntC {
+		t.Fatalf("inline gosub specials not parsed: %#v", got)
+	}
+}
+
 func TestParseFuncFlags(t *testing.T) {
 	reg := parseTestKFN(t)
 	fn, ok := reg.Lookup("goto_if")

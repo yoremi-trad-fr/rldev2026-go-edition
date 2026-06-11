@@ -191,7 +191,7 @@ func decodeMixedBytecodeText(s string, transform texttransforms.EncMode) (string
 			out.WriteString(decoded)
 			break
 		}
-		name, err := decodeBytecodeText([]byte(s[:end]), texttransforms.EncNone)
+		name, err := decodeSpeakerNameText([]byte(s[:end]), transform)
 		if err != nil {
 			return "", err
 		}
@@ -200,6 +200,50 @@ func decodeMixedBytecodeText(s string, transform texttransforms.EncMode) (string
 		s = s[end+1:]
 	}
 	return out.String(), nil
+}
+
+func decodeSpeakerNameText(data []byte, transform texttransforms.EncMode) (string, error) {
+	native, nativeErr := decodeBytecodeText(data, texttransforms.EncNone)
+	if transform == texttransforms.EncNone {
+		return native, nativeErr
+	}
+
+	transformed, transformedErr := decodeBytecodeText(data, transform)
+	if transformedErr != nil {
+		if nativeErr == nil {
+			return native, nil
+		}
+		return "", transformedErr
+	}
+	if nativeErr != nil {
+		return transformed, nil
+	}
+	if preferNativeSpeakerName(native, transformed) {
+		return native, nil
+	}
+	return transformed, nil
+}
+
+func preferNativeSpeakerName(native, transformed string) bool {
+	if native == transformed {
+		return true
+	}
+	// WESTERN reserves 0x89 as an accent prefix. A native CP932 name that
+	// happens to contain a 0x89 lead byte can otherwise turn into Latin
+	// accent noise, so keep the native decode when it clearly produced
+	// Japanese text and the transformed decode did not.
+	return containsJapaneseScript(native) && !containsJapaneseScript(transformed)
+}
+
+func containsJapaneseScript(s string) bool {
+	for _, r := range s {
+		if (r >= 0x3040 && r <= 0x309f) || // Hiragana
+			(r >= 0x30a0 && r <= 0x30ff) || // Katakana
+			(r >= 0x3400 && r <= 0x9fff) { // CJK
+			return true
+		}
+	}
+	return false
 }
 
 func findSpeakerCloseByte(s string) int {

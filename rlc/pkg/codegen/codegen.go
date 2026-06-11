@@ -337,6 +337,9 @@ func (o *Output) EmitExprRaw(e ast.Expr) {
 	switch x := e.(type) {
 	case ast.IntLit:
 		o.AddCodeRaw(x.Loc, EncodeInt32(x.Val))
+	case ast.OmittedExpr:
+		// Empty argument slots are represented by separators in the
+		// surrounding parameter list; the slot itself emits no bytes.
 	case ast.StoreRef:
 		o.AddCodeRaw(x.Loc, []byte{'$', 0xc8})
 	case ast.IntVar:
@@ -541,6 +544,8 @@ func exprLoc(e ast.Expr) ast.Loc {
 	switch x := e.(type) {
 	case ast.IntLit:
 		return x.Loc
+	case ast.OmittedExpr:
+		return x.Loc
 	case ast.StoreRef:
 		return x.Loc
 	case ast.IntVar:
@@ -604,6 +609,18 @@ func exprLoc(e ast.Expr) ast.Loc {
 //	"  (DQuote)    → '"' raw
 //	text           → plain SJIS
 func (o *Output) encodeResourceText(loc ast.Loc, text string) ([]byte, error) {
+	if isPlainNonASCIIResourceText(text) {
+		b, err := o.encodeText(loc, text)
+		if err != nil {
+			return nil, err
+		}
+		quoted := make([]byte, 0, len(b)+2)
+		quoted = append(quoted, '"')
+		quoted = append(quoted, b...)
+		quoted = append(quoted, '"')
+		return quoted, nil
+	}
+
 	tokens, err := lexResourceText(text)
 	if err != nil {
 		return nil, err
@@ -696,6 +713,18 @@ func (o *Output) encodeResourceText(loc ast.Loc, text string) ([]byte, error) {
 		return []byte{'"', '"'}, nil
 	}
 	return buf, nil
+}
+
+func isPlainNonASCIIResourceText(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r <= 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func encodeNativeCP932(loc ast.Loc, s string) ([]byte, error) {
@@ -1095,7 +1124,7 @@ func (o *Output) EncodeStringExpr(e ast.Expr) ([]byte, bool) {
 // integer-like argument.
 func (o *Output) StringExprNeedsSeparator(e ast.Expr) bool {
 	b, ok := o.EncodeStringExpr(e)
-	return ok && len(b) > 0 && b[0] != '"'
+	return ok && len(b) > 0 && b[0] != '"' && b[0] < 0x80
 }
 
 func hasUnsafeUnquotedByte(b []byte) bool {

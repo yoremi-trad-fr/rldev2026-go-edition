@@ -65,9 +65,10 @@ const (
 
 // Parameter is one parameter in a function prototype.
 type Parameter struct {
-	Type  ParamType
-	Flags []ParamFlag
-	Tag   string // for FTagged
+	Type     ParamType
+	Flags    []ParamFlag
+	Tag      string       // for FTagged
+	Specials []SpecialDef // cases for PSpecial
 }
 
 // HasFlag reports whether the parameter carries the given flag.
@@ -112,6 +113,16 @@ type SpecialDef struct {
 	Name   string      // for named specials
 	Params []Parameter // parameters inside the special
 	Flags  []SpecialFlag
+}
+
+// HasFlag reports whether the special definition carries the given flag.
+func (s SpecialDef) HasFlag(f SpecialFlag) bool {
+	for _, x := range s.Flags {
+		if x == f {
+			return true
+		}
+	}
+	return false
 }
 
 // Prototype is one overload of a function (nil = undefined for this overload).
@@ -810,13 +821,14 @@ func (p *kfnParser) parseParameter() Parameter {
 
 	// typedef or tagged string
 	var pt ParamType
+	var specials []SpecialDef
 	if p.cur.typ == kSTRING {
 		tag = p.cur.str
 		p.advance()
 		pt = PIntC
 		flags = append(flags, FTagged)
 	} else {
-		pt = p.parseTypeDef()
+		pt, specials = p.parseTypeDef()
 	}
 
 	// postparm: +, 'tag'
@@ -834,50 +846,34 @@ func (p *kfnParser) parseParameter() Parameter {
 		break
 	}
 
-	return Parameter{Type: pt, Flags: flags, Tag: tag}
+	return Parameter{Type: pt, Flags: flags, Tag: tag, Specials: specials}
 }
 
-func (p *kfnParser) parseTypeDef() ParamType {
+func (p *kfnParser) parseTypeDef() (ParamType, []SpecialDef) {
 	switch p.cur.typ {
 	case kINT:
 		p.advance()
-		return PInt
+		return PInt, nil
 	case kINTC:
 		p.advance()
-		return PIntC
+		return PIntC, nil
 	case kINTV:
 		p.advance()
-		return PIntV
+		return PIntV, nil
 	case kSTR:
 		p.advance()
-		return PStr
+		return PStr, nil
 	case kSTRC:
 		p.advance()
-		return PStrC
+		return PStrC, nil
 	case kSTRV:
 		p.advance()
-		return PStrV
+		return PStrV, nil
 	case kRES:
 		p.advance()
-		return PResStr
+		return PResStr, nil
 	case kSPECIAL:
-		p.advance()
-		p.expect(kLp)
-		// skip special definition details for now
-		depth := 1
-		for depth > 0 && p.cur.typ != kEOF {
-			if p.cur.typ == kLp {
-				depth++
-			}
-			if p.cur.typ == kRp {
-				depth--
-			}
-			if depth > 0 {
-				p.advance()
-			}
-		}
-		p.expect(kRp)
-		return PSpecial
+		return PSpecial, p.parseSpecialDefs()
 	case kLp:
 		p.advance()
 		// complex: (typedef, typedef, ...)
@@ -894,11 +890,84 @@ func (p *kfnParser) parseTypeDef() ParamType {
 			}
 		}
 		p.expect(kRp)
-		return PComplex
+		return PComplex, nil
 	}
 	// Default: skip unknown and return Any
 	p.advance()
-	return PAny
+	return PAny, nil
+}
+
+func (p *kfnParser) parseSpecialDefs() []SpecialDef {
+	p.expect(kSPECIAL)
+	p.expect(kLp)
+	var defs []SpecialDef
+	for p.cur.typ != kRp && p.cur.typ != kEOF {
+		if p.cur.typ == kCm {
+			p.advance()
+			continue
+		}
+		defs = append(defs, p.parseSpecialDef())
+		p.match(kCm)
+	}
+	p.expect(kRp)
+	return defs
+}
+
+func (p *kfnParser) parseSpecialDef() SpecialDef {
+	id := 0
+	if p.cur.typ == kINTEGER {
+		id = p.advance().num
+		if p.match(kHy) && p.cur.typ == kINTEGER {
+			// OCaml KFN uses forms like `0-48` for inline tagged
+			// specials. The encoded byte is the right-hand value.
+			id = p.advance().num
+		}
+	} else {
+		p.advance()
+	}
+	p.expect(kCo)
+
+	def := SpecialDef{ID: id}
+	if p.match(kHa) {
+		def.Flags = append(def.Flags, SFNoParens)
+	}
+
+	switch p.cur.typ {
+	case kLbr:
+		def.Params = p.parseParameterBlock(kLbr, kRbr)
+	case kIDENT:
+		def.Name = p.cur.str
+		p.advance()
+		if p.cur.typ == kLp {
+			def.Params = p.parseParameterBlock(kLp, kRp)
+		}
+	default:
+		def.Params = p.parseLooseSpecialParams()
+	}
+	return def
+}
+
+func (p *kfnParser) parseParameterBlock(open, close kfnTokType) []Parameter {
+	p.expect(open)
+	var params []Parameter
+	for p.cur.typ != close && p.cur.typ != kEOF {
+		if p.cur.typ == kCm {
+			p.advance()
+			continue
+		}
+		params = append(params, p.parseParameter())
+		p.match(kCm)
+	}
+	p.expect(close)
+	return params
+}
+
+func (p *kfnParser) parseLooseSpecialParams() []Parameter {
+	var params []Parameter
+	for p.cur.typ != kCm && p.cur.typ != kRp && p.cur.typ != kEOF {
+		params = append(params, p.parseParameter())
+	}
+	return params
 }
 
 func (p *kfnParser) parseVerBlock() {

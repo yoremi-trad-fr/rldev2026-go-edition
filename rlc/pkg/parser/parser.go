@@ -1248,21 +1248,18 @@ func (p *Parser) parseParamList() []ast.Param {
 	// position too: `(, expr)` after the lexer has skipped a stripped
 	// /* nested:N bytes */ commented out by the disassembler.
 	if p.cur.Type == token.COMMA {
-		params = append(params, ast.SimpleParam{Loc: p.loc(), Expr: ast.IntLit{Loc: p.loc(), Val: 0}})
+		params = append(params, ast.SimpleParam{Loc: p.loc(), Expr: ast.OmittedExpr{Loc: p.loc()}})
 	} else {
 		params = append(params, p.parseParam())
 	}
 	for p.match(token.COMMA) {
 		// Empty slot tolerance: when the disassembler emits a nested
 		// arg block as `/* nested:N bytes */` and the lexer skips it,
-		// adjacent commas leave a hole. Treat the missing expression
-		// as IntLit(0) so the parser can keep going. The resulting
-		// bytecode won't be semantically correct for that argument,
-		// but the parse no longer panics; this matters for opcodes
-		// like InitExFrames whose nested-complex parameters aren't
-		// yet round-trippable through our toolchain.
+		// adjacent commas leave a hole. Preserve the hole as an
+		// omitted expression so the compiler can re-emit the comma
+		// separator without inventing a literal zero.
 		if p.cur.Type == token.RPAR || p.cur.Type == token.COMMA {
-			params = append(params, ast.SimpleParam{Loc: p.loc(), Expr: ast.IntLit{Loc: p.loc(), Val: 0}})
+			params = append(params, ast.SimpleParam{Loc: p.loc(), Expr: ast.OmittedExpr{Loc: p.loc()}})
 			continue
 		}
 		params = append(params, p.parseParam())
@@ -1276,13 +1273,13 @@ func (p *Parser) parseBraceParamList() []ast.Param {
 		return params
 	}
 	if p.cur.Type == token.COMMA {
-		params = append(params, ast.SimpleParam{Loc: p.loc(), Expr: ast.IntLit{Loc: p.loc(), Val: 0}})
+		params = append(params, ast.SimpleParam{Loc: p.loc(), Expr: ast.OmittedExpr{Loc: p.loc()}})
 	} else {
 		params = append(params, p.parseParam())
 	}
 	for p.match(token.COMMA) {
 		if p.cur.Type == token.RCUR || p.cur.Type == token.COMMA {
-			params = append(params, ast.SimpleParam{Loc: p.loc(), Expr: ast.IntLit{Loc: p.loc(), Val: 0}})
+			params = append(params, ast.SimpleParam{Loc: p.loc(), Expr: ast.OmittedExpr{Loc: p.loc()}})
 			continue
 		}
 		params = append(params, p.parseParam())
@@ -1324,7 +1321,7 @@ func (p *Parser) parseParam() ast.Param {
 				if p.cur.Type == token.RPAR || p.cur.Type == token.COMMA {
 					// Tolerate empty slots, same convention as
 					// parseParamList above.
-					exprs = append(exprs, ast.IntLit{Loc: p.loc(), Val: 0})
+					exprs = append(exprs, ast.OmittedExpr{Loc: p.loc()})
 					continue
 				}
 				exprs = append(exprs, p.parseExpr())

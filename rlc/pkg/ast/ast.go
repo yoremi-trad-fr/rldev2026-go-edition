@@ -141,6 +141,13 @@ type IntLit struct {
 	Val int32
 }
 
+// OmittedExpr is an intentionally empty expression slot inside a parameter
+// list. Some RealLive nested argument blocks use a comma to skip a value;
+// replacing that hole with literal 0 changes the bytecode shape.
+type OmittedExpr struct {
+	Loc Loc
+}
+
 // StrLit is a string literal with rich tokens.
 type StrLit struct {
 	Loc    Loc
@@ -261,6 +268,7 @@ type ExprBind struct {
 
 // Expr interface markers
 func (IntLit) exprNode()      {}
+func (OmittedExpr) exprNode() {}
 func (StrLit) exprNode()      {}
 func (ResRef) exprNode()      {}
 func (StoreRef) exprNode()    {}
@@ -278,6 +286,7 @@ func (SelFuncCall) exprNode() {}
 func (ExprSeq) exprNode()     {}
 
 func (e IntLit) ExprLoc() Loc      { return e.Loc }
+func (e OmittedExpr) ExprLoc() Loc { return e.Loc }
 func (e StrLit) ExprLoc() Loc      { return e.Loc }
 func (e ResRef) ExprLoc() Loc      { return e.Loc }
 func (e StoreRef) ExprLoc() Loc    { return e.Loc }

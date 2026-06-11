@@ -191,6 +191,31 @@ func TestOutputEmitResRefQuotesUnsafeText(t *testing.T) {
 	}
 }
 
+func TestOutputEmitResRefQuotesPlainJapaneseFunctionArg(t *testing.T) {
+	o := NewOutput()
+	o.ResolveRes = func(key string) (string, bool) {
+		if key == "0000" {
+			return "ＣＧ鑑賞", true
+		}
+		return "", false
+	}
+	o.EmitExpr(ast.ResRef{Key: "0000"})
+
+	body, err := encoding.UTF8ToSJS("ＣＧ鑑賞")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append([]byte{'"'}, body...)
+	want = append(want, '"')
+	var got []byte
+	for _, ir := range o.IR {
+		got = append(got, ir.Bytes...)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("plain Japanese resource arg: got % x, want % x", got, want)
+	}
+}
+
 func TestOutputEmitResRefEmptyString(t *testing.T) {
 	o := NewOutput()
 	o.ResolveRes = func(key string) (string, bool) {

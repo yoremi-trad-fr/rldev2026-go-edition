@@ -392,12 +392,10 @@ func (c *Compiler) compileTextStub(ret ast.ReturnStmt) {
 		//   `#res<0000>`
 		// standalone, meaning "play this resource text as a textout").
 		// Wrap them in a synthetic StrLit so the textCompiler runs the
-		// full quoted/unquoted state machine that the engine expects
-		// around `\{Name}「…」`-style content. Skipping this and going
-		// through plain EmitExpr emitted the SJIS bytes with no framing
-		// quotes around the spoken text, so the engine read the next
-		// opcode's bytes as text and gradually desynced — manifested as
-		// the menu freezing on "Aw" with the title bar missing.
+		// resource-aware text path: plain Japanese text can stay bare
+		// like original RealLive bytecode, while `\{Name}「…」`-
+		// style content still goes through the quoted/unquoted marker
+		// state machine.
 		if rr, isRes := ret.Expr.(ast.ResRef); isRes {
 			slit = ast.StrLit{
 				Loc:    rr.Loc,
@@ -1115,6 +1113,7 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 			}
 		}
 	}
+	params = coerceLegacySpecialParams(fd, overload, params)
 
 	// Determine which params carry the `<` (FUncount) flag in the
 	// chosen prototype. The corresponding arguments are still emitted
@@ -1151,12 +1150,13 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 	// kidoku/text line covers that whole display step. Extra debug-line
 	// markers are invisible in a normal redump but present in the bytecode,
 	// and AIR is sensitive to the larger/debug-heavier stream at route start.
+	encodedOverload := encodedOverloadForCall(fd, overload)
 	if c.noLineForNextPause && ident == "pause" && len(params) == 0 {
-		c.Out.AddCodeRaw(s.Loc, codegen.EncodeOpcode(fd.OpType, fd.OpModule, fd.OpCode, argc, overload))
+		c.Out.AddCodeRaw(s.Loc, codegen.EncodeOpcode(fd.OpType, fd.OpModule, fd.OpCode, argc, encodedOverload))
 		c.noLineForNextPause = false
 	} else {
 		c.noLineForNextPause = false
-		c.Out.EmitOpcode(s.Loc, fd.OpType, fd.OpModule, fd.OpCode, argc, overload)
+		c.Out.EmitOpcode(s.Loc, fd.OpType, fd.OpModule, fd.OpCode, argc, encodedOverload)
 	}
 
 	// Emit params wrapped in parens. The OCaml emitter (codegen.ml
@@ -1211,6 +1211,10 @@ func (c *Compiler) compileFuncCall(s ast.FuncCallStmt) {
 				}
 				if needsCommaBeforeParam(c.Out, prevParam, inner) {
 					c.Out.AddCodeRaw(s.Loc, []byte{','})
+				}
+				if _, omitted := inner.(ast.OmittedExpr); omitted {
+					prevParam = emittedParamOmitted
+					continue
 				}
 				c.Out.EmitExprRaw(inner)
 				prevParam = classifyEmittedParam(inner)
@@ -1763,12 +1767,26 @@ func chooseOverloadForCall(fd *kfn.FuncDef, params []ast.Param, hasReturnDest bo
 			selected, err = fn.ChooseOverloadByParams(fd.Prototypes, params)
 		}
 	} else {
-		selected, err = fn.ChooseOverloadByParams(fd.Prototypes, params)
+		if overload, ok := chooseOverloadByFullParams(fd, params); ok {
+			selected = overload
+		} else {
+			selected, err = fn.ChooseOverloadByParams(fd.Prototypes, params)
+		}
 	}
 	if err != nil {
 		return 0, err
 	}
 	return selected, nil
+}
+
+func encodedOverloadForCall(fd *kfn.FuncDef, overload int) int {
+	if fd == nil {
+		return overload
+	}
+	if fd.OpType == 0 && fd.OpModule == 4 && fd.OpCode == 2000 && overload == 2 {
+		return 3
+	}
+	return overload
 }
 
 func knownRegistryVersion(reg *kfn.Registry) (kfn.Version, bool) {
@@ -1840,15 +1858,45 @@ func prototypeFullParamsMatch(proto kfn.Prototype, params []ast.Param) bool {
 				return false
 			}
 		}
-		sp, ok := param.(ast.SimpleParam)
-		if !ok {
-			continue
-		}
-		if msg := fn.CheckParamType(proto.Params[defIdx].Type, fn.ClassifyExpr(sp.Expr)); msg != "" {
+		if !prototypeParamMatches(proto.Params[defIdx], param) {
 			return false
 		}
 	}
 	return true
+}
+
+func prototypeParamMatches(def kfn.Parameter, param ast.Param) bool {
+	switch p := param.(type) {
+	case ast.SimpleParam:
+		if def.Type == kfn.PSpecial {
+			_, ok := specialParamFromLegacySimple(p, def)
+			return ok
+		}
+		return fn.CheckParamType(def.Type, fn.ClassifyExpr(p.Expr)) == ""
+	case ast.ComplexParam:
+		switch def.Type {
+		case kfn.PComplex:
+			return true
+		case kfn.PSpecial:
+			_, ok := specialParamFromLegacyComplex(p, def)
+			return ok
+		default:
+			return false
+		}
+	case ast.SpecialParam:
+		return def.Type == kfn.PSpecial && specialTagExists(def.Specials, p.Tag)
+	default:
+		return false
+	}
+}
+
+func specialTagExists(defs []kfn.SpecialDef, tag int) bool {
+	for _, def := range defs {
+		if def.ID == tag {
+			return true
+		}
+	}
+	return false
 }
 
 func injectReturnParam(fd *kfn.FuncDef, overload int, params []ast.Param, dest ast.Expr, loc ast.Loc) ([]ast.Param, bool, error) {
@@ -1873,6 +1921,92 @@ func injectReturnParam(fd *kfn.FuncDef, overload int, params []ast.Param, dest a
 	out = append(out, ast.SimpleParam{Loc: loc, Expr: dest})
 	out = append(out, params[rvPos:]...)
 	return out, true, nil
+}
+
+func coerceLegacySpecialParams(fd *kfn.FuncDef, overload int, params []ast.Param) []ast.Param {
+	if fd == nil || overload < 0 || overload >= len(fd.Prototypes) || !fd.Prototypes[overload].Defined {
+		return params
+	}
+	defs := fn.BuildParamDefs(fd.Prototypes[overload].Params, len(params))
+	if len(defs) == 0 {
+		return params
+	}
+	var out []ast.Param
+	for i, p := range params {
+		if i >= len(defs) || defs[i].Type != kfn.PSpecial {
+			continue
+		}
+		sp, ok := specialParamFromLegacyParam(p, defs[i])
+		if !ok {
+			continue
+		}
+		if out == nil {
+			out = append([]ast.Param(nil), params...)
+		}
+		out[i] = sp
+	}
+	if out == nil {
+		return params
+	}
+	return out
+}
+
+func specialParamFromLegacyParam(p ast.Param, def kfn.Parameter) (ast.SpecialParam, bool) {
+	switch pp := p.(type) {
+	case ast.ComplexParam:
+		return specialParamFromLegacyComplex(pp, def)
+	case ast.SimpleParam:
+		return specialParamFromLegacySimple(pp, def)
+	default:
+		return ast.SpecialParam{}, false
+	}
+}
+
+func specialParamFromLegacyComplex(cp ast.ComplexParam, def kfn.Parameter) (ast.SpecialParam, bool) {
+	spec, ok := selectSpecialDef(def.Specials, cp.Exprs)
+	if !ok {
+		return ast.SpecialParam{}, false
+	}
+	return ast.SpecialParam{
+		Loc:      cp.Loc,
+		Tag:      spec.ID,
+		Exprs:    cp.Exprs,
+		NoParens: spec.HasFlag(kfn.SFNoParens),
+	}, true
+}
+
+func specialParamFromLegacySimple(sp ast.SimpleParam, def kfn.Parameter) (ast.SpecialParam, bool) {
+	spec, ok := selectSpecialDef(def.Specials, []ast.Expr{sp.Expr})
+	if !ok || !spec.HasFlag(kfn.SFNoParens) {
+		return ast.SpecialParam{}, false
+	}
+	return ast.SpecialParam{
+		Loc:      sp.Loc,
+		Tag:      spec.ID,
+		Exprs:    []ast.Expr{sp.Expr},
+		NoParens: true,
+	}, true
+}
+
+func selectSpecialDef(defs []kfn.SpecialDef, exprs []ast.Expr) (kfn.SpecialDef, bool) {
+	for _, def := range defs {
+		if len(def.Params) != len(exprs) {
+			continue
+		}
+		if specialDefMatchesExprs(def, exprs) {
+			return def, true
+		}
+	}
+	return kfn.SpecialDef{}, false
+}
+
+func specialDefMatchesExprs(def kfn.SpecialDef, exprs []ast.Expr) bool {
+	for i, param := range def.Params {
+		if msg := fn.CheckParamType(param.Type, fn.ClassifyExpr(stripTopLevelParens(exprs[i]))); msg != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func conditionalParamSet(fd *kfn.FuncDef, overload, nParams int) []bool {
@@ -1970,15 +2104,27 @@ const (
 	emittedParamList
 	emittedParamSpecialParens
 	emittedParamSpecialNoParens
+	emittedParamOmitted
 )
 
 func needsCommaBeforeParam(out *codegen.Output, prev emittedParamKind, e ast.Expr) bool {
 	if prev == emittedParamNone {
 		return false
 	}
+	if prev == emittedParamOmitted {
+		return true
+	}
 	if simpleParamNeedsSeparator(e) {
 		switch prev {
 		case emittedParamStringLiteral, emittedParamList, emittedParamSpecialParens:
+			return false
+		default:
+			return true
+		}
+	}
+	if out.StringExprNeedsSeparator(e) {
+		switch prev {
+		case emittedParamList, emittedParamSpecialParens:
 			return false
 		default:
 			return true
@@ -1994,13 +2140,31 @@ func needsCommaBeforeParam(out *codegen.Output, prev emittedParamKind, e ast.Exp
 
 func emitExprListWithSeparators(out *codegen.Output, loc ast.Loc, exprs []ast.Expr) {
 	prev := emittedParamNone
+	omitted := 0
 	for _, e := range exprs {
 		inner := stripTopLevelParens(e)
+		if _, ok := inner.(ast.OmittedExpr); ok {
+			omitted++
+			prev = emittedParamOmitted
+			continue
+		}
+		if omitted > 0 {
+			for i := 0; i < omitted; i++ {
+				out.AddCodeRaw(loc, []byte{','})
+			}
+			emitExprAfterOmitted(out, loc, inner)
+			omitted = 0
+			prev = classifyEmittedParam(inner)
+			continue
+		}
 		if needsCommaBeforeParam(out, prev, inner) {
 			out.AddCodeRaw(loc, []byte{','})
 		}
 		out.EmitExprRaw(inner)
 		prev = classifyEmittedParam(inner)
+	}
+	for i := 0; i < omitted; i++ {
+		out.AddCodeRaw(loc, []byte{','})
 	}
 }
 
@@ -2017,8 +2181,28 @@ func emitSpecialParam(out *codegen.Output, loc ast.Loc, p ast.SpecialParam) {
 
 func emitSpecialExprListWithSeparators(out *codegen.Output, loc ast.Loc, exprs []ast.Expr) {
 	prev := emittedParamNone
+	omitted := 0
 	for _, e := range exprs {
 		inner := stripTopLevelParens(e)
+		if _, ok := inner.(ast.OmittedExpr); ok {
+			omitted++
+			prev = emittedParamOmitted
+			continue
+		}
+		if omitted > 0 {
+			for i := 0; i < omitted; i++ {
+				out.AddCodeRaw(loc, []byte{','})
+			}
+			if emitBracketSpecialFuncCall(out, loc, inner) {
+				omitted = 0
+				prev = emittedParamSpecialParens
+				continue
+			}
+			emitExprAfterOmitted(out, loc, inner)
+			omitted = 0
+			prev = classifyEmittedParam(inner)
+			continue
+		}
 		if needsCommaBeforeParam(out, prev, inner) {
 			out.AddCodeRaw(loc, []byte{','})
 		}
@@ -2029,6 +2213,20 @@ func emitSpecialExprListWithSeparators(out *codegen.Output, loc ast.Loc, exprs [
 		out.EmitExprRaw(inner)
 		prev = classifyEmittedParam(inner)
 	}
+	for i := 0; i < omitted; i++ {
+		out.AddCodeRaw(loc, []byte{','})
+	}
+}
+
+func emitExprAfterOmitted(out *codegen.Output, loc ast.Loc, e ast.Expr) {
+	if x, ok := e.(ast.UnaryExpr); ok && x.Op == ast.UnarySub {
+		if _, isLit := x.Val.(ast.IntLit); isLit {
+			out.AddCodeRaw(loc, []byte{'\\', codegen.OpCode(ast.OpSub)})
+			out.EmitExprRaw(x.Val)
+			return
+		}
+	}
+	out.EmitExprRaw(e)
 }
 
 func emitBracketSpecialFuncCall(out *codegen.Output, loc ast.Loc, e ast.Expr) bool {
@@ -2133,6 +2331,13 @@ func classifyEmittedParam(e ast.Expr) emittedParamKind {
 // ignoreOneSpace tracking, etc.) is preserved because we go through the
 // same compileToken dispatcher.
 func (tc *textCompiler) compileResText(s string) {
+	if tc.tryCompileInitialBareResourceText(s) {
+		return
+	}
+	if tc.tryCompileInitialBareSpeakerResourceText(s) {
+		return
+	}
+
 	r := []rune(s)
 	i := 0
 	var textBuf []rune
@@ -2212,6 +2417,15 @@ func (tc *textCompiler) compileResText(s string) {
 					i += consumed
 					continue
 				}
+				if src, consumed, ok := scanLegacyAttachedPauseControl(r, i); ok {
+					if stmt, ok := parseResourceControl(src, tc.loc); ok && tc.isKnownResourceControl(stmt.Ident) {
+						flushText()
+						tc.flush()
+						tc.c.ParseElt(stmt)
+						i += consumed
+						continue
+					}
+				}
 			}
 			if !isResourceControlStart(next) {
 				textBuf = append(textBuf, next)
@@ -2254,6 +2468,69 @@ func (tc *textCompiler) compileResText(s string) {
 		}
 	}
 	flushText()
+}
+
+func (tc *textCompiler) tryCompileInitialBareResourceText(s string) bool {
+	if !plainNonASCIIResourceText(s) {
+		return false
+	}
+	if !tc.cancelInitialEmptyQuoteRun() {
+		return false
+	}
+	tc.buf = append(tc.buf, tc.textToBytecode(s)...)
+	return true
+}
+
+func (tc *textCompiler) tryCompileInitialBareSpeakerResourceText(s string) bool {
+	name, body, ok := splitPlainSpeakerResourceText(s)
+	if !ok {
+		return false
+	}
+	if !tc.cancelInitialEmptyQuoteRun() {
+		return false
+	}
+	tc.buf = append(tc.buf, 0x81, 0x79) // 【
+	tc.buf = append(tc.buf, tc.textToBytecode(name)...)
+	tc.buf = append(tc.buf, 0x81, 0x7A) // 】
+	tc.buf = append(tc.buf, tc.textToBytecode(body)...)
+	tc.inSpeakerName = false
+	tc.ignoreOneSpace = false
+	return true
+}
+
+func splitPlainSpeakerResourceText(s string) (string, string, bool) {
+	if !strings.HasPrefix(s, `\{`) {
+		return "", "", false
+	}
+	endName := strings.IndexRune(s[2:], '}')
+	if endName < 0 {
+		return "", "", false
+	}
+	endName += 2
+	name := s[2:endName]
+	body := s[endName+1:]
+	if name == "" || body == "" {
+		return "", "", false
+	}
+	if strings.ContainsAny(name, `\{}"`) || strings.ContainsAny(body, `\{}"`) {
+		return "", "", false
+	}
+	if !plainNonASCIIResourceText(name) || !plainNonASCIIResourceText(body) {
+		return "", "", false
+	}
+	return name, body, true
+}
+
+func plainNonASCIIResourceText(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r <= 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func scanRawByteEscape(r []rune, start int) (byte, int, bool) {
@@ -2344,6 +2621,16 @@ func scanResourceControl(r []rune, start int) (string, int, bool) {
 		pos++
 	}
 	return "", 0, false
+}
+
+func scanLegacyAttachedPauseControl(r []rune, start int) (string, int, bool) {
+	if start+2 >= len(r) || r[start] != '\\' || r[start+1] != 'p' {
+		return "", 0, false
+	}
+	if !isResourceControlPart(r[start+2]) {
+		return "", 0, false
+	}
+	return `\p`, len(`\p`), true
 }
 
 func parseResourceControl(src string, loc ast.Loc) (stmt ast.FuncCallStmt, ok bool) {

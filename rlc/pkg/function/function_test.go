@@ -464,6 +464,9 @@ func TestClassifyExpr(t *testing.T) {
 	if ClassifyExpr(ast.StrLit{}) != ETLiteral {
 		t.Error("StrLit")
 	}
+	if ClassifyExpr(ast.ResRef{Key: "0000"}) != ETLiteral {
+		t.Error("ResRef")
+	}
 	if ClassifyExpr(ast.CmpExpr{}) != ETInt {
 		t.Error("CmpExpr")
 	}
