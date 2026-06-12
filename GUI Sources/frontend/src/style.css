@@ -37,6 +37,13 @@ html, body {
   max-width: 500px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .titlebar-path:hover { opacity: 1; text-decoration: underline; }
+.titlebar-actions { display: flex; align-items: center; gap: 10px; --wails-draggable: no-drag; }
+.titlebar-about {
+  height: 22px; padding: 0 10px; border: 1px solid rgba(255,255,255,0.35);
+  border-radius: 2px; background: rgba(255,255,255,0.14); color: white;
+  font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.titlebar-about:hover { background: rgba(255,255,255,0.24); }
 
 /* Main Layout */
 .content { display: flex; flex: 1; min-height: 0; border-top: 1px solid var(--border); }
@@ -107,16 +114,57 @@ html, body {
 .running-indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #f9e2af; margin-right: 6px; animation: pulse 1s infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-/* About panel */
-.about-panel { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 24px 20px; }
-.about-logo { font-size: 26px; font-weight: 700; color: var(--accent); letter-spacing: 1px; }
-.about-subtitle { font-size: 13px; color: #888; font-style: italic; margin-top: -8px; }
-.about-desc { font-size: 12px; color: #555; text-align: center; line-height: 1.7; max-width: 420px; }
-.about-links { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 480px; background: #f5f5f5; border: 1px solid var(--border); border-radius: 4px; padding: 12px 16px; }
-.about-link-row { display: flex; flex-direction: column; gap: 2px; }
-.about-link-label { font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
-.about-link-url { font-size: 12px; color: var(--accent); font-family: Consolas, monospace; word-break: break-all; }
-.about-version { font-size: 11px; color: #aaa; margin-top: 4px; }
+/* About modal */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 50; background: rgba(20,24,30,0.42);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.about-modal {
+  width: min(760px, 100%); max-height: calc(100vh - 48px); overflow-y: auto;
+  background: #ffffff; border: 1px solid #9ba8b6; border-radius: 6px;
+  box-shadow: 0 18px 45px rgba(0,0,0,0.25); padding: 18px;
+}
+.about-modal-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border);
+}
+.about-title { font-size: 21px; font-weight: 800; color: #263746; }
+.about-version { font-size: 12px; color: #6f7d88; margin-top: 3px; }
+.about-close {
+  width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 2px;
+  background: #f6f6f6; color: #333; font-size: 18px; line-height: 24px;
+  cursor: pointer; flex-shrink: 0;
+}
+.about-close:hover { background: #e8eef5; }
+.about-main {
+  display: grid; grid-template-columns: 170px 1fr; gap: 18px;
+  align-items: start; padding: 16px 0;
+}
+.about-image {
+  width: 170px; height: 128px; object-fit: cover; object-position: center;
+  border-radius: 4px; border: 1px solid #222; background: #000;
+}
+.about-info { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.about-section-title {
+  margin-top: 4px; font-size: 11px; font-weight: 800; color: #6b7785;
+  text-transform: uppercase; letter-spacing: 0.4px;
+}
+.about-link {
+  width: 100%; min-height: 28px; text-align: left; padding: 5px 8px;
+  border: 1px solid #c9d2dc; border-radius: 3px; background: #f8fafc;
+  color: #0b62a3; font-family: Consolas, "Cascadia Code", monospace;
+  font-size: 12px; cursor: pointer; word-break: break-all;
+}
+.about-link:hover { background: #eef6ff; border-color: #83b5df; }
+.about-vn-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px; margin-top: 8px;
+}
+.about-vn-item {
+  border: 1px solid #d7dde3; border-radius: 3px; background: #fafafa;
+  padding: 6px 8px; font-size: 12px; color: #263746; min-height: 28px;
+  display: flex; align-items: center;
+}
 
 /* Radio buttons (PAK replace mode) */
 .checkbox-label input[type="radio"] { margin: 0; cursor: pointer; }

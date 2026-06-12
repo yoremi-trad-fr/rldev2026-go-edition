@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy, tick } from 'svelte';
-  import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime.js';
+  import { EventsOn, EventsOff, BrowserOpenURL } from '../wailsjs/runtime/runtime.js';
+  import forkIcon from './assets/images/icone-fork.png';
   import {
     SelectFile,
     SelectDirectory,
@@ -27,6 +28,7 @@
 
   let rldevSelectedOp = 'kprl_disasm';
   let running = false;
+  let showAbout = false;
   let consoleLines = [];
   let consoleEl;
 
@@ -118,6 +120,24 @@
     { id: 'PRID', title: 'Princess Heart Link DL edition' },
     { id: 'HINA', title: 'Hinasawa Tomoka no Zettai Joousei' },
     { id: 'LUV', title: 'Lovedori Halation' }
+  ];
+
+  const supportedVns = [
+    'Kanon (1999) - AVG32',
+    'Kanon (1999) 18+ - AVG32',
+    'AIR (2000) 18+ - AVG32',
+    'Clannad (2004)',
+    'AIR 18+ (2005)',
+    'Tomoyo After 18+ (2005)',
+    'Clannad Full Voice (2007)',
+    'Little Busters! (2007)',
+    'Little Busters! EX (2008)',
+    'Planetarian (2006)',
+    'Kud Wafter (2010 18+)',
+    'Tomoyo After Memorial Edition (2010)',
+    'Tomoyo After-Steam (2011)',
+    'Clannad Side Stories Steam (2011)',
+    'Clannad Steam (2015)'
   ];
 
   let pendingLines = [];
@@ -372,12 +392,23 @@
   async function stopProcess() {
     await StopProcess();
   }
+
+  function openExternal(url) {
+    BrowserOpenURL(url);
+  }
+
+  function openMail(address) {
+    BrowserOpenURL('mailto:' + address);
+  }
 </script>
 
 <div id="app">
   <div class="titlebar">
     <span>RLdev 2026 - Go édition</span>
-    <span class="titlebar-path">Fork Yoremi · outils RealLive</span>
+    <div class="titlebar-actions">
+      <span class="titlebar-path">Fork Yoremi · outils RealLive</span>
+      <button class="titlebar-about" on:click={() => showAbout = true}>À propos</button>
+    </div>
   </div>
 
   <div class="content">
@@ -542,6 +573,40 @@
       {/if}
     </div>
   </div>
+
+  {#if showAbout}
+    <div class="modal-backdrop" role="presentation" on:click|self={() => showAbout = false}>
+      <section class="about-modal" role="dialog" aria-modal="true" aria-labelledby="about-title">
+        <div class="about-modal-header">
+          <div>
+            <div id="about-title" class="about-title">Rldev2026-Go édition</div>
+            <div class="about-version">Version 1 - juin 2026</div>
+          </div>
+          <button class="about-close" aria-label="Fermer" on:click={() => showAbout = false}>×</button>
+        </div>
+
+        <div class="about-main">
+          <img class="about-image" src={forkIcon} alt="Icône Rldev2026-Go" />
+          <div class="about-info">
+            <div class="about-section-title">Liens</div>
+            <button class="about-link" on:click={() => openExternal('https://github.com/yoremi-trad-fr/rldev2026-go-edition')}>github.com/yoremi-trad-fr/rldev2026-go-edition</button>
+            <button class="about-link" on:click={() => openExternal('https://yoremitradfr.my.canva.site/')}>yoremitradfr.my.canva.site</button>
+
+            <div class="about-section-title">Contact</div>
+            <button class="about-link" on:click={() => openMail('yoremitrad@atomicmail.io')}>yoremitrad@atomicmail.io</button>
+            <button class="about-link" on:click={() => openMail('yoremi-trad@proton.me')}>Secours : yoremi-trad@proton.me</button>
+          </div>
+        </div>
+
+        <div class="about-section-title">VN supportés, testés et validés</div>
+        <div class="about-vn-grid">
+          {#each supportedVns as vn}
+            <div class="about-vn-item">{vn}</div>
+          {/each}
+        </div>
+      </section>
+    </div>
+  {/if}
 
   <div class="console-wrapper">
     <div class="console-header">

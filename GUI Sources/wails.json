@@ -8,13 +8,13 @@
   "frontend:dev:serverUrl": "auto",
   "author": {
     "name": "Yoremi",
-    "email": "yoremi-trad@proton.me"
+    "email": "yoremitrad@atomicmail.io"
   },
   "info": {
     "companyName": "Yoremi",
-    "productName": "RLdev 2026 Go",
-    "productVersion": "2026.0.0",
+    "productName": "Rldev2026-Go édition",
+    "productVersion": "1.0.0",
     "copyright": "Copyright (c) 2026 Yoremi",
-    "comments": "Windows GUI for the RLdev2026-Go RealLive toolchain"
+    "comments": "Rldev2026-Go édition version 1 - juin 2026"
   }
 }

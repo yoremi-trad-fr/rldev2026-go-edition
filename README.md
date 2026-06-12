@@ -54,9 +54,11 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ## VN
 
-### -Kanon (1999)
+### -Kanon (1999) -AVG32
 
-### -Kanon 18+ (1999)
+### -Kanon (1999) 18+ -AVG32
+
+### AIR (2000) 18+ -AVG32
 
 ### -Clannad (2004)
 
@@ -119,6 +121,7 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### -BABEL release folder support: bundled runtime files are expected under `BABEL/rtl`
 
+### Full compatibility with files extracted using Rldev OCaml
 
 
 <table>
@@ -152,14 +155,11 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ## VN
 
-### AIR (2000 18+)
-
 ### Harmonia 2016
 
 
 ## Features
 
-### Full compatibility with files extracted using Rldev OCaml
 
 ### UTF-8 support for dialogues contained in .org files
 
