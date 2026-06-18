@@ -71,6 +71,12 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
+	var err error
+	files, err = expandInputFiles(files, inFmt)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", appName, err)
+		os.Exit(1)
+	}
 	if len(files) > 1 && *outfile != "" {
 		fmt.Fprintf(os.Stderr, "%s: -o can only be used with one input file\n", appName)
 		os.Exit(1)
@@ -414,6 +420,70 @@ func ensureOutputDir(path string) error {
 		return nil
 	}
 	return os.MkdirAll(dir, 0755)
+}
+
+func expandInputFiles(files []string, inFmt string) ([]string, error) {
+	expanded := make([]string, 0, len(files))
+	for _, file := range files {
+		info, err := os.Stat(file)
+		if err != nil || !info.IsDir() {
+			expanded = append(expanded, file)
+			continue
+		}
+
+		before := len(expanded)
+		entries, err := os.ReadDir(file)
+		if err != nil {
+			return nil, fmt.Errorf("read input directory %s: %w", file, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			if isInputExt(filepath.Ext(entry.Name()), inFmt) {
+				expanded = append(expanded, filepath.Join(file, entry.Name()))
+			}
+		}
+		if len(expanded) == before {
+			return nil, fmt.Errorf("no supported input files found in %s (expected %s)", file, expectedInputExts(inFmt))
+		}
+	}
+	return expanded, nil
+}
+
+func isInputExt(ext, inFmt string) bool {
+	ext = strings.ToLower(ext)
+	for _, candidate := range inputExtsForFormat(inFmt) {
+		if ext == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func expectedInputExts(inFmt string) string {
+	return strings.Join(inputExtsForFormat(inFmt), ", ")
+}
+
+func inputExtsForFormat(inFmt string) []string {
+	switch strings.ToLower(strings.TrimSpace(inFmt)) {
+	case "g00":
+		return []string{".g00"}
+	case "png":
+		return []string{".png"}
+	case "nwa":
+		return []string{".nwa"}
+	case "cgm", "cgtable":
+		return []string{".cgm"}
+	case "tcc", "tonecurve":
+		return []string{".tcc"}
+	case "json", "dat-json":
+		return []string{".json"}
+	case "dat", "datasset":
+		return []string{".cgm", ".tcc"}
+	default:
+		return []string{".g00", ".png", ".nwa", ".cgm", ".tcc", ".json"}
+	}
 }
 
 func looksLikeInputFile(value string) bool {

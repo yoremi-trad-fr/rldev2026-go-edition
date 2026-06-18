@@ -701,6 +701,109 @@ func appendKPRLTransformArgs(args []string, outputTransform string, forceTransfo
 	return args
 }
 
+func orgTextBatchFiles(inputDir string) ([]string, error) {
+	return assetBatchFilesAny(inputDir, ".org", ".ke")
+}
+
+func (a *App) RldevOrgTextExport(orgInput, outputDir, encoding string, batch bool) string {
+	a.log("========================================")
+	a.log("  RLdev - Export texte ORG/KE")
+	a.log("========================================")
+
+	label := "fichier .org/.ke"
+	if batch {
+		label = "dossier .org/.ke"
+	}
+	if err := required(label, orgInput); err != nil {
+		return a.failIf(err)
+	}
+	if err := required("dossier de sortie", outputDir); err != nil {
+		return a.failIf(err)
+	}
+	closeLog := a.startLogFile(outputDir, "orgtext-export")
+	defer closeLog()
+	if encoding == "" {
+		encoding = "UTF-8"
+	}
+
+	if batch {
+		files, err := orgTextBatchFiles(orgInput)
+		if err != nil {
+			return a.failIf(err)
+		}
+		a.log(fmt.Sprintf("Batch ORG/KE: %d fichier(s)", len(files)))
+		for i, file := range files {
+			a.log(fmt.Sprintf("[%d/%d] %s", i+1, len(files), filepath.Base(file)))
+			if err := a.runTool("rlc", "--text-export", "-e", encoding, "-d", outputDir, file); err != nil {
+				return err.Error()
+			}
+		}
+		a.logOK("Export texte termine.")
+		return ""
+	}
+
+	if err := a.runTool("rlc", "--text-export", "-e", encoding, "-d", outputDir, orgInput); err != nil {
+		return err.Error()
+	}
+	a.logOK("Export texte termine.")
+	return ""
+}
+
+func (a *App) RldevOrgTextImport(orgInput, utfInput, outputDir, encoding string, batch bool) string {
+	a.log("========================================")
+	a.log("  RLdev - Import texte ORG/KE")
+	a.log("========================================")
+
+	orgLabel := "fichier .org/.ke"
+	utfLabel := "fichier .utf"
+	if batch {
+		orgLabel = "dossier .org/.ke"
+		utfLabel = "dossier .utf"
+	}
+	if err := required(orgLabel, orgInput); err != nil {
+		return a.failIf(err)
+	}
+	if err := required(utfLabel, utfInput); err != nil {
+		return a.failIf(err)
+	}
+	if err := required("dossier de sortie", outputDir); err != nil {
+		return a.failIf(err)
+	}
+	closeLog := a.startLogFile(outputDir, "orgtext-import")
+	defer closeLog()
+	if encoding == "" {
+		encoding = "UTF-8"
+	}
+
+	if batch {
+		files, err := orgTextBatchFiles(orgInput)
+		if err != nil {
+			return a.failIf(err)
+		}
+		a.log(fmt.Sprintf("Batch ORG/KE: %d fichier(s)", len(files)))
+		for i, file := range files {
+			base := strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
+			utfFile := filepath.Join(utfInput, base+".utf")
+			if info, err := os.Stat(utfFile); err != nil || info.IsDir() {
+				a.log(fmt.Sprintf("[SKIP] %s: .utf absent", filepath.Base(file)))
+				continue
+			}
+			a.log(fmt.Sprintf("[%d/%d] %s", i+1, len(files), filepath.Base(file)))
+			if err := a.runTool("rlc", "--text-import", "--text-file", utfFile, "-e", encoding, "-d", outputDir, file); err != nil {
+				return err.Error()
+			}
+		}
+		a.logOK("Import texte termine.")
+		return ""
+	}
+
+	if err := a.runTool("rlc", "--text-import", "--text-file", utfInput, "-e", encoding, "-d", outputDir, orgInput); err != nil {
+		return err.Error()
+	}
+	a.logOK("Import texte termine.")
+	return ""
+}
+
 func assetBatchFiles(inputDir, ext string) ([]string, error) {
 	seen := map[string]bool{}
 	var files []string
@@ -787,7 +890,7 @@ func (a *App) RldevG00ToPng(g00Input, outputDir, xmlPath string, batch bool) str
 			return a.failIf(err)
 		}
 		a.log(fmt.Sprintf("Batch G00: %d fichier(s)", len(files)))
-		args = append(args, files...)
+		args = append(args, "-i", "g00", g00Input)
 	} else {
 		args = append(args, g00Input)
 	}
@@ -823,8 +926,7 @@ func (a *App) RldevPngToG00(pngInput, outputDir, xmlPath, g00Format string, batc
 			return a.failIf(err)
 		}
 		a.log(fmt.Sprintf("Batch PNG: %d fichier(s)", len(files)))
-		args = append(args, "-d", outputDir)
-		args = append(args, files...)
+		args = append(args, "-i", "png", "-d", outputDir, pngInput)
 	} else {
 		base := strings.TrimSuffix(filepath.Base(pngInput), filepath.Ext(pngInput))
 		outputFile := filepath.Join(outputDir, base+".g00")
@@ -907,7 +1009,7 @@ func (a *App) RldevNwaToAudio(nwaInput, outputDir, audioFormat string, batch boo
 			return a.failIf(err)
 		}
 		a.log(fmt.Sprintf("Batch NWA: %d fichier(s)", len(files)))
-		args = append(args, files...)
+		args = append(args, "-i", "nwa", nwaInput)
 	} else {
 		args = append(args, nwaInput)
 	}
@@ -941,7 +1043,7 @@ func (a *App) RldevDatToJson(datInput, outputDir string, batch bool) string {
 			return a.failIf(err)
 		}
 		a.log(fmt.Sprintf("Batch DAT: %d fichier(s)", len(files)))
-		args = append(args, files...)
+		args = append(args, "-i", "dat", datInput)
 	} else {
 		args = append(args, datInput)
 	}
@@ -975,7 +1077,7 @@ func (a *App) RldevDatJsonToBinary(jsonInput, outputDir string, batch bool) stri
 			return a.failIf(err)
 		}
 		a.log(fmt.Sprintf("Batch JSON DAT: %d fichier(s)", len(files)))
-		args = append(args, files...)
+		args = append(args, "-i", "json", jsonInput)
 	} else {
 		args = append(args, jsonInput)
 	}

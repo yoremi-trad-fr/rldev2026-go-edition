@@ -715,7 +715,7 @@ func (a *App) RldevG00ToPng(g00Input, outputDir, xmlPath string, batch bool) str
 			return a.failIf(err)
 		}
 		a.log(fmt.Sprintf("Batch G00: %d fichier(s)", len(files)))
-		args = append(args, files...)
+		args = append(args, "-i", "g00", g00Input)
 	} else {
 		args = append(args, g00Input)
 	}
@@ -751,8 +751,7 @@ func (a *App) RldevPngToG00(pngInput, outputDir, xmlPath, g00Format string, batc
 			return a.failIf(err)
 		}
 		a.log(fmt.Sprintf("Batch PNG: %d fichier(s)", len(files)))
-		args = append(args, "-d", outputDir)
-		args = append(args, files...)
+		args = append(args, "-i", "png", "-d", outputDir, pngInput)
 	} else {
 		base := strings.TrimSuffix(filepath.Base(pngInput), filepath.Ext(pngInput))
 		outputFile := filepath.Join(outputDir, base+".g00")

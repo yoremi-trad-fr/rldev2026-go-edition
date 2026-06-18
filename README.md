@@ -1,4 +1,4 @@
-### Status update: `11/06/2026`
+### Status update: `18/06/2026`
 <table>
   <tr>
     <td align="center" width="100%">
@@ -6,6 +6,8 @@
     </td>
   </tr>
 </table>
+
+Update : 18/06/2026 : v1.2.0 adds the GUI `Extract text ORG` export/import workflow for `.org/.ke` dialogue text and fixes `vaconv` batch folder handling for G00 conversions on Windows paths
 
 Update : 11/06/2026 : v1.0.0 closes the Audit V1 compatibility pass, fixes Planetarian GUI R1/R2, improves OCaml <-> Go source compatibility, and documents the release validation notes
 
@@ -70,7 +72,7 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### -Little Busters! (2007)
 
-### -Little Busters! EX (2008) - compile/rebuild ready, final in-game validation pending
+### -Little Busters! EX (2008) 
 
 ### -Planetarian (2006)
 
@@ -93,7 +95,7 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ## Features
 
-### -G00 workflow : Full format support (including XML), batch mode in GUI, G00 formats 1 and 2 (multi-layer)
+### -G00 workflow : Full format support (including XML), batch mode in GUI, G00 formats 1 and 2 (multi-layer), safer folder-based batch conversion for long Windows paths
 
 ### -List of files in SEEN.txt
 
@@ -120,6 +122,8 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 ### -Babel workflow: runtime setup helper, `global.kh` helper, RealLive version override, and experimental `#load 'rlBabel'` compiler path for old RealLive translation work
 
 ### -BABEL release folder support: bundled runtime files are expected under `BABEL/rtl`
+
+### -ORG/KE text workflow: GUI `Extract text ORG` and `rlc --text-export/--text-import` export dialogue strings to editable `.utf` files and import translated text back into `.org/.ke` sources
 
 ### Full compatibility with files extracted using Rldev OCaml
 
@@ -154,15 +158,6 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 
 ## VN
-
-### Harmonia 2016
-
-
-## Features
-
-
-### UTF-8 support for dialogues contained in .org files
-
 
 <table>
   <tr>
@@ -212,6 +207,15 @@ experimental Babel tab for older RealLive translation projects: it prepares the
 runtime DLL/map files, can update `GAMEEXE.INI`, writes a minimal `global.kh`
 helper, and the compiler recognises `#load 'rlBabel'` without affecting the
 normal text workflow.
+
+Version 1.2 adds two practical translation fixes. `vaconv` now accepts input
+folders for batch conversions such as `-i g00 folder` and `-i png folder`; the
+GUI uses that path for G00 batch work, avoiding the Windows command-line/path
+length failure seen with long G00 file names. The GUI also adds `Extract text
+ORG`, backed by `rlc --text-export` and `rlc --text-import`, to export dialogue
+strings found inside `.org` / `.ke` sources to editable `.utf` files and import
+translated text back afterward. The workflow handles resource-backed `#res<>`
+dialogue and direct script literals, and skips files that contain no dialogue.
 
 ### BABEL runtime folder
 

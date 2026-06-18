@@ -62,6 +62,14 @@ export function RldevNwaToAudio(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['RldevNwaToAudio'](arg1, arg2, arg3, arg4);
 }
 
+export function RldevOrgTextExport(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RldevOrgTextExport'](arg1, arg2, arg3, arg4);
+}
+
+export function RldevOrgTextImport(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['RldevOrgTextImport'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function RldevPngToG00(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['RldevPngToG00'](arg1, arg2, arg3, arg4, arg5);
 }

@@ -149,6 +149,20 @@ func TestParseFlagsOutput(t *testing.T) {
 	}
 }
 
+func TestParseFlagsTextWorkflow(t *testing.T) {
+	opts, err := parseFlags([]string{"--text-export", "-d", "/tmp", "test.org"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.TextExport || opts.TextImport {
+		t.Fatalf("text flags: export=%v import=%v", opts.TextExport, opts.TextImport)
+	}
+
+	if _, err := parseFlags([]string{"--text-export", "--text-import", "test.org"}); err == nil {
+		t.Fatal("expected error when both text workflow modes are selected")
+	}
+}
+
 func TestParseTarget(t *testing.T) {
 	tests := []struct {
 		in   string

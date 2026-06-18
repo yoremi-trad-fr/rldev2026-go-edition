@@ -3,6 +3,58 @@
 This file tracks the RLdev2026 Go Edition beta history and the compatibility
 fixes validated during the project sessions.
 
+## v1.2.0 - 2026-06-18
+
+GUI and workflow updates:
+
+- Added `Extract text ORG` to the Windows GUI, with export/import modes and
+  single-file or batch-folder processing for `.org` / `.ke` scripts.
+- Added `rlc --text-export`, `rlc --text-import`, and `--text-file` for the
+  same ORG/KE dialogue workflow from the command line.
+- Exported text is written as editable `.utf` files and can be imported back
+  into patched `.org` / `.ke` sources after translation.
+- Files with no real dialogue text are skipped, so batch export does not create
+  empty `.utf` files for purely structural scripts.
+
+ORG/KE text handling:
+
+- Added extraction of dialogue carried by `#res<...>` resource references,
+  including Planetarian-style direct string mirrors.
+- Added extraction/import of direct single-quoted dialogue literals such as the
+  Tomoyo After `strS[...] = '...'` script text.
+- Import can update direct script literals and, when resource-backed entries
+  are present, writes the companion resource `.utf` file alongside the patched
+  source.
+- Resource references without an available resource file or direct text mirror
+  are ignored instead of producing blank translation entries.
+
+`vaconv` and GUI batch fixes:
+
+- Added directory input expansion to `vaconv` through explicit input formats
+  such as `-i g00 <folder>` and `-i png <folder>`.
+- Updated Windows and Linux GUI G00 batch conversion to pass the source folder
+  to `vaconv` instead of expanding every file path in the GUI process.
+- Updated the Windows GUI asset batch calls that use `vaconv` to use the same
+  safer folder-input mode where applicable.
+- This avoids the Windows command-line/path-length failure seen when converting
+  folders containing long G00 file names, even when the fork and assets are
+  already placed near `C:\`.
+
+Validation:
+
+- Tested ORG text export/import on the provided Planetarian, Tomoyo After, and
+  CLANNAD sample scripts.
+- Planetarian `SEEN0001.org` exported 1042 real text entries and imported a
+  modified entry back into both the `.org` mirror and companion `.utf`.
+- Tomoyo After `SEEN7820.org` exported 814 direct script text entries and
+  imported modified text back into the `.org`.
+- CLANNAD `SEEN1002.org` only exported the one real available script string
+  from the provided sample set; missing companion resource files no longer
+  generate blank entries.
+- Rebuilt `bin/rlc2026.exe`, `bin/vaconv.exe`, and the Windows Wails GUI.
+- Automated checks passed for `rlc`, `vaconv`, the Windows GUI, and the Linux
+  GUI packages.
+
 ## v1.0.0 - 2026-06-11
 
 Release status:

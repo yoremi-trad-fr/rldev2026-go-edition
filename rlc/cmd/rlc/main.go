@@ -40,6 +40,7 @@ import (
 	"github.com/yoremi/rldev-go/rlc/pkg/ini"
 	"github.com/yoremi/rldev-go/rlc/pkg/kfn"
 	"github.com/yoremi/rldev-go/rlc/pkg/lexer"
+	"github.com/yoremi/rldev-go/rlc/pkg/orgtext"
 	"github.com/yoremi/rldev-go/rlc/pkg/parser"
 )
 
@@ -91,6 +92,11 @@ type Options struct {
 	Verbose       int  // -v (can be repeated)
 	Quiet         bool // -q
 	WarningsFatal bool // -Wfatal: treat warnings as errors
+
+	// ORG/KE dialogue resource workflow
+	TextExport bool   // --text-export
+	TextImport bool   // --text-import
+	TextFile   string // --text-file file or directory for import
 
 	// Remaining args
 	InputFiles []string
@@ -185,6 +191,9 @@ func parseFlags(args []string) (*Options, error) {
 	fs.BoolVar(&opts.Quiet, "q", opts.Quiet, "quiet mode")
 	fs.BoolVar(&opts.WarningsFatal, "Wfatal", opts.WarningsFatal, "treat warnings as errors (abort file on any warning)")
 	fs.BoolVar(&opts.WarningsFatal, "warnings-fatal", opts.WarningsFatal, "alias for -Wfatal")
+	fs.BoolVar(&opts.TextExport, "text-export", false, "export editable dialogue strings from .org/.ke to .utf")
+	fs.BoolVar(&opts.TextImport, "text-import", false, "import edited .utf dialogue strings back into .org/.ke")
+	fs.StringVar(&opts.TextFile, "text-file", "", "dialogue .utf file or directory for --text-import")
 
 	// Usage
 	fs.Usage = func() {
@@ -200,6 +209,9 @@ func parseFlags(args []string) (*Options, error) {
 	opts.InputFiles = fs.Args()
 	if opts.Target != "" {
 		opts.TargetForced = true
+	}
+	if opts.TextExport && opts.TextImport {
+		return nil, fmt.Errorf("--text-export and --text-import cannot be used together")
 	}
 	return opts, nil
 }
@@ -527,6 +539,52 @@ func resolveSourcePath(opts *Options, arg string) string {
 	return arg + "." + opts.SrcExt
 }
 
+func runTextWorkflow(opts *Options) int {
+	errors := 0
+	for _, f := range opts.InputFiles {
+		srcPath := resolveSourcePath(opts, f)
+		if opts.TextExport {
+			result, err := orgtext.ExportFile(srcPath, opts.OutDir, opts.Encoding)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%s: %v\n", srcPath, err)
+				errors++
+				continue
+			}
+			if result.Wrote {
+				fmt.Printf("[OK] %s: %d texte(s) exporte(s) vers %s\n", filepath.Base(srcPath), result.Entries, result.OutputPath)
+			} else {
+				fmt.Printf("[SKIP] %s: aucun texte exportable\n", filepath.Base(srcPath))
+			}
+			continue
+		}
+
+		utfPath := resolveTextFile(opts.TextFile, srcPath)
+		result, err := orgtext.ImportFile(srcPath, utfPath, opts.OutDir, opts.Encoding)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", srcPath, err)
+			errors++
+			continue
+		}
+		if result.Wrote {
+			fmt.Printf("[OK] %s: %d entree(s) importee(s) vers %s\n", filepath.Base(srcPath), result.Entries, result.OutputPath)
+		} else {
+			fmt.Printf("[SKIP] %s: aucun texte importe\n", filepath.Base(srcPath))
+		}
+	}
+	return errors
+}
+
+func resolveTextFile(value, srcPath string) string {
+	base := strings.TrimSuffix(filepath.Base(srcPath), filepath.Ext(srcPath)) + ".utf"
+	if strings.TrimSpace(value) == "" {
+		return filepath.Join(filepath.Dir(srcPath), base)
+	}
+	if info, err := os.Stat(value); err == nil && info.IsDir() {
+		return filepath.Join(value, base)
+	}
+	return value
+}
+
 // ============================================================
 // Target parsing
 // ============================================================
@@ -613,6 +671,13 @@ func main() {
 	diag.SetQuiet(opts.Quiet)
 	diag.SetVerbose(opts.Verbose > 0)
 	diag.SetWarningsFatal(opts.WarningsFatal)
+
+	if opts.TextExport || opts.TextImport {
+		if errors := runTextWorkflow(opts); errors > 0 {
+			os.Exit(1)
+		}
+		return
+	}
 
 	// Compile each input file
 	errors := 0

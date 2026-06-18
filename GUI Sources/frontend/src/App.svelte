@@ -15,6 +15,8 @@
     RldevList,
     RldevCompile,
     RldevCompileBatch,
+    RldevOrgTextExport,
+    RldevOrgTextImport,
     RldevG00ToPng,
     RldevPngToG00,
     RldevGanToXml,
@@ -37,6 +39,12 @@
   let rlOrgFile = '';
   let rlOrgDir = '';
   let rlCompileBatch = false;
+  let rlOrgTextMode = 'export';
+  let rlOrgTextBatch = false;
+  let rlOrgTextFile = '';
+  let rlOrgTextDir = '';
+  let rlOrgTextUtfFile = '';
+  let rlOrgTextUtfDir = '';
   let rlKfnFile = '';
   let rlGameexe = '';
   let rlInterpreter = '';
@@ -80,6 +88,7 @@
     { id: 'kprl_list',    label: '1 — List SEEN.txt' },
     { id: 'kprl_disasm',  label: '2 — Extract SEEN.txt' },
     { id: 'rlc_compile',  label: '3 — Compile .org / .ke / .avg' },
+    { id: 'rlc_org_text', label: 'Extract text ORG' },
     { id: 'kprl_archive', label: '4 — Rebuild SEEN.txt' },
     { id: 'kprl_extract', label: 'Advanced: extract bytecode' },
     { id: '_rs3', label: 'IMAGE (G00)', section: true },
@@ -208,6 +217,24 @@
     } else {
       const f = await SelectFile('Select .org / .ke / .avg file', '*.org;*.ke;*.avg', 'RLdev scripts');
       if (f) rlOrgFile = f;
+    }
+  }
+  async function browseRlOrgText() {
+    if (rlOrgTextBatch) {
+      const d = await SelectDirectory('Select folder with .org / .ke files');
+      if (d) rlOrgTextDir = d;
+    } else {
+      const f = await SelectFile('Select .org / .ke file', '*.org;*.ORG;*.ke;*.KE', 'Kepago scripts');
+      if (f) rlOrgTextFile = f;
+    }
+  }
+  async function browseRlOrgTextUtf() {
+    if (rlOrgTextBatch) {
+      const d = await SelectDirectory('Select folder with .utf files');
+      if (d) rlOrgTextUtfDir = d;
+    } else {
+      const f = await SelectFile('Select .utf file', '*.utf;*.UTF', 'UTF text files');
+      if (f) rlOrgTextUtfFile = f;
     }
   }
   async function browseRlKfn() {
@@ -340,6 +367,12 @@
     rlOrgFile = '';
     rlOrgDir = '';
   }
+  function toggleOrgTextBatch() {
+    rlOrgTextFile = '';
+    rlOrgTextDir = '';
+    rlOrgTextUtfFile = '';
+    rlOrgTextUtfDir = '';
+  }
   function toggleG00Batch() {
     rlG00File = '';
     rlG00Dir = '';
@@ -364,6 +397,15 @@
   }
   function startG00Extract() {
     run(() => RldevG00ToPng(rlG00Batch ? rlG00Dir : rlG00File, rlOutputDir, rlG00XmlPath, rlG00Batch));
+  }
+  function startOrgText() {
+    const orgInput = rlOrgTextBatch ? rlOrgTextDir : rlOrgTextFile;
+    if (rlOrgTextMode === 'import') {
+      const utfInput = rlOrgTextBatch ? rlOrgTextUtfDir : rlOrgTextUtfFile;
+      run(() => RldevOrgTextImport(orgInput, utfInput, rlOutputDir, rlEncoding, rlOrgTextBatch));
+      return;
+    }
+    run(() => RldevOrgTextExport(orgInput, rlOutputDir, rlEncoding, rlOrgTextBatch));
   }
   function startG00Import() {
     run(() => RldevPngToG00(rlPngBatch ? rlPngDir : rlPngFile, rlOutputDir, rlPngXmlPath, rlG00Format, rlPngBatch));
@@ -478,6 +520,26 @@
         <div class="form-group"><label>Output folder :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
         <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startRlCompile} disabled={(rlCompileBatch ? !rlOrgDir : !rlOrgFile) || !rlOutputDir}>Compile</button>{/if}</div>
 
+      {:else if rldevSelectedOp === 'rlc_org_text'}
+        <div class="form-title">Extract text ORG</div>
+        <div class="form-group"><label>Mode :</label><div class="form-row"><select bind:value={rlOrgTextMode}><option value="export">Export .utf</option><option value="import">Import .utf</option></select></div></div>
+        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlOrgTextBatch} on:change={toggleOrgTextBatch} /> Batch mode</label></div></div>
+        {#if rlOrgTextBatch}
+          <div class="form-group"><label>ORG/KE folder :</label><div class="form-row"><input type="text" bind:value={rlOrgTextDir} readonly /><button class="btn" on:click={browseRlOrgText}>Select</button></div></div>
+        {:else}
+          <div class="form-group"><label>Script .org / .ke :</label><div class="form-row"><input type="text" bind:value={rlOrgTextFile} readonly /><button class="btn" on:click={browseRlOrgText}>Select</button></div></div>
+        {/if}
+        {#if rlOrgTextMode === 'import'}
+          {#if rlOrgTextBatch}
+            <div class="form-group"><label>UTF folder :</label><div class="form-row"><input type="text" bind:value={rlOrgTextUtfDir} readonly /><button class="btn" on:click={browseRlOrgTextUtf}>Select</button></div></div>
+          {:else}
+            <div class="form-group"><label>UTF file :</label><div class="form-row"><input type="text" bind:value={rlOrgTextUtfFile} readonly /><button class="btn" on:click={browseRlOrgTextUtf}>Select</button></div></div>
+          {/if}
+        {/if}
+        <div class="form-group"><label>Encodage source :</label><div class="form-row"><select bind:value={rlEncoding}><option value="UTF-8">UTF-8</option><option value="CP932">CP932 / Shift-JIS</option><option value="EUC-JP">EUC-JP</option></select></div></div>
+        <div class="form-group"><label>Output folder :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
+        <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startOrgText} disabled={(rlOrgTextBatch ? !rlOrgTextDir : !rlOrgTextFile) || (rlOrgTextMode === 'import' && (rlOrgTextBatch ? !rlOrgTextUtfDir : !rlOrgTextUtfFile)) || !rlOutputDir}>{rlOrgTextMode === 'import' ? 'Import ORG' : 'Export UTF'}</button>{/if}</div>
+
       {:else if rldevSelectedOp === 'g00_extract'}
         <div class="form-title">G00 → PNG</div>
         <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlG00Batch} on:change={toggleG00Batch} /> Batch mode</label></div></div>
@@ -580,7 +642,7 @@
         <div class="about-modal-header">
           <div>
             <div id="about-title" class="about-title">Rldev2026-Go édition</div>
-            <div class="about-version">Version 1 - juin 2026</div>
+            <div class="about-version">Version 1.2 - juin 2026</div>
           </div>
           <button class="about-close" aria-label="Fermer" on:click={() => showAbout = false}>×</button>
         </div>
