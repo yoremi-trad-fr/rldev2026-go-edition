@@ -1073,9 +1073,9 @@ func Disassemble(arr *binarray.Buffer, opts Options) (*DisassemblyResult, error)
 
 	// Determine version
 	var version Version
-	// TODO: read from metadata or command line
-
-	if mode == ModeAvg2000 {
+	if opts.Version != (Version{}) {
+		version = opts.Version
+	} else if mode == ModeAvg2000 {
 		version = Version{1, 0, 0, 0}
 	} else {
 		version = Version{1, 2, 7, 0}
@@ -1255,7 +1255,7 @@ func readCommand(r *Reader, hdr *bytecode.FileHeader, result *DisassemblyResult,
 		}
 		cmd := Command{
 			Offset: offset,
-			Hidden: false,
+			Hidden: !opts.ReadDebugSymbols,
 			CType:  "dbline",
 			LineNo: lineNum,
 		}

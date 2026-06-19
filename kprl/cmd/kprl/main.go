@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/yoremi/rldev-go/pkg/avg32"
@@ -373,6 +374,7 @@ func doDisassemble(args []string, opts kprl.Options) error {
 			return fmt.Errorf("unknown target: %s", *target)
 		}
 	}
+	disOpts.Version = disasmVersionForTarget(disOpts.ForcedTarget, *targetVersion)
 
 	// Load KFN function definitions
 	kfnPath := *kfnFile
@@ -388,7 +390,7 @@ func doDisassemble(args []string, opts kprl.Options) error {
 		}
 	}
 	if kfnPath != "" {
-		reg, err := disasm.LoadKFN(kfnPath)
+		reg, err := disasm.LoadKFNForTarget(kfnPath, kfnTargetMode(disOpts.ForcedTarget), disOpts.Version)
 		if err != nil {
 			// Always reported: a KFN load failure changes every
 			// opcode in the output (raw op<…> form, no overload
@@ -416,6 +418,43 @@ func doDisassemble(args []string, opts kprl.Options) error {
 		}
 	}
 	return nil
+}
+
+func kfnTargetMode(mode disasm.EngineMode) disasm.EngineMode {
+	if mode == disasm.ModeNone {
+		return disasm.ModeRealLive
+	}
+	return mode
+}
+
+func disasmVersionForTarget(mode disasm.EngineMode, raw string) disasm.Version {
+	if v, ok := parseDisasmVersion(raw); ok {
+		return v
+	}
+	if mode == disasm.ModeAvg2000 || mode == disasm.ModeAVG32 {
+		return disasm.Version{1, 0, 0, 0}
+	}
+	return disasm.Version{1, 2, 7, 0}
+}
+
+func parseDisasmVersion(raw string) (disasm.Version, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return disasm.Version{}, false
+	}
+	parts := strings.Split(raw, ".")
+	if len(parts) < 2 || len(parts) > 4 {
+		return disasm.Version{}, false
+	}
+	var v disasm.Version
+	for i, p := range parts {
+		n, err := strconv.Atoi(strings.TrimSpace(p))
+		if err != nil || n < 0 {
+			return disasm.Version{}, false
+		}
+		v[i] = n
+	}
+	return v, true
 }
 
 func disassembleArchive(arcName string, rangeArgs []string, opts kprl.Options, disOpts disasm.Options, writer *disasm.Writer, explicitKFN bool) error {

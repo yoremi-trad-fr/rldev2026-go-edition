@@ -232,6 +232,23 @@ func TestParseCompactLineSuppressesPhysicalLineRefs(t *testing.T) {
 	}
 }
 
+func TestParseLineDirectiveCanBeDisabled(t *testing.T) {
+	c := newComp()
+	c.EmitSourceLineDirectives = false
+	c.Out.SuppressAutoLineRefs = true
+	c.Parse([]ast.Stmt{
+		ast.DirectiveStmt{Loc: ast.Loc{File: "t", Line: 7}, Name: "line_compact", Value: ast.IntLit{Val: 129}},
+		ast.HaltStmt{Loc: ast.Loc{File: "t", Line: 8}},
+	})
+
+	if len(c.Out.IR) != 1 {
+		t.Fatalf("IR length = %d, want halt only: %#v", len(c.Out.IR), c.Out.IR)
+	}
+	if c.Out.IR[0].Type != codegen.IRCode || !bytes.Equal(c.Out.IR[0].Bytes, []byte{0x00}) {
+		t.Fatalf("first IR = %#v, want halt code", c.Out.IR[0])
+	}
+}
+
 func TestParseExplicitKidokuModeSuppressesUnannotatedTextout(t *testing.T) {
 	c := newComp()
 	c.Parse([]ast.Stmt{

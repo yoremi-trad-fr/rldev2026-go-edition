@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -238,6 +239,182 @@ func findInterpreterInDir(dir string) string {
 	return ""
 }
 
+func versionString(v [4]int) string {
+	return fmt.Sprintf("%d.%d.%d.%d", v[0], v[1], v[2], v[3])
+}
+
+func peVersionFromExe(path string) ([4]int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return [4]int{}, err
+	}
+	if len(data) < 0x40 || data[0] != 'M' || data[1] != 'Z' {
+		return [4]int{}, fmt.Errorf("ce n'est pas un executable PE")
+	}
+	peOff := int(uint32(data[0x3c]) | uint32(data[0x3d])<<8 | uint32(data[0x3e])<<16 | uint32(data[0x3f])<<24)
+	if peOff+4 > len(data) || string(data[peOff:peOff+4]) != "PE\x00\x00" {
+		return [4]int{}, fmt.Errorf("signature PE introuvable")
+	}
+
+	coffOff := peOff + 4
+	if coffOff+20 > len(data) {
+		return [4]int{}, fmt.Errorf("en-tete PE tronque")
+	}
+	nsec := int(uint16(data[coffOff+2]) | uint16(data[coffOff+3])<<8)
+	optSize := int(uint16(data[coffOff+16]) | uint16(data[coffOff+17])<<8)
+	secStart := coffOff + 20 + optSize
+
+	rsrcOff := 0
+	rsrcSize := 0
+	for i := 0; i < nsec; i++ {
+		s := secStart + i*40
+		if s+40 > len(data) {
+			break
+		}
+		name := strings.TrimRight(string(data[s:s+8]), "\x00")
+		if name == ".rsrc" {
+			rsrcSize = int(uint32(data[s+16]) | uint32(data[s+17])<<8 | uint32(data[s+18])<<16 | uint32(data[s+19])<<24)
+			rsrcOff = int(uint32(data[s+20]) | uint32(data[s+21])<<8 | uint32(data[s+22])<<16 | uint32(data[s+23])<<24)
+			break
+		}
+	}
+	if rsrcOff == 0 {
+		return [4]int{}, fmt.Errorf("section .rsrc introuvable")
+	}
+	end := rsrcOff + rsrcSize
+	if end > len(data) {
+		end = len(data)
+	}
+
+	idx := findVSFixedFileInfo(data, rsrcOff, end)
+	if idx < 0 {
+		idx = findVSFixedFileInfo(data, 0, len(data))
+	}
+	if idx < 0 {
+		if v, err := peVersionFromStringFileInfo(data); err == nil {
+			return v, nil
+		}
+		return [4]int{}, fmt.Errorf("version RealLive introuvable")
+	}
+	if idx+16 > len(data) {
+		return [4]int{}, fmt.Errorf("version RealLive tronquee")
+	}
+	fvms := uint32(data[idx+8]) | uint32(data[idx+9])<<8 | uint32(data[idx+10])<<16 | uint32(data[idx+11])<<24
+	fvls := uint32(data[idx+12]) | uint32(data[idx+13])<<8 | uint32(data[idx+14])<<16 | uint32(data[idx+15])<<24
+	return [4]int{int(fvms >> 16), int(fvms & 0xffff), int(fvls >> 16), int(fvls & 0xffff)}, nil
+}
+
+func findVSFixedFileInfo(data []byte, start, end int) int {
+	if start < 0 {
+		start = 0
+	}
+	if end > len(data) {
+		end = len(data)
+	}
+	if start >= end {
+		return -1
+	}
+	sig := []byte{0xbd, 0x04, 0xef, 0xfe}
+	for i := start; i+16 < end; i++ {
+		if data[i] == sig[0] && data[i+1] == sig[1] && data[i+2] == sig[2] && data[i+3] == sig[3] {
+			return i
+		}
+	}
+	return -1
+}
+
+func peVersionFromStringFileInfo(data []byte) ([4]int, error) {
+	key := utf16LEBytes("FileVersion")
+	for i := 0; i+len(key) < len(data); i++ {
+		if !bytesEqual(data[i:i+len(key)], key) {
+			continue
+		}
+		searchEnd := i + len(key) + 256
+		if searchEnd > len(data) {
+			searchEnd = len(data)
+		}
+		for j := i + len(key); j+2 <= searchEnd; j += 2 {
+			s := readUTF16LEString(data[j:searchEnd], 64)
+			if v, ok := parseFileVersionString(s); ok {
+				return v, nil
+			}
+		}
+	}
+	return [4]int{}, fmt.Errorf("FileVersion introuvable")
+}
+
+func utf16LEBytes(s string) []byte {
+	words := utf16.Encode([]rune(s))
+	out := make([]byte, 0, len(words)*2)
+	for _, w := range words {
+		out = append(out, byte(w), byte(w>>8))
+	}
+	return out
+}
+
+func readUTF16LEString(data []byte, maxRunes int) string {
+	words := make([]uint16, 0, maxRunes)
+	for i := 0; i+1 < len(data) && len(words) < maxRunes; i += 2 {
+		w := uint16(data[i]) | uint16(data[i+1])<<8
+		if w == 0 {
+			break
+		}
+		words = append(words, w)
+	}
+	return string(utf16.Decode(words))
+}
+
+func parseFileVersionString(s string) ([4]int, bool) {
+	if !strings.ContainsAny(s, ".,") {
+		return [4]int{}, false
+	}
+	parts := make([]int, 0, 4)
+	current := -1
+	flush := func() bool {
+		if current < 0 {
+			return true
+		}
+		if current > 9999 {
+			return false
+		}
+		parts = append(parts, current)
+		current = -1
+		return len(parts) <= 4
+	}
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			if current < 0 {
+				current = 0
+			}
+			current = current*10 + int(r-'0')
+			continue
+		}
+		if !flush() {
+			return [4]int{}, false
+		}
+	}
+	if !flush() || len(parts) < 2 || len(parts) > 4 || parts[0] > 20 {
+		return [4]int{}, false
+	}
+	var v [4]int
+	for i, p := range parts {
+		v[i] = p
+	}
+	return v, true
+}
+
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (a *App) resolveInterpreter(gameexe, interpreter string) string {
 	interpreter = strings.TrimSpace(interpreter)
 	if interpreter != "" {
@@ -263,6 +440,21 @@ func (a *App) resolveInterpreter(gameexe, interpreter string) string {
 		return found
 	}
 	return ""
+}
+
+func (a *App) DetectRealLiveVersion(gameexe, interpreter string) string {
+	interpreter = a.resolveInterpreter(gameexe, interpreter)
+	if interpreter == "" {
+		return ""
+	}
+	version, err := peVersionFromExe(interpreter)
+	if err != nil {
+		a.log("Version RealLive non detectee: " + err.Error())
+		return ""
+	}
+	text := versionString(version)
+	a.logOK("Version RealLive detectee: " + text)
+	return text
 }
 
 func (a *App) runTool(toolName string, args ...string) error {

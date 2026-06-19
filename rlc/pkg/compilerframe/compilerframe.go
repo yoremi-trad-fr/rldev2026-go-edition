@@ -65,6 +65,12 @@ type Compiler struct {
 	EmitEOFMarkers bool
 	SeenEndEmitted bool
 
+	// EmitSourceLineDirectives controls whether source-level `#line` and
+	// compact `{- line N -}` annotations are re-emitted into bytecode. kprl can
+	// preserve them for debugging, but translated release builds should not
+	// inherit thousands of old line refs by accident.
+	EmitSourceLineDirectives bool
+
 	Errors   []error
 	Warnings []string
 	Verbose  int
@@ -93,7 +99,8 @@ func New(reg *kfn.Registry, iniTable *ini.Table) *Compiler {
 		Mem: mem, Out: out, Norm: norm,
 		Intrin: intrinsic.New(mem),
 		Reg:    reg, Ini: iniTable, State: state,
-		EmitEOFMarkers: true,
+		EmitEOFMarkers:           true,
+		EmitSourceLineDirectives: true,
 	}
 	out.NativeSpeakerTags = iniTable.HasNamae()
 	c.Directive = &directive.Compiler{
@@ -772,6 +779,9 @@ func (c *Compiler) ParseNormElt(stmt ast.Stmt) {
 	// --- Directives ---
 	case ast.DirectiveStmt:
 		if s.Name == "line" || s.Name == "line_compact" {
+			if !c.EmitSourceLineDirectives {
+				return
+			}
 			if v, ok := s.Value.(ast.IntLit); ok {
 				c.Out.AddLine(ast.Loc{File: s.Loc.File, Line: int(v.Val)})
 			} else {

@@ -1,4 +1,4 @@
-### Status update: `18/06/2026`
+### Status update: `19/06/2026`
 <table>
   <tr>
     <td align="center" width="100%">
@@ -6,6 +6,8 @@
     </td>
   </tr>
 </table>
+
+Update : 19/06/2026 : v1.3.0 fixes CLANNAD Full Voice 2007 RealLive 1.2.3.5 GAN helper roundtrips, restores default clean `.org` extraction without line markers, fixes accented `#character` names, and adds automatic RealLive version detection in the GUI
 
 Update : 18/06/2026 : v1.2.0 adds the GUI `Extract text ORG` export/import workflow for `.org/.ke` dialogue text and fixes `vaconv` batch folder handling for G00 conversions on Windows paths
 
@@ -105,7 +107,9 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### -Compact RealLive debug-line / kidoku preservation for normal roundtrips
 
-### -Packed RealLive interpreter version detection
+### -Packed RealLive interpreter version detection and GUI auto-fill for compile version
+
+### -RealLive KFN version-gated disassembly for modern GAN helper names
 
 ### -Extraction mode in the GUI for Reallive debug mode (parameter -g)
 
@@ -217,6 +221,17 @@ strings found inside `.org` / `.ke` sources to editable `.utf` files and import
 translated text back afterward. The workflow handles resource-backed `#res<>`
 dialogue and direct script literals, and skips files that contain no dialogue.
 
+Version 1.3 fixes the CLANNAD Full Voice 2007 full extract/rebuild path on
+RealLive `1.2.3.5`. `kprl` now applies KFN version blocks during disassembly,
+so modern RealLive archives extract `objOfFileGan` / `objBgOfFileGan` instead
+of older pre-1.1 aliases that can compile with the wrong overload id. The
+compiler also blocks those old aliases on modern targets, which prevents the
+line-0273 animation freeze reproduced in CLANNAD FV 2007. The same release
+keeps normal `.org` extraction clean by hiding compact line markers by default,
+fixes accented `#character` table entries, and lets the GUI auto-detect the
+RealLive version from the selected interpreter when the compile-version field
+is left empty/automatic.
+
 ### BABEL runtime folder
 
 For releases, the Babel runtime pack should keep only the runtime files needed
@@ -250,6 +265,12 @@ kprl16.exe -d -G KUDO -kfn KFN\reallive.kfn -e CP932 -o Ext-sjis SEEN.TXT
 Without the matching `Game ID (-G)`, extraction may still produce files, but the
 bytecode is decrypted with the wrong key and the resulting scripts can fail to
 disassemble or recompile cleanly.
+
+`Game ID (-G)` does not change the RealLive version, KFN signature selection,
+text encoding, or compiler behaviour. If a Japanese archive extracts cleanly
+with the field left empty, the blank value has no impact for that extraction.
+For protected releases such as `CFV`, using the listed ID remains the safer
+default when the archive requires it.
 
 | Game ID | Title / edition |
 | --- | --- |

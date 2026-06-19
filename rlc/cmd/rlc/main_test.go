@@ -35,6 +35,9 @@ func TestDefaultOptions(t *testing.T) {
 	if !o.WithRtl {
 		t.Error("WithRtl")
 	}
+	if !o.LineInfo {
+		t.Error("LineInfo")
+	}
 }
 
 func TestSourceEncodingFromHeader(t *testing.T) {
@@ -80,8 +83,13 @@ func TestSourceEncodingFromHeader(t *testing.T) {
 
 func TestEncodeDramatisPersonaeForceTransformReplacesUnencodable(t *testing.T) {
 	oldForce := texttransforms.ForceEncode
+	oldMode := texttransforms.GetMode()
+	texttransforms.SetMode(texttransforms.EncNone)
 	texttransforms.ForceEncode = true
-	defer func() { texttransforms.ForceEncode = oldForce }()
+	defer func() {
+		texttransforms.ForceEncode = oldForce
+		texttransforms.SetMode(oldMode)
+	}()
 
 	var buf bytes.Buffer
 	diag.SetOutput(&buf)
@@ -97,6 +105,36 @@ func TestEncodeDramatisPersonaeForceTransformReplacesUnencodable(t *testing.T) {
 	}
 	if diag.Warnings() != 0 {
 		t.Fatalf("force-transform replacement should not warn, got %d warning(s): %s", diag.Warnings(), buf.String())
+	}
+}
+
+func TestEncodeDramatisPersonaeUsesWesternTransform(t *testing.T) {
+	oldForce := texttransforms.ForceEncode
+	oldMode := texttransforms.GetMode()
+	texttransforms.SetMode(texttransforms.EncWestern)
+	texttransforms.ForceEncode = false
+	defer func() {
+		texttransforms.ForceEncode = oldForce
+		texttransforms.SetMode(oldMode)
+	}()
+
+	var buf bytes.Buffer
+	diag.SetOutput(&buf)
+	defer diag.SetOutput(nil)
+	diag.Reset()
+
+	got := encodeDramatisPersonae([]string{"Garçon", "Lycéenne"})
+	if len(got) != 2 {
+		t.Fatalf("names len = %d, want 2", len(got))
+	}
+	if want := string([]byte{'G', 'a', 'r', 0xc8, 'o', 'n'}); got[0] != want {
+		t.Fatalf("Garçon encoded as % x, want Western bytes % x", []byte(got[0]), []byte(want))
+	}
+	if want := string([]byte{'L', 'y', 'c', 0xca, 'e', 'n', 'n', 'e'}); got[1] != want {
+		t.Fatalf("Lycéenne encoded as % x, want Western bytes % x", []byte(got[1]), []byte(want))
+	}
+	if diag.Warnings() != 0 {
+		t.Fatalf("Western-encodable names should not warn, got %d warning(s): %s", diag.Warnings(), buf.String())
 	}
 }
 
@@ -281,6 +319,10 @@ func TestVerboseCounter(t *testing.T) {
 }
 
 func TestEncodeDramatisPersonaeAlwaysWritesShiftJIS(t *testing.T) {
+	oldMode := texttransforms.GetMode()
+	texttransforms.SetMode(texttransforms.EncNone)
+	defer texttransforms.SetMode(oldMode)
+
 	got := encodeDramatisPersonae([]string{"みすず", "＊Ａ"})
 	if len(got) != 2 {
 		t.Fatalf("got %d names, want 2", len(got))

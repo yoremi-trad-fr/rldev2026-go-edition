@@ -10,6 +10,10 @@ export function DefaultKFN() {
   return window['go']['main']['App']['DefaultKFN']();
 }
 
+export function DetectRealLiveVersion(arg1, arg2) {
+  return window['go']['main']['App']['DetectRealLiveVersion'](arg1, arg2);
+}
+
 export function RldevArchive(arg1, arg2, arg3) {
   return window['go']['main']['App']['RldevArchive'](arg1, arg2, arg3);
 }

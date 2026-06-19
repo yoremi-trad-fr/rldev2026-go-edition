@@ -5,6 +5,8 @@ export function DefaultBabelRoot():Promise<string>;
 
 export function DefaultKFN():Promise<string>;
 
+export function DetectRealLiveVersion(arg1:string,arg2:string):Promise<string>;
+
 export function RldevArchive(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function RldevBabelPrepareRuntime(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:boolean):Promise<string>;

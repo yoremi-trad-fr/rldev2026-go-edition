@@ -172,17 +172,37 @@ func paramTypeFromWord(w string) ParamType {
 //   - Function definitions: fun <ident> ... <type:mod:code, overload>
 //   - Hardwired functions: /// <ident> <type:mod:code, overload>
 func LoadKFN(path string) (*FuncRegistry, error) {
+	return LoadKFNForTarget(path, ModeRealLive, Version{1, 2, 7, 0})
+}
+
+func LoadKFNForTarget(path string, mode EngineMode, version Version) (*FuncRegistry, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return ParseKFN(f)
+	return ParseKFNForTarget(f, mode, version)
 }
 
 // ParseKFN parses a KFN file from a reader.
 func ParseKFN(r io.Reader) (*FuncRegistry, error) {
+	return ParseKFNForTarget(r, ModeRealLive, Version{1, 2, 7, 0})
+}
+
+func ParseKFNForTarget(r io.Reader, mode EngineMode, version Version) (*FuncRegistry, error) {
+	if mode == ModeNone {
+		mode = ModeRealLive
+	}
+	if version == (Version{}) {
+		if mode == ModeAvg2000 {
+			version = Version{1, 0, 0, 0}
+		} else {
+			version = Version{1, 2, 7, 0}
+		}
+	}
 	reg := NewFuncRegistry()
+	reg.Mode = mode
+	reg.Version = version
 
 	// Module name → number mapping (Jmp→1, Bgm→4, etc.)
 	modNames := make(map[string]int)
@@ -237,6 +257,7 @@ func ParseKFN(r io.Reader) (*FuncRegistry, error) {
 		return nil, err
 	}
 
+	var activeStack []bool
 	for _, trimmed := range logicalLines {
 		// Module declarations
 		if m := moduleRe.FindStringSubmatch(trimmed); m != nil {
@@ -244,6 +265,20 @@ func ParseKFN(r io.Reader) (*FuncRegistry, error) {
 			name := m[2]
 			modNames[name] = num
 			reg.RegisterModule(num, name)
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "ver ") {
+			activeStack = append(activeStack, kfnConditionApplies(trimmed, mode, version))
+			continue
+		}
+		if trimmed == "end" || strings.HasPrefix(trimmed, "end ") {
+			if len(activeStack) > 0 {
+				activeStack = activeStack[:len(activeStack)-1]
+			}
+			continue
+		}
+		if !kfnActive(activeStack) {
 			continue
 		}
 
@@ -337,6 +372,94 @@ func ParseKFN(r io.Reader) (*FuncRegistry, error) {
 	}
 
 	return reg, nil
+}
+
+func kfnActive(stack []bool) bool {
+	for _, active := range stack {
+		if !active {
+			return false
+		}
+	}
+	return true
+}
+
+func kfnConditionApplies(line string, mode EngineMode, version Version) bool {
+	cond := strings.TrimSpace(strings.TrimPrefix(line, "ver"))
+	if idx := strings.Index(cond, "//"); idx >= 0 {
+		cond = cond[:idx]
+	}
+
+	parts := strings.Split(cond, ",")
+	sawTarget := false
+	targetOK := false
+	for _, part := range parts {
+		fields := strings.Fields(strings.TrimSpace(part))
+		if len(fields) == 0 {
+			continue
+		}
+
+		switch strings.ToLower(fields[0]) {
+		case "reallive":
+			sawTarget = true
+			targetOK = targetOK || mode == ModeRealLive
+		case "avg2000", "avg2k":
+			sawTarget = true
+			targetOK = targetOK || mode == ModeAvg2000
+		case "kinetic":
+			sawTarget = true
+			targetOK = targetOK || mode == ModeKinetic
+		case "avg32", "avg":
+			sawTarget = true
+			targetOK = targetOK || mode == ModeAVG32
+		case "<", "<=", ">", ">=", "=", "==":
+			if len(fields) < 2 || !versionCompareApplies(version, fields[0], parseKFNVersion(fields[1])) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return !sawTarget || targetOK
+}
+
+func versionCompareApplies(cur Version, op string, want Version) bool {
+	cmp := compareKFNVersion(cur, want)
+	switch op {
+	case "<":
+		return cmp < 0
+	case "<=":
+		return cmp <= 0
+	case ">":
+		return cmp > 0
+	case ">=":
+		return cmp >= 0
+	case "=", "==":
+		return cmp == 0
+	default:
+		return false
+	}
+}
+
+func compareKFNVersion(a, b Version) int {
+	for i := 0; i < 4; i++ {
+		if a[i] < b[i] {
+			return -1
+		}
+		if a[i] > b[i] {
+			return 1
+		}
+	}
+	return 0
+}
+
+func parseKFNVersion(s string) Version {
+	var v Version
+	parts := strings.Split(strings.TrimSpace(s), ".")
+	for i := 0; i < len(parts) && i < 4; i++ {
+		n, _ := strconv.Atoi(parts[i])
+		v[i] = n
+	}
+	return v
 }
 
 func extractDisplayFunName(line string) string {

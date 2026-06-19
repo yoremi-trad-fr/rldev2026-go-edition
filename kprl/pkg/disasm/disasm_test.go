@@ -66,6 +66,33 @@ fun zentohan <1:Str:00011, 1> (>str 'buf')
 	}
 }
 
+func TestParseKFNVersionBlocksChooseRealLiveGanName(t *testing.T) {
+	src := strings.NewReader(`
+module 071 = Obj
+ver < 1.1
+  fun objOfFileAnm <1:Obj:01003, 0> (intC, intC, strC, strC)
+end
+ver >= 1.1
+  fun objOfFileGan <1:Obj:01003, 4> ('buf', strC 'filename', strC 'ganname')
+                                      ('buf', strC 'filename', strC 'ganname', 'visible')
+end
+`)
+	reg, err := ParseKFNForTarget(src, ModeRealLive, Version{1, 2, 3, 5})
+	if err != nil {
+		t.Fatalf("ParseKFNForTarget() error: %v", err)
+	}
+	def, ok := reg.LookupOpcodeForArgc(Opcode{Type: 1, Module: 71, Function: 1003, Overload: 0}, 4)
+	if !ok {
+		t.Fatal("opcode not found")
+	}
+	if def.Name != "objOfFileGan" {
+		t.Fatalf("opcode name = %q, want objOfFileGan", def.Name)
+	}
+	if _, ok := reg.Lookup("1:071:01003,0"); ok {
+		t.Fatal("inactive pre-1.1 objOfFileAnm entry was registered")
+	}
+}
+
 func TestReaderInt(t *testing.T) {
 	data := make([]byte, 8)
 	binary.LittleEndian.PutUint32(data[0:], 0x12345678)
@@ -445,7 +472,7 @@ func TestReadCommandShowsKidokuWithoutDebugLines(t *testing.T) {
 	}
 }
 
-func TestReadCommandShowsCompactLineWithoutDebugSymbols(t *testing.T) {
+func TestReadCommandHidesCompactLineWithoutDebugSymbols(t *testing.T) {
 	data := []byte{'\n', 0x81, 0x00}
 	r := NewReader(data, 0, len(data), ModeRealLive)
 	result := &DisassemblyResult{}
@@ -457,10 +484,30 @@ func TestReadCommandShowsCompactLineWithoutDebugSymbols(t *testing.T) {
 		t.Fatalf("command count = %d, want 1", len(result.Commands))
 	}
 	cmd := result.Commands[0]
-	if cmd.Hidden {
-		t.Fatal("compact line marker was hidden without -g")
+	if !cmd.Hidden {
+		t.Fatal("compact line marker should be hidden without -g")
 	}
 	if got, want := cmd.Text(), "{- line 129 -}"; got != want {
+		t.Fatalf("line text = %q, want %q", got, want)
+	}
+}
+
+func TestReadCommandShowsCompactLineWithDebugSymbols(t *testing.T) {
+	data := []byte{'\n', 0x81, 0x00}
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	result := &DisassemblyResult{}
+
+	if err := readCommand(r, &bytecode.FileHeader{}, result, Options{ReadDebugSymbols: true}); err != nil {
+		t.Fatalf("readCommand error: %v", err)
+	}
+	if len(result.Commands) != 1 {
+		t.Fatalf("command count = %d, want 1", len(result.Commands))
+	}
+	cmd := result.Commands[0]
+	if cmd.Hidden {
+		t.Fatal("compact line marker was hidden with -g")
+	}
+	if got, want := cmd.Text(), "#line 129"; got != want {
 		t.Fatalf("line text = %q, want %q", got, want)
 	}
 }
@@ -845,6 +892,32 @@ func TestWriterConvertTextUsesWesternTransform(t *testing.T) {
 	want := "Je déteste"
 	if got != want {
 		t.Fatalf("convertText() = %q, want %q", got, want)
+	}
+}
+
+func TestWriterConvertHeaderTextUsesWesternTransform(t *testing.T) {
+	w := NewWriter("", Options{Encoding: "UTF-8"})
+
+	got := w.convertHeaderText("\xaal\xc9ve", texttransforms.EncWestern)
+	if got != "Élève" {
+		t.Fatalf("convertHeaderText() = %q, want %q", got, "Élève")
+	}
+}
+
+func TestWriterConvertHeaderTextKeepsNativeNameWithWesternPrefixLead(t *testing.T) {
+	name := "河"
+	sjsName, err := encoding.UTF8ToSJS(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sjsName) == 0 || sjsName[0] != 0x89 {
+		t.Fatalf("test fixture must start with byte 0x89, got % x", sjsName)
+	}
+
+	w := NewWriter("", Options{Encoding: "UTF-8"})
+	got := w.convertHeaderText(string(sjsName), texttransforms.EncWestern)
+	if got != name {
+		t.Fatalf("convertHeaderText() = %q, want %q", got, name)
 	}
 }
 

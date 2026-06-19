@@ -637,8 +637,8 @@ func LookupFuncDef(reg *kfn.Registry, ident string, params []ast.Param, ctrlCode
 	}
 
 	// Filter candidates by target compatibility. Falls back to the full
-	// list if nothing matches so legacy KFN entries (no target
-	// constraints) still work.
+	// list if nothing matches so legacy KFN entries (no target constraints)
+	// still work.
 	var fns []*kfn.FuncDef
 	for _, fn := range allFns {
 		if reg.ValidForTarget(fn) {
@@ -646,6 +646,9 @@ func LookupFuncDef(reg *kfn.Registry, ident string, params []ast.Param, ctrlCode
 		}
 	}
 	if len(fns) == 0 {
+		if isPre11ObjFileAnmName(ident) && !versionLessThan(reg.Version, kfn.Version{1, 1, 0, 0}) {
+			return nil, fmt.Errorf("function '%s' is not available for %s; use objOfFileGan", ident, reg.CurrentVersionString())
+		}
 		fns = allFns
 	}
 
@@ -682,6 +685,22 @@ func LookupFuncDef(reg *kfn.Registry, ident string, params []ast.Param, ctrlCode
 
 	// Default to first
 	return fns[0], nil
+}
+
+func isPre11ObjFileAnmName(ident string) bool {
+	return ident == "objOfFileAnm" || ident == "objBgOfFileAnm"
+}
+
+func versionLessThan(a, b kfn.Version) bool {
+	for i := 0; i < 4; i++ {
+		if a[i] < b[i] {
+			return true
+		}
+		if a[i] > b[i] {
+			return false
+		}
+	}
+	return false
 }
 
 func filterFuncDefsByParams(fns []*kfn.FuncDef, params []ast.Param) []*kfn.FuncDef {

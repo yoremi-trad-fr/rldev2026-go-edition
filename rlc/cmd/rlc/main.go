@@ -33,6 +33,7 @@ import (
 
 	"github.com/yoremi/rldev-go/pkg/diag"
 	"github.com/yoremi/rldev-go/pkg/encoding"
+	"github.com/yoremi/rldev-go/pkg/text"
 	"github.com/yoremi/rldev-go/pkg/texttransforms"
 	"github.com/yoremi/rldev-go/rlc/pkg/ast"
 	"github.com/yoremi/rldev-go/rlc/pkg/codegen"
@@ -81,6 +82,7 @@ type Options struct {
 	WithRtl     bool // --with-rtl
 	Assertions  bool // --assertions
 	DebugInfo   bool // --debug-info
+	LineInfo    bool // --line-info
 	Metadata    bool // --metadata
 	ArrayBounds bool // --array-bounds
 	FlagLabels  bool // --flag-labels
@@ -118,6 +120,7 @@ func DefaultOptions() *Options {
 		WithRtl:      true,
 		Assertions:   true,
 		DebugInfo:    true,
+		LineInfo:     true,
 		Metadata:     true,
 		ArrayBounds:  false,
 		FlagLabels:   false,
@@ -180,6 +183,7 @@ func parseFlags(args []string) (*Options, error) {
 	fs.BoolVar(&opts.WithRtl, "with-rtl", opts.WithRtl, "include runtime library")
 	fs.BoolVar(&opts.Assertions, "assertions", opts.Assertions, "enable runtime assertions")
 	fs.BoolVar(&opts.DebugInfo, "debug-info", opts.DebugInfo, "include debug info")
+	fs.BoolVar(&opts.LineInfo, "line-info", opts.LineInfo, "include source line markers")
 	fs.BoolVar(&opts.Metadata, "metadata", opts.Metadata, "include metadata")
 	fs.BoolVar(&opts.ArrayBounds, "array-bounds", opts.ArrayBounds, "runtime array bounds checking")
 	fs.BoolVar(&opts.FlagLabels, "flag-labels", opts.FlagLabels, "flag labels in output")
@@ -315,6 +319,8 @@ func compileFile(opts *Options, srcPath string) error {
 	compiler := compilerframe.New(kfnReg, iniTable)
 	compiler.Verbose = opts.Verbose
 	compiler.EmitEOFMarkers = opts.DebugInfo
+	compiler.EmitSourceLineDirectives = opts.LineInfo
+	compiler.Out.SuppressAutoLineRefs = !opts.LineInfo
 
 	// Wire the directive compiler with information it needs to resolve
 	// `#resource 'foo.sjs'` references relative to the source file, and
@@ -386,9 +392,8 @@ func compileFile(opts *Options, srcPath string) error {
 	}
 	// Collect the dramatis personae names gathered during directive
 	// processing (#character 'name'). They must be written into the
-	// bytecode header in the target encoding (Shift-JIS / CP932): the
-	// engine reads names as raw SJIS bytes. If the source file is in a
-	// non-SJIS encoding (UTF-8, EUC-JP…), transcode each name now.
+	// bytecode header in the active RealLive bytecode encoding. For
+	// translated builds this may be a text transform such as WESTERN.
 	if genOpts.DebugInfo && genOpts.Target == kfn.TargetRealLive &&
 		compiler.State != nil && len(compiler.State.DramatisPersonae) > 0 {
 		names := encodeDramatisPersonae(compiler.State.DramatisPersonae)
@@ -452,17 +457,13 @@ func compileFile(opts *Options, srcPath string) error {
 func encodeDramatisPersonae(src []string) []string {
 	names := make([]string, 0, len(src))
 	for _, n := range src {
-		sjis, err := encoding.UTF8ToSJS(n)
+		encoded, err := texttransforms.ToBytecode(text.Text([]rune(n)))
 		if err != nil {
-			if texttransforms.ForceEncode {
-				names = append(names, " ")
-				continue
-			}
-			diag.Warning(diag.Loc{}, "could not transcode #character '%s' to Shift-JIS: %v — using raw bytes", n, err)
-			names = append(names, n)
+			diag.Warning(diag.Loc{}, "could not encode #character '%s' with %s: %v; using a space", n, texttransforms.Describe(), err)
+			names = append(names, " ")
 			continue
 		}
-		names = append(names, string(sjis))
+		names = append(names, string(encoded))
 	}
 	return names
 }

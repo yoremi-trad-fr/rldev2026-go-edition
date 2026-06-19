@@ -1184,9 +1184,8 @@ type GenerateOptions struct {
 	// DramatisPersonae is the list of #character names collected during
 	// directive processing. When DebugInfo is true and Target is
 	// RealLive, the header dramatis table is emitted with these names.
-	// Names must already be in the target bytecode encoding (Shift-JIS
-	// / CP932) — the caller is responsible for any transcoding from
-	// the source file encoding (UTF-8 etc).
+	// Names must already be in the active RealLive bytecode encoding;
+	// the caller is responsible for any transcoding or text transform.
 	DramatisPersonae []string
 }
 
@@ -1385,8 +1384,8 @@ func buildRealLive(bytecode []byte, bytecodeLen, compressedLen int, entrypoints 
 	// empty table is written and the count/size fields at 0x18/0x1c
 	// stay at zero.
 	//
-	// Name bytes are expected to be in the target bytecode encoding
-	// (Shift-JIS / CP932) — see GenerateOptions.DramatisPersonae.
+	// Name bytes are expected to be in the active RealLive bytecode
+	// encoding — see GenerateOptions.DramatisPersonae.
 	var dramatisTable []byte
 	dramatisCount := 0
 	if opts.DebugInfo && opts.Target == kfn.TargetRealLive && len(opts.DramatisPersonae) > 0 {

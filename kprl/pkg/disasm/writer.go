@@ -79,11 +79,11 @@ func (w *Writer) convertText(sjisText string, transform texttransforms.EncMode) 
 // textout-only RealLive name markers. Character names in the SEEN header are
 // literal display strings, so bytes like 81 96 82 61 must remain ＊Ｂ instead
 // of becoming \m{B}.
-func (w *Writer) convertHeaderText(sjisText string) string {
+func (w *Writer) convertHeaderText(sjisText string, transform texttransforms.EncMode) string {
 	if isBytePreservingEncoding(w.opts.Encoding) {
 		return sjisText
 	}
-	utf8Str, err := encoding.SJSToUTF8([]byte(sjisText))
+	utf8Str, err := decodeSpeakerNameText([]byte(sjisText), transform)
 	if err != nil {
 		return sjisText
 	}
@@ -426,7 +426,7 @@ func (w *Writer) WriteSource(baseName string, result *DisassemblyResult) error {
 
 	// Write dramatis personae
 	for _, name := range result.Header.DramatisPersonae {
-		fmt.Fprintf(resOut, "#character '%s'\n", w.convertHeaderText(name))
+		fmt.Fprintf(resOut, "#character '%s'\n", w.convertHeaderText(name, result.TextTransform))
 	}
 	if resFile != srcFile && len(result.Header.DramatisPersonae) > 0 {
 		fmt.Fprintln(resOut)

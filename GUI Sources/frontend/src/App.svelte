@@ -25,7 +25,8 @@
     RldevDatToJson,
     RldevDatJsonToBinary,
     RldevBabelPrepareRuntime,
-    RldevBabelWriteHeader
+    RldevBabelWriteHeader,
+    DetectRealLiveVersion
   } from '../wailsjs/go/main/App.js';
 
   let rldevSelectedOp = 'kprl_disasm';
@@ -49,6 +50,7 @@
   let rlGameexe = '';
   let rlInterpreter = '';
   let rlTargetVersion = '';
+  let rlTargetVersionAuto = false;
   let rlOutputDir = '';
   let rlEncoding = 'UTF-8';
   let rlOutputTransform = 'NONE';
@@ -243,11 +245,17 @@
   }
   async function browseRlGameexe() {
     const f = await SelectFile('Select GAMEEXE.INI', '*.ini;*.INI', 'INI files');
-    if (f) rlGameexe = f;
+    if (f) {
+      rlGameexe = f;
+      await refreshRlTargetVersion();
+    }
   }
   async function browseRlInterpreter() {
     const f = await SelectFile('Select RealLive / Steam .exe', '*.exe;*.EXE', 'RealLive-compatible interpreter');
-    if (f) rlInterpreter = f;
+    if (f) {
+      rlInterpreter = f;
+      await refreshRlTargetVersion();
+    }
   }
   async function browseRlOutputDir() {
     const d = await SelectDirectory('Select output directory');
@@ -431,6 +439,16 @@
   function startBabelHeader() {
     run(() => RldevBabelWriteHeader(rlOutputDir, rlBabelGlosses));
   }
+  async function refreshRlTargetVersion() {
+    const detected = await DetectRealLiveVersion(rlGameexe, rlInterpreter);
+    if (detected && (!rlTargetVersion.trim() || rlTargetVersionAuto)) {
+      rlTargetVersion = detected;
+      rlTargetVersionAuto = true;
+    }
+  }
+  function markRlTargetVersionManual() {
+    rlTargetVersionAuto = false;
+  }
   async function stopProcess() {
     await StopProcess();
   }
@@ -513,7 +531,7 @@
         <div class="form-group"><label>KFN file :</label><div class="form-row"><input type="text" bind:value={rlKfnFile} readonly placeholder="Auto : ./KFN/reallive.kfn" /><button class="btn" on:click={browseRlKfn}>Select</button></div></div>
         <div class="form-group"><label>GAMEEXE.INI (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlGameexe} readonly /><button class="btn" on:click={browseRlGameexe}>Select</button></div></div>
         <div class="form-group"><label>Interpréteur RealLive / Steam (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlInterpreter} readonly /><button class="btn" on:click={browseRlInterpreter}>Select</button></div><div class="form-hint">Auto si GAMEEXE.INI pointe vers un dossier contenant RealLive.exe ou SiglusEngine_Steam.exe.</div></div>
-        <div class="form-group"><label>Version RealLive (optionnel) :</label><div class="form-row"><input type="text" bind:value={rlTargetVersion} list="rl-target-version-options" placeholder="ex: 1.2.3.5 pour CLANNAD 2004" /></div><datalist id="rl-target-version-options"><option value="1.2.3.5"></option><option value="1.2.5.5"></option><option value="1.2.7.0"></option><option value="1.2.9.5"></option><option value="1.3.1.0"></option><option value="1.4.0.5"></option></datalist></div>
+        <div class="form-group"><label>Version RealLive (auto si vide) :</label><div class="form-row"><input type="text" bind:value={rlTargetVersion} on:input={markRlTargetVersionManual} list="rl-target-version-options" placeholder="ex: 1.2.3.5 pour CLANNAD 2004" /></div><datalist id="rl-target-version-options"><option value="1.2.3.5"></option><option value="1.2.5.5"></option><option value="1.2.7.0"></option><option value="1.2.9.5"></option><option value="1.3.1.0"></option><option value="1.4.0.5"></option></datalist><div class="form-hint">Rempli automatiquement depuis l'exe RealLive/Steam detecte.</div></div>
         <div class="form-group"><label>Encodage source :</label><div class="form-row"><select bind:value={rlEncoding}><option value="UTF-8">UTF-8</option><option value="CP932">CP932 / Shift-JIS</option><option value="EUC-JP">EUC-JP</option></select></div></div>
         <div class="form-group"><label>Transformation sortie :</label><div class="form-row"><select bind:value={rlOutputTransform}><option value="NONE">NONE / CP932 original</option><option value="WESTERN">WESTERN / CP1252</option><option value="CHINESE">CHINESE</option><option value="KOREAN">KOREAN</option></select></div></div>
         <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlForceTransform} /> Force transform</label></div></div>
@@ -642,7 +660,7 @@
         <div class="about-modal-header">
           <div>
             <div id="about-title" class="about-title">Rldev2026-Go édition</div>
-            <div class="about-version">Version 1.2 - juin 2026</div>
+            <div class="about-version">Version 1.3 - juin 2026</div>
           </div>
           <button class="about-close" aria-label="Fermer" on:click={() => showAbout = false}>×</button>
         </div>

@@ -171,6 +171,7 @@ type Options struct {
 	ControlCodes     bool // Process control codes in text
 	SuppressUncalled bool // Hide code after unconditional jumps
 	ForcedTarget     EngineMode
+	Version          Version
 	UsesExclKidoku   bool
 	StartAddress     int                    // -1 = auto
 	EndAddress       int                    // -1 = auto
@@ -311,6 +312,8 @@ type FuncDef struct {
 type FuncRegistry struct {
 	funcs   map[string]FuncDef
 	modules map[int]string
+	Mode    EngineMode
+	Version Version
 }
 
 // NewFuncRegistry creates an empty function registry.
@@ -318,6 +321,8 @@ func NewFuncRegistry() *FuncRegistry {
 	return &FuncRegistry{
 		funcs:   make(map[string]FuncDef),
 		modules: make(map[int]string),
+		Mode:    ModeRealLive,
+		Version: Version{1, 2, 7, 0},
 	}
 }
 

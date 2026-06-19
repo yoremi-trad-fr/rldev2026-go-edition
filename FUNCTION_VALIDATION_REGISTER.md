@@ -1,6 +1,6 @@
 # RLdev2026-Go bytecode function validation register
 
-Last update: 2026-06-11
+Last update: 2026-06-19
 
 This register only tracks RealLive bytecode function signatures, AVG32
 instruction shapes, overload selection rules, and function-shaped bytecode
@@ -24,7 +24,9 @@ belong elsewhere.
 
 - Interpreter: RealLive 1.2.3.5.
 - Corpus: 242 files.
-- Status: validated for string-return overload selection.
+- Status: validated for string-return overload selection and GAN helper
+  roundtrip; user gameplay validation after `seen0415` line 0273 on
+  2026-06-19.
 
 | Function | Opcode | Expected overload | Count FR | Count JP | Status |
 | --- | --- | ---: | ---: | ---: | --- |
@@ -32,9 +34,15 @@ belong elsewhere.
 | `itoa_s` | `1:010:00015` | 0 | 10 | 10 | matched |
 | `itoa` | `1:010:00017` | 0 | 36 | 36 | matched |
 | `strcpy` 3-arg form | `1:010:00000` | 1 | 6 | 6 | matched |
+| `objOfFileGan` 4-arg form | `1:071:01003` | 1 | 2 | 2 | in-game validated |
+| `objOfFileGan` 7-arg form | `1:071:01003` | 3 | 1 | 1 | in-game validated |
 
 Validated rule: RealLive 1.2.3.5 uses overload 0 for `itoa*` calls with
 three encoded args; `strsub` with three encoded args uses overload 1.
+For RealLive 1.1+ CLANNAD FV bytecode, opcode family `1:071:01003` must
+disassemble through the version-gated `objOfFileGan` name. Reusing the old
+pre-1.1 `objOfFileAnm` source name can compile the call as overload 0 and break
+the SEEN9077 animation helper reached after `seen0415` line 0273.
 
 ### AIR 1.02
 
@@ -218,6 +226,7 @@ count before the outer special parameter is emitted.
 | Legacy OCaml brace groups in KFN `special(...)` slots select parenthesised `__special[N](...)` by special-case arity/type, not ordinary tuple encoding. | RealLive special parameters | Tomoyo After 2010 R5 |
 | Legacy OCaml bare args in `special(0:#{intC}, 1:#{strC})+` slots select inline `special<N>(...)` encoding without parens. | RealLive inline special parameters | Tomoyo After 2010 R5 |
 | Legacy attached `\p` pause controls remain accepted and emit the pause opcode even when glued to following text. | RealLive text control bytecode | Tomoyo After / OCaml-source compatibility |
+| KFN `ver ... end` blocks must be applied during disassembly; RealLive 1.1+ uses `objOfFileGan` / `objBgOfFileGan` names where pre-1.1 sources used `objOfFileAnm` / `objBgOfFileAnm`. | Version-gated RealLive KFN aliases | CLANNAD FV 2007 |
 | Empty tuple/parameter slots are preserved as omitted bytecode separators instead of being compiled as literal zero. | RealLive complex parameters | Planetarian 2006 |
 | Same-arity overloads with different argument types are selected by full parameter type when the source expression type is known. | RealLive overload selection | Planetarian 2006 |
 | `CCOM_LOCAL_FLAG_EXCOPY` string-pair form encodes as overload byte `3` for opcode `0:004:02000`. | RealLive system CCOM | Planetarian 2006 `SEEN9040` |

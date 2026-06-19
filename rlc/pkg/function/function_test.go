@@ -529,6 +529,27 @@ func TestLookupFuncDefUndefined(t *testing.T) {
 	}
 }
 
+func TestLookupFuncDefRejectsInactiveVersionOnlyName(t *testing.T) {
+	reg := kfn.NewRegistry()
+	reg.Version = kfn.Version{1, 2, 3, 5}
+	reg.Register(&kfn.FuncDef{
+		Ident: "objOfFileAnm",
+		Targets: []kfn.TargetConstraint{{
+			Compare: func(v kfn.Version) bool {
+				return v[0] == 1 && v[1] < 1
+			},
+		}},
+	})
+
+	_, err := LookupFuncDef(reg, "objOfFileAnm", nil, false)
+	if err == nil {
+		t.Fatal("expected inactive version error")
+	}
+	if !strings.Contains(err.Error(), "not available") {
+		t.Fatalf("error = %v, want not available", err)
+	}
+}
+
 func TestLookupFuncDefCtrlCode(t *testing.T) {
 	reg := kfn.NewRegistry()
 	reg.Register(&kfn.FuncDef{Ident: "strout", CCStr: "strout", OpModule: 3, OpCode: 0})

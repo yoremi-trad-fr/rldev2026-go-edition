@@ -3,6 +3,40 @@
 This file tracks the RLdev2026 Go Edition beta history and the compatibility
 fixes validated during the project sessions.
 
+## v1.3.0 - 2026-06-19
+
+CLANNAD Full Voice 2007 compatibility:
+
+- Fixed the freeze after CLANNAD FV 2007 `seen0415` line 0273 by preserving
+  the RealLive 1.2.3.5 GAN helper overload during full extract/rebuild
+  roundtrips.
+- `kprl` now honours KFN `ver ... end` blocks while disassembling. For
+  RealLive 1.1+ targets, opcode family `1:071:01003` is emitted as
+  `objOfFileGan` / `objBgOfFileGan` instead of the pre-1.1 `objOfFileAnm`
+  aliases.
+- The `kprl -f` RealLive version is now used for KFN version selection during
+  disassembly, so `-f 1.2.3.5` extracts CLANNAD FV 2007 with the expected
+  modern function names.
+- `rlc` now refuses the pre-1.1 object animation aliases on modern RealLive
+  versions instead of silently compiling them with the wrong overload id.
+
+Source and GUI fixes:
+
+- Fixed UTF-8/WESTERN `#character` name encoding so accented character-table
+  entries survive a decompile/recompile roundtrip.
+- Normal `.org` extraction hides compact line markers by default again, while
+  `-g` / explicit line-info workflows can still preserve the markers needed
+  for exact debug-line roundtrips.
+- The Windows GUI now detects the RealLive interpreter version from the
+  selected `GAMEEXE.INI` / executable path and auto-fills the compile version
+  when the field is left in auto mode.
+
+Validation:
+
+- CLANNAD FV 2007 was validated in game after line 0273 by rebuilding from the
+  prepared compiled file set and again after a fresh Japanese extraction.
+- Automated checks passed for `kprl`, `rlc`, and the Windows GUI packages.
+
 ## v1.2.0 - 2026-06-18
 
 GUI and workflow updates:
