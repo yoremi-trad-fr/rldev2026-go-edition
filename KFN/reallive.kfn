@@ -1673,8 +1673,8 @@ module 012 = Shl // Layered shaking functions
                                                (='RIGHT', 'amount', 'speed', 'rep', 'faderep', 'window', 'text', 'background', 'objects', 'bufNo')
   fun      ShakeLayersSpecEx  <1:012:03300, 1> ('spec', 'rep', 'faderep', 'window', 'text', 'background', 'objects')
                                                ('spec', 'rep', 'faderep', 'window', 'text', 'background', 'objects', 'bufNo')
-  fun      ShakeLayers_04101  <1:Shl:04101, 1> ('amount', 'speed', 'rep', 'faderep', 'window', 'text', 'background', 'objects', 'bufNo')
-  fun      ShakeLayers_04202  <1:Shl:04202, 1> ('amount', 'speed', 'rep', 'faderep', 'window', 'text', 'background', 'objects', 'bufNo')
+  fun      ShakeLayers_04101  <1:Shl:04101, 1> ? ('amount', 'speed', 'rep', 'faderep', 'window', 'text', 'background', 'objects', 'bufNo')
+  fun      ShakeLayers_04202  <1:Shl:04202, 1> ? ('amount', 'speed', 'rep', 'faderep', 'window', 'text', 'background', 'objects', 'bufNo')
 
 // -----------------------------------------------------------------------------
 

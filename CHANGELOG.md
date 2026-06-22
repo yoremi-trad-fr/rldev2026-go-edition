@@ -3,6 +3,28 @@
 This file tracks the RLdev2026 Go Edition beta history and the compatibility
 fixes validated during the project sessions.
 
+## v1.3.1 - 2026-06-22
+
+CLANNAD Full Voice 2007 compatibility:
+
+- Fixed the CLANNAD FV 2007 `seen3422` animation after line 0100 by preserving
+  overload 1 for `ShakeLayers_04101` / opcode `1:Shl:04101`.
+- Corrected the KFN declarations for `ShakeLayers_04101` and
+  `ShakeLayers_04202` so their single defined prototype remains at overload 1
+  instead of being compacted to overload 0.
+- `rlc` now rejects KFN function declarations whose prototype count does not
+  match the declared overload range, preventing this class of silent overload
+  skew.
+
+Validation:
+
+- User confirmed the `seen3422` after-line-0100 animation no longer freezes in
+  game on 2026-06-22.
+- Recompiled the supplied 242-file CLANNAD FV 2007 `seen` corpus after source
+  encoding cleanup with 0 warnings and 0 errors.
+- Automated checks passed for `rlc` KFN parsing and compiler-frame overload
+  emission.
+
 ## v1.3.0 - 2026-06-19
 
 CLANNAD Full Voice 2007 compatibility:

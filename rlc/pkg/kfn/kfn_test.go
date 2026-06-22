@@ -185,6 +185,44 @@ fun objOfFileGan <1:OFC:01003, 2> ? ?
 	}
 }
 
+func TestParseRejectsIncorrectOverloadCount(t *testing.T) {
+	src := `
+module 012 = Shl
+fun BadShake <1:Shl:04101, 1> ('amount')
+`
+	_, err := Parse(strings.NewReader(src))
+	if err == nil {
+		t.Fatal("expected incorrect overload count error")
+	}
+	if !strings.Contains(err.Error(), "incorrect overload count") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseSingleDefinedPrototypeAtOverloadOne(t *testing.T) {
+	src := `
+module 012 = Shl
+fun ShakeLayers_04101 <1:Shl:04101, 1> ? ('amount', 'speed')
+`
+	reg, err := Parse(strings.NewReader(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn, ok := reg.Lookup("ShakeLayers_04101")
+	if !ok {
+		t.Fatal("ShakeLayers_04101 not found")
+	}
+	if len(fn.Prototypes) != 2 {
+		t.Fatalf("prototypes = %d, want 2", len(fn.Prototypes))
+	}
+	if fn.Prototypes[0].Defined {
+		t.Fatal("prototype 0 should be undefined")
+	}
+	if !fn.Prototypes[1].Defined || len(fn.Prototypes[1].Params) != 2 {
+		t.Fatalf("prototype 1 = %#v, want defined 2-arg prototype", fn.Prototypes[1])
+	}
+}
+
 func TestParseEmptyPrototype(t *testing.T) {
 	reg := parseTestKFN(t)
 	fn, _ := reg.Lookup("goto")

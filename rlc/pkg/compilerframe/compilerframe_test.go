@@ -782,6 +782,43 @@ func TestPlanetarianLocalFlagExcopyStringUsesOverload3(t *testing.T) {
 	}
 }
 
+func TestSingleDefinedPrototypeAtOverloadOneEmitsOverloadOne(t *testing.T) {
+	c := newComp()
+	c.Reg.Register(&kfn.FuncDef{
+		Ident:    "ShakeLayers_04101",
+		OpType:   1,
+		OpModule: 12,
+		OpCode:   4101,
+		Prototypes: []kfn.Prototype{
+			{Defined: false},
+			{Defined: true, Params: []kfn.Parameter{
+				{Type: kfn.PIntC}, {Type: kfn.PIntC}, {Type: kfn.PIntC},
+				{Type: kfn.PIntC}, {Type: kfn.PIntC}, {Type: kfn.PIntC},
+				{Type: kfn.PIntC}, {Type: kfn.PIntC}, {Type: kfn.PIntC},
+			}},
+		},
+	})
+	loc := ast.Loc{File: "SEEN3422.org", Line: 612}
+	params := make([]ast.Param, 9)
+	for i := range params {
+		params[i] = ast.SimpleParam{Loc: loc, Expr: ast.IntLit{Loc: loc, Val: int32(i)}}
+	}
+	c.ParseElt(ast.FuncCallStmt{
+		Loc:    loc,
+		Ident:  "ShakeLayers_04101",
+		Params: params,
+	})
+	if c.HasErrors() {
+		t.Fatalf("compile errors: %v", c.Errors)
+	}
+	if findCodeIR(c, codegen.EncodeOpcode(1, 12, 4101, 9, 1)) < 0 {
+		t.Fatalf("ShakeLayers_04101 should emit overload 1, got % x", compilerOutputBytes(c))
+	}
+	if findCodeIR(c, codegen.EncodeOpcode(1, 12, 4101, 9, 0)) >= 0 {
+		t.Fatal("ShakeLayers_04101 emitted overload 0")
+	}
+}
+
 func registerSetLocalNameForTest(c *Compiler) {
 	c.Reg.Register(&kfn.FuncDef{
 		Ident:    "SetLocalName",

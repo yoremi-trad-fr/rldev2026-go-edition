@@ -1,6 +1,6 @@
 # RLdev2026-Go bytecode function validation register
 
-Last update: 2026-06-19
+Last update: 2026-06-22
 
 This register only tracks RealLive bytecode function signatures, AVG32
 instruction shapes, overload selection rules, and function-shaped bytecode
@@ -24,9 +24,10 @@ belong elsewhere.
 
 - Interpreter: RealLive 1.2.3.5.
 - Corpus: 242 files.
-- Status: validated for string-return overload selection and GAN helper
-  roundtrip; user gameplay validation after `seen0415` line 0273 on
-  2026-06-19.
+- Status: validated for string-return overload selection, GAN helper roundtrip,
+  and `ShakeLayers` overload selection; user gameplay validation after
+  `seen0415` line 0273 on 2026-06-19 and after `seen3422` line 0100 on
+  2026-06-22.
 
 | Function | Opcode | Expected overload | Count FR | Count JP | Status |
 | --- | --- | ---: | ---: | ---: | --- |
@@ -36,6 +37,10 @@ belong elsewhere.
 | `strcpy` 3-arg form | `1:010:00000` | 1 | 6 | 6 | matched |
 | `objOfFileGan` 4-arg form | `1:071:01003` | 1 | 2 | 2 | in-game validated |
 | `objOfFileGan` 7-arg form | `1:071:01003` | 3 | 1 | 1 | in-game validated |
+| `ShakeLayers_04101` | `1:012:04101` | 1 | 1 | ? | in-game validated |
+| `ShakeLayers_04202` | `1:012:04202` | 1 | 1 | ? | compiler validated |
+
+The `ShakeLayers` JP counts are pending a fresh JP corpus comparison.
 
 Validated rule: RealLive 1.2.3.5 uses overload 0 for `itoa*` calls with
 three encoded args; `strsub` with three encoded args uses overload 1.
@@ -43,6 +48,10 @@ For RealLive 1.1+ CLANNAD FV bytecode, opcode family `1:071:01003` must
 disassemble through the version-gated `objOfFileGan` name. Reusing the old
 pre-1.1 `objOfFileAnm` source name can compile the call as overload 0 and break
 the SEEN9077 animation helper reached after `seen0415` line 0273.
+KFN entries with only overload 1 defined must include an explicit empty
+prototype for overload 0 before the overload-1 prototype. Otherwise the source
+prototype can be compacted to overload 0; this broke the `SEEN3422`
+`ShakeLayers_04101` animation reached after line 0100.
 
 ### AIR 1.02
 

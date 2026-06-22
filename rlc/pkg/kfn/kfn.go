@@ -1047,6 +1047,10 @@ func (p *kfnParser) processFunDef(constraints []TargetConstraint, raw rawFunDef)
 	if ident == "" {
 		ident = IdentOfOpcode(raw.opType, raw.opModule, raw.opCode, 0)
 	}
+	if len(raw.protos) != raw.overloads+1 {
+		panic(fmt.Sprintf("kfn line %d: incorrect overload count for %s: got %d prototypes, want %d",
+			p.line, ident, len(raw.protos), raw.overloads+1))
+	}
 	ccStr := ""
 	switch raw.ccName {
 	case "": // absent
