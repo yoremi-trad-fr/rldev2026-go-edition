@@ -93,6 +93,21 @@ end
 	}
 }
 
+func TestRealLive167KeepsWithCallOpcodes(t *testing.T) {
+	kfnPath := filepath.Join("..", "..", "..", "KFN", "reallive.kfn")
+	reg, err := LoadKFNForTarget(kfnPath, ModeRealLive, Version{1, 6, 7, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	def, ok := reg.LookupOpcodeForArgc(Opcode{Type: 0, Module: 1, Function: 16, Overload: 0}, 1)
+	if !ok {
+		t.Fatal("gosub_with opcode was not registered for RealLive 1.6.7.3")
+	}
+	if def.Name != "gosub_with" {
+		t.Fatalf("opcode name = %q, want gosub_with", def.Name)
+	}
+}
+
 func TestReaderInt(t *testing.T) {
 	data := make([]byte, 8)
 	binary.LittleEndian.PutUint32(data[0:], 0x12345678)

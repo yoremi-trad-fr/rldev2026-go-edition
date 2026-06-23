@@ -1,4 +1,4 @@
-### Status update: `19/06/2026`
+### Status update: `23/06/2026`
 <table>
   <tr>
     <td align="center" width="100%">
@@ -6,6 +6,8 @@
     </td>
   </tr>
 </table>
+
+Update : 23/06/2026 : v1.3.2 closes the first Audit V2 fixes: `kprl` now auto-detects the RealLive interpreter version before KFN disassembly, restores Little Busters!/Tomoyo After warning-free extraction, and keeps modern `gosub_with`/`farcall_with` opcodes available for Tomoyo After Steam
 
 Update : 19/06/2026 : v1.3.0 fixes CLANNAD Full Voice 2007 RealLive 1.2.3.5 GAN helper roundtrips, restores default clean `.org` extraction without line markers, fixes accented `#character` names, and adds automatic RealLive version detection in the GUI
 
@@ -107,7 +109,7 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### -Compact RealLive debug-line / kidoku preservation for normal roundtrips
 
-### -Packed RealLive interpreter version detection and GUI auto-fill for compile version
+### -Packed RealLive interpreter version detection, GUI auto-fill for compile version, and automatic KFN version selection during extraction
 
 ### -RealLive KFN version-gated disassembly for modern GAN helper names
 
@@ -231,6 +233,15 @@ keeps normal `.org` extraction clean by hiding compact line markers by default,
 fixes accented `#character` table entries, and lets the GUI auto-detect the
 RealLive version from the selected interpreter when the compile-version field
 is left empty/automatic.
+
+Version 1.3.2 starts the Audit V2 pass. `kprl` now resolves the RealLive
+interpreter version from the game folder before loading KFN definitions during
+extraction, matching the compile-side behaviour. This fixes the new Little
+Busters! / Little Busters! EX / Tomoyo After warnings caused by extracting
+modern scripts with the default RealLive `1.2.7.0` function table. The
+RealLive KFN also keeps `gosub_with`, `farcall_with`, `ret_with`, and
+`rtl_with` enabled for newer `1.6.x` interpreters, including Tomoyo After Steam
+`1.6.7.3`.
 
 ### BABEL runtime folder
 

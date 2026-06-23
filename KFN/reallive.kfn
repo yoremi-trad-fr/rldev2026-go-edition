@@ -104,7 +104,7 @@ module 001 = Jmp // Flow control
     fun rtl          (skip ret) <0:Jmp:00013, 0> ()
   end
   
-  ver >= 1.3, < 1.6.4.6
+  ver >= 1.3
     fun gosub_with (store goto) <0:Jmp:00016, 0> (special(0:#{intC}, 1:#{strC})+)
 //  fun ret_with         (jump) <0:Jmp:00017, 1> ('value') ()
     fun ret_with       (skip ret) <0:Jmp:00017, 1> ('value') ()

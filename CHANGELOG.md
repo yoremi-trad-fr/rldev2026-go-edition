@@ -3,6 +3,28 @@
 This file tracks the RLdev2026 Go Edition beta history and the compatibility
 fixes validated during the project sessions.
 
+## v1.3.2 - 2026-06-23
+
+Audit v2 RealLive extraction compatibility:
+
+- `kprl` now auto-detects the RealLive interpreter version next to `Seen.txt`
+  before loading KFN definitions for disassembly, matching the compile-side
+  behaviour already used by `rlc` and the GUI.
+- The disassembler `-f` option can now be used as documented with an
+  interpreter executable, game directory, or adjacent file path, not only a raw
+  version string.
+- Kept `gosub_with` / `farcall_with` / `ret_with` / `rtl_with` available for
+  newer RealLive 1.6.x interpreters; Tomoyo After Steam reports `1.6.7.3` but
+  still uses these opcodes.
+
+Validation:
+
+- Re-extracted the Audit v2 warning files for Little Busters, Little Busters
+  EX, and Tomoyo After 2005/2010/Steam with no warnings and no truncated
+  `.org` tails.
+- Automated checks passed for `kprl` command version parsing and disassembler
+  KFN selection.
+
 ## v1.3.1 - 2026-06-22
 
 CLANNAD Full Voice 2007 compatibility:

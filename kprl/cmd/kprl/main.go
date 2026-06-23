@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/yoremi/rldev-go/pkg/avg32"
 	"github.com/yoremi/rldev-go/pkg/binarray"
@@ -374,7 +375,23 @@ func doDisassemble(args []string, opts kprl.Options) error {
 			return fmt.Errorf("unknown target: %s", *target)
 		}
 	}
+	firstFile := args[0]
 	disOpts.Version = disasmVersionForTarget(disOpts.ForcedTarget, *targetVersion)
+	if rawVersion := strings.TrimSpace(*targetVersion); rawVersion != "" {
+		if _, ok := parseDisasmVersion(rawVersion); ok {
+			// Already handled by disasmVersionForTarget above.
+		} else if v, exePath, err := detectDisasmVersionFromPath(rawVersion); err == nil {
+			disOpts.Version = v
+			diag.Phase("interpreter %s version %s", filepath.Base(exePath), v.String())
+		} else {
+			diag.SysWarning("cannot read interpreter version from %s: %v", rawVersion, err)
+		}
+	} else if shouldAutoDetectDisasmVersion(disOpts.ForcedTarget) {
+		if v, exePath, err := autoDetectDisasmVersion(firstFile); err == nil {
+			disOpts.Version = v
+			diag.Phase("detected interpreter %s version %s", filepath.Base(exePath), v.String())
+		}
+	}
 
 	// Load KFN function definitions
 	kfnPath := *kfnFile
@@ -405,7 +422,6 @@ func doDisassemble(args []string, opts kprl.Options) error {
 	writer := disasm.NewWriter(opts.OutDir, disOpts)
 
 	// Check if first file is an archive
-	firstFile := args[0]
 	explicitKFN := *kfnFile != ""
 	if kprl.IsArchive(firstFile) {
 		return disassembleArchive(firstFile, args[1:], opts, disOpts, writer, explicitKFN)
@@ -455,6 +471,233 @@ func parseDisasmVersion(raw string) (disasm.Version, bool) {
 		v[i] = n
 	}
 	return v, true
+}
+
+func shouldAutoDetectDisasmVersion(mode disasm.EngineMode) bool {
+	return mode == disasm.ModeNone || mode == disasm.ModeRealLive || mode == disasm.ModeKinetic
+}
+
+func detectDisasmVersionFromPath(path string) (disasm.Version, string, error) {
+	info, statErr := os.Stat(path)
+	if statErr == nil {
+		if info.IsDir() {
+			return autoDetectDisasmVersionInDirs([]string{path, filepath.Join(path, "..")})
+		}
+		if strings.EqualFold(filepath.Ext(path), ".exe") {
+			v, err := peVersionFromExe(path)
+			return v, path, err
+		}
+	}
+	return autoDetectDisasmVersion(path)
+}
+
+func autoDetectDisasmVersion(srcPath string) (disasm.Version, string, error) {
+	return autoDetectDisasmVersionInDirs([]string{
+		filepath.Dir(srcPath),
+		filepath.Join(filepath.Dir(srcPath), ".."),
+	})
+}
+
+func autoDetectDisasmVersionInDirs(dirs []string) (disasm.Version, string, error) {
+	candidates := []string{
+		"RealLive.exe", "RealLiveEn.exe", "Kinetic.exe", "kinetic.exe",
+		"AVG2000.exe", "avg2000.exe", "SiglusEngine.exe", "siglusengine.exe",
+		"SiglusEngine_Steam.exe", "siglusengine_steam.exe", "reallive.exe",
+	}
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		for _, name := range candidates {
+			path := filepath.Join(dir, name)
+			if _, err := os.Stat(path); err != nil {
+				continue
+			}
+			v, err := peVersionFromExe(path)
+			if err == nil && v != (disasm.Version{}) {
+				return v, path, nil
+			}
+		}
+	}
+	return disasm.Version{}, "", fmt.Errorf("no interpreter executable found")
+}
+
+func peVersionFromExe(path string) (disasm.Version, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return disasm.Version{}, err
+	}
+	if len(data) < 0x40 || data[0] != 'M' || data[1] != 'Z' {
+		return disasm.Version{}, fmt.Errorf("not a PE file")
+	}
+	peOff := int(uint32(data[0x3c]) | uint32(data[0x3d])<<8 | uint32(data[0x3e])<<16 | uint32(data[0x3f])<<24)
+	if peOff+4 > len(data) || string(data[peOff:peOff+4]) != "PE\x00\x00" {
+		return disasm.Version{}, fmt.Errorf("PE header signature not found")
+	}
+
+	coffOff := peOff + 4
+	if coffOff+20 > len(data) {
+		return disasm.Version{}, fmt.Errorf("truncated COFF header")
+	}
+	nsec := int(uint16(data[coffOff+2]) | uint16(data[coffOff+3])<<8)
+	optSize := int(uint16(data[coffOff+16]) | uint16(data[coffOff+17])<<8)
+	secStart := coffOff + 20 + optSize
+
+	rsrcOff := 0
+	rsrcSize := 0
+	for i := 0; i < nsec; i++ {
+		s := secStart + i*40
+		if s+40 > len(data) {
+			break
+		}
+		name := strings.TrimRight(string(data[s:s+8]), "\x00")
+		if name != ".rsrc" {
+			continue
+		}
+		rsrcSize = int(uint32(data[s+16]) | uint32(data[s+17])<<8 | uint32(data[s+18])<<16 | uint32(data[s+19])<<24)
+		rsrcOff = int(uint32(data[s+20]) | uint32(data[s+21])<<8 | uint32(data[s+22])<<16 | uint32(data[s+23])<<24)
+		break
+	}
+	if rsrcOff == 0 {
+		return disasm.Version{}, fmt.Errorf(".rsrc section not found")
+	}
+	end := rsrcOff + rsrcSize
+	if end > len(data) {
+		end = len(data)
+	}
+
+	idx := findVSFixedFileInfo(data, rsrcOff, end)
+	if idx < 0 {
+		idx = findVSFixedFileInfo(data, 0, len(data))
+	}
+	if idx < 0 {
+		if v, err := peVersionFromStringFileInfo(data); err == nil {
+			return v, nil
+		}
+		return disasm.Version{}, fmt.Errorf("VS_FIXEDFILEINFO not found")
+	}
+	if idx+16 > len(data) {
+		return disasm.Version{}, fmt.Errorf("truncated VS_FIXEDFILEINFO")
+	}
+	fvms := uint32(data[idx+8]) | uint32(data[idx+9])<<8 | uint32(data[idx+10])<<16 | uint32(data[idx+11])<<24
+	fvls := uint32(data[idx+12]) | uint32(data[idx+13])<<8 | uint32(data[idx+14])<<16 | uint32(data[idx+15])<<24
+	return disasm.Version{
+		int(fvms >> 16),
+		int(fvms & 0xffff),
+		int(fvls >> 16),
+		int(fvls & 0xffff),
+	}, nil
+}
+
+func findVSFixedFileInfo(data []byte, start, end int) int {
+	if start < 0 {
+		start = 0
+	}
+	if end > len(data) {
+		end = len(data)
+	}
+	if start >= end {
+		return -1
+	}
+	sig := []byte{0xbd, 0x04, 0xef, 0xfe}
+	for i := start; i+16 < end; i++ {
+		if data[i] == sig[0] && data[i+1] == sig[1] && data[i+2] == sig[2] && data[i+3] == sig[3] {
+			return i
+		}
+	}
+	return -1
+}
+
+func peVersionFromStringFileInfo(data []byte) (disasm.Version, error) {
+	key := utf16LEBytes("FileVersion")
+	for i := 0; i+len(key) < len(data); i++ {
+		if !equalBytes(data[i:i+len(key)], key) {
+			continue
+		}
+		searchEnd := i + len(key) + 256
+		if searchEnd > len(data) {
+			searchEnd = len(data)
+		}
+		for j := i + len(key); j+2 <= searchEnd; j += 2 {
+			s := readUTF16LEString(data[j:searchEnd], 64)
+			if v, ok := parseFileVersionString(s); ok {
+				return v, nil
+			}
+		}
+	}
+	return disasm.Version{}, fmt.Errorf("FileVersion string not found")
+}
+
+func utf16LEBytes(s string) []byte {
+	words := utf16.Encode([]rune(s))
+	out := make([]byte, 0, len(words)*2)
+	for _, w := range words {
+		out = append(out, byte(w), byte(w>>8))
+	}
+	return out
+}
+
+func readUTF16LEString(data []byte, maxRunes int) string {
+	words := make([]uint16, 0, maxRunes)
+	for i := 0; i+1 < len(data) && len(words) < maxRunes; i += 2 {
+		w := uint16(data[i]) | uint16(data[i+1])<<8
+		if w == 0 {
+			break
+		}
+		words = append(words, w)
+	}
+	return string(utf16.Decode(words))
+}
+
+func parseFileVersionString(s string) (disasm.Version, bool) {
+	if !strings.ContainsAny(s, ".,") {
+		return disasm.Version{}, false
+	}
+	parts := make([]int, 0, 4)
+	current := -1
+	flush := func() bool {
+		if current < 0 {
+			return true
+		}
+		if current > 9999 {
+			return false
+		}
+		parts = append(parts, current)
+		current = -1
+		return len(parts) <= 4
+	}
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			if current < 0 {
+				current = 0
+			}
+			current = current*10 + int(r-'0')
+			continue
+		}
+		if !flush() {
+			return disasm.Version{}, false
+		}
+	}
+	if !flush() || len(parts) < 2 || len(parts) > 4 || parts[0] > 20 {
+		return disasm.Version{}, false
+	}
+	var v disasm.Version
+	for i, p := range parts {
+		v[i] = p
+	}
+	return v, true
+}
+
+func equalBytes(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func disassembleArchive(arcName string, rangeArgs []string, opts kprl.Options, disOpts disasm.Options, writer *disasm.Writer, explicitKFN bool) error {
