@@ -7,7 +7,7 @@
   </tr>
 </table>
 
-Update : 23/06/2026 : v1.3.2 closes the first Audit V2 fixes: `kprl` now auto-detects the RealLive interpreter version before KFN disassembly, restores Little Busters!/Tomoyo After warning-free extraction, and keeps modern `gosub_with`/`farcall_with` opcodes available for Tomoyo After Steam
+Update : 23/06/2026 : v1.3.2 fixes: `kprl` now auto-detects the RealLive interpreter version before KFN disassembly, restores Little Busters!/Tomoyo After warning-free extraction, and keeps modern `gosub_with`/`farcall_with` opcodes available for Tomoyo After Steam
 
 Update : 19/06/2026 : v1.3.0 fixes CLANNAD Full Voice 2007 RealLive 1.2.3.5 GAN helper roundtrips, restores default clean `.org` extraction without line markers, fixes accented `#character` names, and adds automatic RealLive version detection in the GUI
 
@@ -241,7 +241,8 @@ Busters! / Little Busters! EX / Tomoyo After warnings caused by extracting
 modern scripts with the default RealLive `1.2.7.0` function table. The
 RealLive KFN also keeps `gosub_with`, `farcall_with`, `ret_with`, and
 `rtl_with` enabled for newer `1.6.x` interpreters, including Tomoyo After Steam
-`1.6.7.3`.
+`1.6.7.3`, and names the Little Busters! EX `Shk:00010` zero-arg shake opcode
+seen in `SEEN2814`.
 
 ### BABEL runtime folder
 

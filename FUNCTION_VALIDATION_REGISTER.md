@@ -31,9 +31,9 @@ belong elsewhere.
 
 | Function | Opcode | Expected overload | Count FR | Count JP | Status |
 | --- | --- | ---: | ---: | ---: | --- |
-| `strsub` | `1:010:00005` | 1 | 2 | 2 | matched |
-| `itoa_s` | `1:010:00015` | 0 | 10 | 10 | matched |
-| `itoa` | `1:010:00017` | 0 | 36 | 36 | matched |
+| `strsub` | `1:010:00005` | 0 | 2 | 2 | matched |
+| `itoa_s` | `1:010:00015` | 1 | 10 | 10 | matched |
+| `itoa` | `1:010:00017` | 1 | 36 | 36 | matched |
 | `strcpy` 3-arg form | `1:010:00000` | 1 | 6 | 6 | matched |
 | `objOfFileGan` 4-arg form | `1:071:01003` | 1 | 2 | 2 | in-game validated |
 | `objOfFileGan` 7-arg form | `1:071:01003` | 3 | 1 | 1 | in-game validated |
@@ -42,8 +42,8 @@ belong elsewhere.
 
 The `ShakeLayers` JP counts are pending a fresh JP corpus comparison.
 
-Validated rule: RealLive 1.2.3.5 uses overload 0 for `itoa*` calls with
-three encoded args; `strsub` with three encoded args uses overload 1.
+Validated rule: RealLive 1.2.3.5 uses overload 1 for `itoa*` calls with
+three encoded args; `strsub` with three encoded args uses overload 0.
 For RealLive 1.1+ CLANNAD FV bytecode, opcode family `1:071:01003` must
 disassemble through the version-gated `objOfFileGan` name. Reusing the old
 pre-1.1 `objOfFileAnm` source name can compile the call as overload 0 and break
@@ -169,6 +169,20 @@ Validated rule: pre-1.1 RealLive `objBgOfFileAnm` accepts overload ids 0, 1,
 and 2, including the filename + animation-name + visible/x/y form used by
 Little Busters! 2007.
 
+### Little Busters! EX 2008
+
+- Interpreter: RealLive 1.5.2.4.
+- Corpus: 350 `.org` files.
+- Status: Audit V2 function pass on 2026-06-23.
+
+| Function/opcode shape | Evidence | Status |
+| --- | --- | --- |
+| `__shk_00010` zero-arg shake opcode | `SEEN2814` contains opcode `1:013:00010,0` between `__shkzm` and `__shkud`. Historical Audit V1 compiles warned on unresolved `op<1:Shk:00010,0>`. | KFN updated and fresh extraction emits `__shk_00010` |
+
+Validated rule: RealLive 1.5.2.4 can emit the no-argument shake opcode
+`1:013:00010,0`; keep it as a named KFN entry so extracted `.org` files do not
+fall back to raw `op<...>` syntax.
+
 ### Planetarian 2006
 
 - Interpreter: RealLive 1.3.9.5.
@@ -218,8 +232,8 @@ count before the outer special parameter is emitted.
 
 | Rule | Scope | Source |
 | --- | --- | --- |
-| `itoa_ws`, `itoa_s`, `itoa_w`, and `itoa` with three encoded args use overload 0 before RealLive 1.2.9.0 and overload 1 from RealLive 1.2.9.0 onward. | Version-gated | CLANNAD 1.2.3.5, AIR 1.2.9.5 |
-| `strsub` and `strrsub` with three encoded args use overload 1. | General until contradicted | CLANNAD 1.2.3.5 |
+| `itoa_ws`, `itoa_s`, `itoa_w`, and `itoa` with three encoded args use overload 1 in the validated RealLive 1.2.3.5 and 1.2.9.5 corpuses. | Validated RealLive corpuses | CLANNAD 1.2.3.5, AIR 1.2.9.5 |
+| `strsub` and `strrsub` with three encoded args use overload 0; four encoded args use overload 1. | General until contradicted | CLANNAD 1.2.3.5 |
 | KFN return parameters such as `>str` are emitted as real function parameters before assignment rewriting. | General KFN rule | AIR 1.02 |
 | KFN `(store goto)` functions carry a trailing pointer payload. | General KFN rule | CLANNAD Side Stories `SEEN2000` |
 | Encoded `argc` can override ambiguous source parsing when a greedy expression parse swallows a following argument. | Late RealLive/Steam | CLANNAD Steam |
@@ -227,6 +241,7 @@ count before the outer special parameter is emitted.
 | AVG32 Latin-only WESTERN dialogue is emitted as `text_hankaku`; Japanese dialogue remains in the native text form. | AVG32/Kanon | Kanon 1999 all-age / 18+ |
 | pre-1.1 `objBgOfFileAnm` accepts overload id 2 for filename + animation-name + visible/x/y. | RealLive pre-1.1 | Little Busters! 2007 |
 | Same-opcode RealLive function families can require prototype selection by encoded argument count before falling back to the exact overload name. | RealLive KFN overload aliases | Planetarian 2006, Little Busters! 2007 |
+| RealLive `1:013:00010,0` is a zero-argument shake opcode and must remain named in KFN. | RealLive Shk module | Little Busters! EX 2008 |
 | Non-`-g` RealLive extraction must preserve bytecode line markers and kidoku line-table values when sources are intended for recompilation. | RealLive debug/kidoku bytecode | Planetarian 2006 |
 | `objOfFileGan` accepts overload id 2 for filename + GAN-name + visible/x/y. | RealLive KFN GAN functions | Kud Wafter 2010 18+ |
 | Consecutive KFN string parameters must remain distinct source arguments even when their encoded bytes are adjacent. | RealLive KFN string arguments | Kud Wafter 2010 18+ |

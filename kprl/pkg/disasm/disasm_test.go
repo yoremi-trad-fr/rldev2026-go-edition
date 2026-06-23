@@ -758,6 +758,23 @@ fun __shkud ShakeScreen <1:012:01100, 0> (='DOWNUP', 'amount')
 	}
 }
 
+func TestLittleBustersExShk00010UsesNamedZeroArgFunction(t *testing.T) {
+	kfnPath := filepath.Join("..", "..", "..", "KFN", "reallive.kfn")
+	reg, err := LoadKFNForTarget(kfnPath, ModeRealLive, Version{1, 5, 2, 4})
+	if err != nil {
+		t.Fatalf("LoadKFNForTarget() error: %v", err)
+	}
+
+	op := Opcode{Type: 1, Module: 13, Function: 10, Overload: 0}
+	def, ok := reg.LookupOpcodeForArgc(op, 0)
+	if !ok {
+		t.Fatal("Shk:00010 zero-arg opcode not found")
+	}
+	if def.Name != "__shk_00010" {
+		t.Fatalf("Shk:00010 name = %q, want __shk_00010", def.Name)
+	}
+}
+
 func TestReadFunctionGenericGotoPointer(t *testing.T) {
 	data := []byte{
 		'(',

@@ -1683,6 +1683,7 @@ module 013 = Shk // Simple shaking functions
 // -----------------------------------------------------------------------------
 
   fun ShakeStop               <1:Shk:00000, 1> ('speed') ()
+  fun __shk_00010             <1:Shk:00010, 0> () // purpose unknown; seen in Little Busters! EX
 
   fun __shkud ShakeScreen     <1:Shk:01100, 0> (='DOWNUP',    'amount', 'speed', 'rep', 'faderep')
   fun __shkrl ShakeScreen     <1:Shk:01101, 0> (='RIGHTLEFT', 'amount', 'speed', 'rep', 'faderep')
