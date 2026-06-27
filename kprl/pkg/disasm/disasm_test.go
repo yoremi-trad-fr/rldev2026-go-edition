@@ -549,6 +549,109 @@ func TestReadSelectKeepsQuotedContinuations(t *testing.T) {
 	}
 }
 
+func TestReadSelectKeepsAdjacentEmptyItems(t *testing.T) {
+	data := []byte{'{', '\n', 0x5a, 0x48, '\n', 0x5a, 0x48, '\n', 0x5a, 0x48, '}'}
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	result := &DisassemblyResult{}
+	cmd := Command{}
+	opts := Options{SeparateStrings: true}
+
+	if err := readSelect(r, result, &cmd, Opcode{Function: 1}, 2, opts); err != nil {
+		t.Fatalf("readSelect error: %v", err)
+	}
+	if len(result.Commands) != 1 {
+		t.Fatalf("command count = %d, want 1", len(result.Commands))
+	}
+	got := result.Commands[0].Kepago[0].(ElemString).Value
+	if want := "select('', '')"; got != want {
+		t.Fatalf("select command = %q, want %q", got, want)
+	}
+}
+
+func TestReadSelectTreatsEmptyPrintMarkersAsEmptyItems(t *testing.T) {
+	data := []byte{'{'}
+	data = append(data, '\n', 0x5a, 0x48)
+	data = append(data, []byte(`###PRINT("")`)...)
+	data = append(data, '\n', 0x5a, 0x48)
+	data = append(data, []byte(`###PRINT("")`)...)
+	data = append(data, '\n', 0x5a, 0x48, '}')
+
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	result := &DisassemblyResult{}
+	cmd := Command{}
+	opts := Options{SeparateStrings: true}
+
+	if err := readSelect(r, result, &cmd, Opcode{Function: 1}, 2, opts); err != nil {
+		t.Fatalf("readSelect error: %v", err)
+	}
+	if len(result.Commands) != 1 {
+		t.Fatalf("command count = %d, want 1", len(result.Commands))
+	}
+	got := result.Commands[0].Kepago[0].(ElemString).Value
+	if want := "select('', '')"; got != want {
+		t.Fatalf("select command = %q, want %q", got, want)
+	}
+}
+
+func TestReadSelectKeepsConditionalEmptyItems(t *testing.T) {
+	data := []byte{'{'}
+	data = append(data, '\n', 0x5a, 0x48)
+	data = append(data, []byte{'(', '(', '$', 0xff, 1, 0, 0, 0, ')', '2', ')'}...)
+	data = append(data, []byte("ONE")...)
+	data = append(data, '\n', 0x5a, 0x48)
+	data = append(data, []byte{'(', '(', '$', 0xff, 2, 0, 0, 0, ')', '2', ')'}...)
+	data = append(data, '\n', 0x5a, 0x48, '}')
+
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	result := &DisassemblyResult{}
+	cmd := Command{}
+	opts := Options{SeparateStrings: true}
+
+	if err := readSelect(r, result, &cmd, Opcode{Function: 1}, 2, opts); err != nil {
+		t.Fatalf("readSelect error: %v", err)
+	}
+	if len(result.Commands) != 1 {
+		t.Fatalf("command count = %d, want 1", len(result.Commands))
+	}
+	got := result.Commands[0].Kepago[0].(ElemString).Value
+	want := "select(\n    hide if 1: #res<0000>,\n    hide if 2: ''\n)"
+	if got != want {
+		t.Fatalf("select command = %q, want %q", got, want)
+	}
+}
+
+func TestReadSelectToleratesRawQuotesWithCommaInItem(t *testing.T) {
+	data := []byte{'{'}
+	data = append(data, '\n', 0x5a, 0x48)
+	data = append(data, []byte(`"Se faire des fantasmes excessifs"`)...)
+	data = append(data, '\n', 0x5a, 0x48)
+	data = append(data, []byte(`"Dire "dans ce cas, je m'en vais..." et partir"`)...)
+	data = append(data, '\n', 0x5a, 0x48, '}')
+
+	r := NewReader(data, 0, len(data), ModeRealLive)
+	result := &DisassemblyResult{}
+	cmd := Command{}
+	opts := Options{SeparateStrings: true}
+
+	if err := readSelect(r, result, &cmd, Opcode{Function: 1}, 2, opts); err != nil {
+		t.Fatalf("readSelect error: %v", err)
+	}
+	if len(result.Commands) != 1 {
+		t.Fatalf("command count = %d, want 1", len(result.Commands))
+	}
+	got := result.Commands[0].Kepago[0].(ElemString).Value
+	if want := "select(#res<0000>, #res<0001>)"; got != want {
+		t.Fatalf("select command = %q, want %q", got, want)
+	}
+	if len(result.ResStrs) != 2 {
+		t.Fatalf("resource count = %d, want 2", len(result.ResStrs))
+	}
+	want := `Dire "dans ce cas, je m'en vais..." et partir`
+	if result.ResStrs[1] != want {
+		t.Fatalf("resource[1] = %q, want %q", result.ResStrs[1], want)
+	}
+}
+
 func TestReaderExpectSuccess(t *testing.T) {
 	data := []byte{'(', ')'}
 	r := NewReader(data, 0, 2, ModeRealLive)
@@ -775,7 +878,7 @@ func TestLittleBustersExShk00010UsesNamedZeroArgFunction(t *testing.T) {
 	}
 }
 
-func TestReadFunctionGenericGotoPointer(t *testing.T) {
+func TestReadFunctionGosubWithPointerWithoutKFN(t *testing.T) {
 	data := []byte{
 		'(',
 		'a', 0x00,
@@ -787,14 +890,7 @@ func TestReadFunctionGenericGotoPointer(t *testing.T) {
 	}
 	r := NewReader(data, 0, len(data), ModeRealLive)
 	result := &DisassemblyResult{Pointers: make(map[int]bool)}
-	reg := NewFuncRegistry()
-	reg.Register("0:001:00016,0", FuncDef{
-		Name:       "gosub_with",
-		Flags:      []FuncFlag{FlagPushStore, FlagIsGoto},
-		Prototypes: [][]ParamType{{ParamAny}},
-	})
 	opts := DefaultOptions()
-	opts.FuncReg = reg
 
 	op := Opcode{Type: 0, Module: 1, Function: 16, Overload: 0}
 	if err := readFunction(r, result, 0, op, 1, opts); err != nil {

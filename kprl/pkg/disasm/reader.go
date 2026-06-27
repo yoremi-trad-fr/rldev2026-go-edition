@@ -26,8 +26,9 @@ type Reader struct {
 	mode   EngineMode
 
 	// Optional context for resource emission.
-	result *DisassemblyResult
-	opts   *Options
+	result         *DisassemblyResult
+	opts           *Options
+	selectTextMode bool
 }
 
 // NewReader creates a bytecode reader starting at origin.
@@ -919,11 +920,29 @@ func (r *Reader) hasQuoteBeforeCloseDelimiter() bool {
 		switch r.data[i] {
 		case '"':
 			return true
-		case ')', ',', '\n', '}':
+		case ')', '\n', '}':
+			return false
+		case ',':
+			if !r.selectTextMode || r.selectCommaEndsString(i) {
+				return false
+			}
+		case '$':
 			return false
 		}
 	}
 	return false
+}
+
+func (r *Reader) selectCommaEndsString(pos int) bool {
+	if pos+1 >= r.limit {
+		return true
+	}
+	switch r.data[pos+1] {
+	case '"', '\n', '(', ',', '}':
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *Reader) isStringStartByte(b byte) bool {
@@ -1355,6 +1374,7 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 	//     fn 10  ret          <0:Jmp:00010, 0>
 	//     fn 11  jump         <0:Jmp:00011, 1>
 	//     fn 12  farcall      <0:Jmp:00012, 1>
+	//     fn 16  gosub_with   <0:Jmp:00016, 0>
 	switch {
 	case op.Module == 1 && (op.Function == 0 || op.Function == 5):
 		// goto / gosub: 4-byte pointer follows directly.
@@ -1380,6 +1400,13 @@ func readFunction(r *Reader, result *DisassemblyResult, offset int, op Opcode, a
 		cmd.IsJmp = true
 		result.Commands = append(result.Commands, cmd)
 		return nil
+
+	case op.Module == 1 && op.Function == 16:
+		// gosub_with: '(' special args ')' then 4-byte pointer.
+		// This opcode only appears in newer KFN versions, but re-extracted
+		// archives can contain it even when kprl is invoked without -f. Keep
+		// it hard-coded so the trailing pointer never desyncs the stream.
+		return readGosubWithLike(r, result, &cmd, op, argc, opts)
 
 	case op.Module == 10 && (op.Function == 0 || op.Function == 2) && op.Overload == 0:
 		// Strcpy / Strcat short form. OCaml disassembler.ml L2537-L2548:
@@ -1857,12 +1884,16 @@ func readSelect(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, a
 
 	items := make([]string, 0, argc)
 	for i := 0; i < argc; i++ {
-		skipDebugInfo(r)
+		skipSelectItemPrefix(r)
 
 		// OCaml allows an empty item shown as `''`. Detect by peeking
 		// at the next byte: a debug-info newline marker (0x0a) at
 		// item position means "blank option".
 		if b, err := r.Peek(); err == nil && b == 0x0a {
+			items = append(items, "''")
+			continue
+		}
+		if readSelectEmptyPrintItem(r) {
 			items = append(items, "''")
 			continue
 		}
@@ -1875,10 +1906,17 @@ func readSelect(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, a
 				break
 			}
 		}
+		if selectItemTextIsEmpty(r) {
+			items = append(items, cond+"''")
+			continue
+		}
 
 		// Read the item — get_data dispatches to readStringUnquot
 		// for bare strings and the ###PRINT( marker.
+		oldSelectTextMode := r.selectTextMode
+		r.selectTextMode = true
 		s, err := r.GetDataSep(opts.SeparateStrings)
+		r.selectTextMode = oldSelectTextMode
 		if err != nil {
 			// Best-effort: stop on error, let main loop continue.
 			items = append(items, fmt.Sprintf("/* read error: %v */", err))
@@ -1924,6 +1962,58 @@ func readSelect(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, a
 	cmd.Kepago = []CommandElem{ElemString{Value: sb.String()}}
 	result.Commands = append(result.Commands, cmd_unhide(*cmd))
 	return nil
+}
+
+func skipSelectItemPrefix(r *Reader) {
+	for !r.AtEnd() {
+		b, err := r.Peek()
+		if err != nil || b != ',' {
+			break
+		}
+		r.Next()
+	}
+	if b, err := r.Peek(); err == nil && b == '\n' {
+		r.Next()
+		if r.mode == ModeAvg2000 {
+			_, _ = r.ReadInt32()
+		} else {
+			_, _ = r.ReadUint16()
+		}
+	}
+	for !r.AtEnd() {
+		b, err := r.Peek()
+		if err != nil || b != ',' {
+			return
+		}
+		r.Next()
+	}
+}
+
+func readSelectEmptyPrintItem(r *Reader) bool {
+	markers := [][]byte{
+		[]byte(`###PRINT("")`),
+		{'#', '#', '#', 'P', 'R', 0x01, 0x00, 'T', '(', '"', '"', ')'},
+	}
+	for _, marker := range markers {
+		if r.lookAheadBytes(marker) {
+			r.pos += len(marker)
+			return true
+		}
+	}
+	return false
+}
+
+func selectItemTextIsEmpty(r *Reader) bool {
+	b, err := r.Peek()
+	if err != nil {
+		return true
+	}
+	switch b {
+	case '\n', ',', '}':
+		return true
+	default:
+		return false
+	}
 }
 
 func readSelectCond(r *Reader) (string, error) {
@@ -2125,6 +2215,41 @@ func readGotoLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode,
 		result.Pointers[int(target)] = true
 	}
 	cmd.Kepago = []CommandElem{ElemString{Value: fmt.Sprintf("%s @@PTR=%d@@", name, target)}}
+	result.Commands = append(result.Commands, *cmd)
+	return nil
+}
+
+func readGosubWithLike(r *Reader, result *DisassemblyResult, cmd *Command, op Opcode, argc int, opts Options) error {
+	r.result = result
+	r.opts = &opts
+
+	args, err := readFuncArgsCtx(r, argc, nil, &op)
+	if err != nil {
+		return err
+	}
+	target, err := r.ReadInt32()
+	if err != nil {
+		return err
+	}
+	if result.Pointers != nil {
+		result.Pointers[int(target)] = true
+	}
+
+	var sb strings.Builder
+	sb.WriteString("gosub_with")
+	if len(args) > 0 {
+		sb.WriteString(" (")
+		for i, arg := range args {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(arg)
+		}
+		sb.WriteByte(')')
+	}
+	fmt.Fprintf(&sb, " @@PTR=%d@@", target)
+
+	cmd.Kepago = []CommandElem{ElemStore{Value: ""}, ElemString{Value: sb.String()}}
 	result.Commands = append(result.Commands, *cmd)
 	return nil
 }

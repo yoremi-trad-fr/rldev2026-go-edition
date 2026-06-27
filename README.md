@@ -1,4 +1,4 @@
-### Status update: `23/06/2026`
+### Status update: `27/06/2026`
 <table>
   <tr>
     <td align="center" width="100%">
@@ -6,6 +6,8 @@
     </td>
   </tr>
 </table>
+
+Update : 27/06/2026 : v1.3.3 fixes a post-audit re-extraction regression: empty/conditional select choices and fallback `gosub_with` disassembly now roundtrip warning-free again on Little Busters!, Little Busters! EX, Kud Wafter, and Tomoyo After test files
 
 Update : 23/06/2026 : v1.3.2 fixes: `kprl` now auto-detects the RealLive interpreter version before KFN disassembly, restores Little Busters!/Tomoyo After warning-free extraction, and keeps modern `gosub_with`/`farcall_with` opcodes available for Tomoyo After Steam
 
@@ -243,6 +245,16 @@ RealLive KFN also keeps `gosub_with`, `farcall_with`, `ret_with`, and
 `rtl_with` enabled for newer `1.6.x` interpreters, including Tomoyo After Steam
 `1.6.7.3`, and names the Little Busters! EX `Shk:00010` zero-arg shake opcode
 seen in `SEEN2814`.
+
+Version 1.3.3 fixes a regression found while re-extracting SEEN archives
+compiled by the Go fork after Audit V1. Select blocks now preserve adjacent
+empty items, `###PRINT("")` empty choices, quoted labels containing commas, and
+conditional blank choices without consuming the next option. `kprl` also
+hard-codes the `gosub_with` bytecode shape so archives using that instruction
+stay aligned even when extraction is launched with an older/default KFN version.
+The fix was checked against the warning-producing Little Busters!, Little
+Busters! EX, Kud Wafter, Tomoyo After 2005, Tomoyo After Memorial Edition 2010,
+and Tomoyo After Steam files.
 
 ### BABEL runtime folder
 

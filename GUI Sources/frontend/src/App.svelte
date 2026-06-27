@@ -660,7 +660,7 @@
         <div class="about-modal-header">
           <div>
             <div id="about-title" class="about-title">Rldev2026-Go édition</div>
-            <div class="about-version">Version 1.3 - juin 2026</div>
+            <div class="about-version">Version 1.3.3 - juin 2026</div>
           </div>
           <button class="about-close" aria-label="Fermer" on:click={() => showAbout = false}>×</button>
         </div>

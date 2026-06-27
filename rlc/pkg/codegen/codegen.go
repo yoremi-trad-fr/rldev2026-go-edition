@@ -433,6 +433,8 @@ func (o *Output) EmitSelectParamExpr(loc ast.Loc, e ast.Expr) {
 				return
 			}
 		}
+		o.emitSelectText(x.Loc, "")
+		return
 	case ast.StrLit:
 		if raw, ok := strLitPlainText(x); ok {
 			o.emitSelectText(x.Loc, raw)
@@ -484,6 +486,9 @@ func (o *Output) emitSelectText(loc ast.Loc, raw string) {
 		if hasUnsafeUnquotedByte(b) {
 			setQuotes(true)
 		}
+		if quoted {
+			b = escapeSelectQuotedText(b)
+		}
 		o.AddCodeRaw(loc, b)
 	}
 
@@ -509,6 +514,20 @@ func (o *Output) emitSelectText(loc ast.Loc, raw string) {
 	}
 	flushText(len(r))
 	setQuotes(false)
+}
+
+func escapeSelectQuotedText(b []byte) []byte {
+	if !bytes.Contains(b, []byte{'"'}) {
+		return b
+	}
+	out := make([]byte, 0, len(b)+bytes.Count(b, []byte{'"'}))
+	for _, c := range b {
+		if c == '"' {
+			out = append(out, '\\')
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 func unescapeSelectTextChunk(s string) string {

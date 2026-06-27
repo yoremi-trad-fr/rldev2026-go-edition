@@ -3,6 +3,28 @@
 This file tracks the RLdev2026 Go Edition beta history and the compatibility
 fixes validated during the project sessions.
 
+## v1.3.3 - 2026-06-27
+
+Post-audit RealLive re-extraction regression fixes:
+
+- Fixed select-block disassembly for adjacent empty choices, `###PRINT("")`
+  empty choices, quoted choice text containing commas or inner quotes, and
+  conditional blank choices. These cases could desync re-extraction of SEEN
+  archives compiled by the Go fork after Audit V1.
+- Added a hard-coded `gosub_with` reader for opcode `<0:Jmp:00016, 0>`, so the
+  trailing pointer is consumed correctly even when `kprl` is launched with an
+  older/default KFN version that does not register the newer function name.
+- Kept the compiler-side select fixes from the warning audit: missing select
+  resources now compile as empty choices and quoted select labels escape inner
+  quotes before bytecode emission.
+
+Validation:
+
+- Re-extracted the warning-producing files from Little Busters!, Little
+  Busters! EX, Kud Wafter, Tomoyo After 2005, Tomoyo After Memorial Edition
+  2010, and Tomoyo After Steam with no warnings on the targeted scenes.
+- Automated checks passed for the full `kprl` and `rlc` Go packages.
+
 ## v1.3.2 - 2026-06-23
 
 Audit v2 RealLive extraction compatibility:

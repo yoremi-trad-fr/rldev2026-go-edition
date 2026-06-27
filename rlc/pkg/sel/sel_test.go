@@ -87,6 +87,24 @@ func TestEmitSelectResourceStringVar(t *testing.T) {
 	}
 }
 
+func TestEmitSelectMissingResourceEmitsEmptyChoice(t *testing.T) {
+	out := codegen.NewOutput()
+	out.ResolveRes = func(key string) (string, bool) {
+		return "", false
+	}
+	params := []SelParam{{Kind: SelAlways, Expr: ast.ResRef{Key: "2364"}}}
+	if err := EmitSelect(out, ast.Loc{Line: 1}, 1, nil, ast.StoreRef{}, params); err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	for _, ir := range out.IR {
+		got = append(got, ir.Bytes...)
+	}
+	if bytes.Contains(got, []byte("###PRINT(")) {
+		t.Fatalf("missing select resource should not emit unreadable ###PRINT fallback, got %q", string(got))
+	}
+}
+
 func TestEmitSelectResourceUnescapesBackslashPairs(t *testing.T) {
 	out := codegen.NewOutput()
 	out.ResolveRes = func(key string) (string, bool) {
@@ -108,6 +126,30 @@ func TestEmitSelectResourceUnescapesBackslashPairs(t *testing.T) {
 	}
 	if bytes.Contains(got, []byte(`R\\u`)) {
 		t.Fatalf("select resource kept doubled backslashes: %q", string(got))
+	}
+}
+
+func TestEmitSelectResourceEscapesQuotesInsideQuotedText(t *testing.T) {
+	out := codegen.NewOutput()
+	out.ResolveRes = func(key string) (string, bool) {
+		if key == "0026" {
+			return `Dire "dans ce cas, je m'en vais..." et partir`, true
+		}
+		return "", false
+	}
+	params := []SelParam{{Kind: SelAlways, Expr: ast.ResRef{Key: "0026"}}}
+	if err := EmitSelect(out, ast.Loc{Line: 1}, 1, nil, ast.StoreRef{}, params); err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	for _, ir := range out.IR {
+		got = append(got, ir.Bytes...)
+	}
+	if !bytes.Contains(got, []byte(`\"dans ce cas, je m'en vais...\"`)) {
+		t.Fatalf("select resource should escape embedded quotes in quoted text, got %q", string(got))
+	}
+	if bytes.Contains(got, []byte(`Dire "dans`)) {
+		t.Fatalf("select resource kept raw embedded quote: %q", string(got))
 	}
 }
 
