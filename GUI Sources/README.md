@@ -8,6 +8,7 @@ La GUI expose uniquement les outils RLdev Go :
 - RLC/KPRL : compile `.org` / `.ke` / `.avg`, simple ou batch
 - Vaconv : G00 ↔ PNG
 - RlXml : GAN ↔ XML
+- RlSave : inspect/edit AVG_GLOBAL_SAVE `.sav` values
 
 ## Build
 
@@ -35,6 +36,7 @@ bin/kprl16.exe
 bin/rlc2026.exe
 bin/vaconv.exe
 bin/rlxml.exe
+bin/rlsave.exe
 bin/lib/reallive.kfn
 bin/lib/avg32.kfn
 ```

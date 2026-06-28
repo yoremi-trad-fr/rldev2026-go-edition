@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # RLdev2026-Go command line tools build script.
-# Native Linux builds produce bin/kprl16, bin/rlc2026, bin/rlxml and bin/vaconv.
+# Native Linux builds produce bin/kprl16, bin/rlc2026, bin/rlxml, bin/vaconv and bin/rlsave.
 # Windows builds produce the same names with .exe and embed version resources.
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,7 +51,7 @@ build_tool() {
   local name="$2"
   local pkg="$3"
 
-  echo "[$step/4] Building ${name}${EXT}..."
+  echo "[$step/5] Building ${name}${EXT}..."
   (cd "$SCRIPT_DIR" && go build -trimpath -o "$OUTDIR/${name}${EXT}" "$pkg")
 }
 
@@ -59,13 +59,13 @@ build_tool 1 kprl16 ./kprl/cmd/kprl
 build_tool 2 rlc2026 ./rlc/cmd/rlc
 build_tool 3 rlxml ./rlxml/cmd/rlxml
 build_tool 4 vaconv ./vaconv/cmd/vaconv
+build_tool 5 rlsave ./kprl/cmd/rlsave
 
 echo
 echo "  All tools built successfully:"
-for tool in kprl16 rlc2026 rlxml vaconv; do
+for tool in kprl16 rlc2026 rlxml vaconv rlsave; do
   if [[ -f "$OUTDIR/${tool}${EXT}" ]]; then
     ls -lh "$OUTDIR/${tool}${EXT}"
   fi
 done
 echo
-

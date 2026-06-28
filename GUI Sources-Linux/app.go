@@ -110,6 +110,7 @@ func (a *App) toolPath(toolName string) (string, error) {
 		"rlc":    "rlc2026",
 		"vaconv": "vaconv",
 		"rlxml":  "rlxml",
+		"rlsave": "rlsave",
 	}
 
 	exeName, ok := allowed[toolName]
@@ -804,4 +805,92 @@ func (a *App) RldevXmlToGan(xmlFile, outputDir string) string {
 	}
 	a.logOK("Conversion terminee: " + outputFile)
 	return ""
+}
+
+func (a *App) RldevSaveInfo(saveFile string) string {
+	a.log("========================================")
+	a.log("  RLdev - Infos sauvegarde RealLive")
+	a.log("========================================")
+
+	if err := required("fichier .sav", saveFile); err != nil {
+		return a.failIf(err)
+	}
+	if err := a.runTool("rlsave", "info", saveFile); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+func (a *App) RldevSaveGet(saveFile, refs string) string {
+	a.log("========================================")
+	a.log("  RLdev - Lecture sauvegarde RealLive")
+	a.log("========================================")
+
+	if err := required("fichier .sav", saveFile); err != nil {
+		return a.failIf(err)
+	}
+	fields, err := saveArgFields("variables", refs)
+	if err != nil {
+		return a.failIf(err)
+	}
+	args := append([]string{"get", saveFile}, fields...)
+	if err := a.runTool("rlsave", args...); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+func (a *App) RldevSaveSet(saveFile, assignments string, backup bool) string {
+	a.log("========================================")
+	a.log("  RLdev - Edition sauvegarde RealLive")
+	a.log("========================================")
+
+	if err := required("fichier .sav", saveFile); err != nil {
+		return a.failIf(err)
+	}
+	fields, err := saveArgFields("assignations", assignments)
+	if err != nil {
+		return a.failIf(err)
+	}
+	args := []string{"set"}
+	if !backup {
+		args = append(args, "-no-backup")
+	}
+	args = append(args, saveFile)
+	args = append(args, fields...)
+	if err := a.runTool("rlsave", args...); err != nil {
+		return err.Error()
+	}
+	a.logOK("Sauvegarde mise a jour.")
+	return ""
+}
+
+func (a *App) RldevSaveDump(saveFile string, includeAll, jsonOutput bool) string {
+	a.log("========================================")
+	a.log("  RLdev - Dump sauvegarde RealLive")
+	a.log("========================================")
+
+	if err := required("fichier .sav", saveFile); err != nil {
+		return a.failIf(err)
+	}
+	args := []string{"dump"}
+	if includeAll {
+		args = append(args, "-all")
+	}
+	if jsonOutput {
+		args = append(args, "-json")
+	}
+	args = append(args, saveFile)
+	if err := a.runTool("rlsave", args...); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+func saveArgFields(label, value string) ([]string, error) {
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("%s requis", label)
+	}
+	return fields, nil
 }

@@ -51,7 +51,7 @@ func main() {
 	root := flag.String("root", ".", "repository root")
 	flag.Parse()
 
-	version := [4]uint16{2026, 0, 0, 0}
+	version := [4]uint16{1, 3, 4, 0}
 	tools := []toolInfo{
 		{
 			OutPath:      filepath.Join(*root, "kprl", "cmd", "kprl", "rldev_windows_amd64.syso"),
@@ -76,6 +76,12 @@ func main() {
 			InternalName: "vaconv",
 			OriginalName: "vaconv.exe",
 			Description:  "Vaconv - VisualArt's G00 image converter",
+		},
+		{
+			OutPath:      filepath.Join(*root, "kprl", "cmd", "rlsave", "rldev_windows_amd64.syso"),
+			InternalName: "rlsave",
+			OriginalName: "rlsave.exe",
+			Description:  "RlSave - RealLive save inspector and editor",
 		},
 	}
 

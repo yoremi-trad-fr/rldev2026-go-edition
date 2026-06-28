@@ -1,4 +1,4 @@
-### Status update: `27/06/2026`
+### Status update: `28/06/2026`
 <table>
   <tr>
     <td align="center" width="100%">
@@ -6,6 +6,8 @@
     </td>
   </tr>
 </table>
+
+Update : 28/06/2026 : v1.3.4 adds `rlsave`, a RealLive save inspector/editor for `AVG_GLOBAL_SAVE` / `save999.sav` `intG` values, with Windows/Linux GUI integration and automatic backups before writes
 
 Update : 27/06/2026 : v1.3.3 fixes a post-audit re-extraction regression: empty/conditional select choices and fallback `gosub_with` disassembly now roundtrip warning-free again on Little Busters!, Little Busters! EX, Kud Wafter, and Tomoyo After test files
 
@@ -130,6 +132,8 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 ### -Babel workflow: runtime setup helper, `global.kh` helper, RealLive version override, and experimental `#load 'rlBabel'` compiler path for old RealLive translation work
 
 ### -BABEL release folder support: bundled runtime files are expected under `BABEL/rtl`
+
+### -RealLive save editor: `rlsave` and the GUI can inspect/edit `AVG_GLOBAL_SAVE` / `save999.sav` `intG` values with automatic backups
 
 ### -ORG/KE text workflow: GUI `Extract text ORG` and `rlc --text-export/--text-import` export dialogue strings to editable `.utf` files and import translated text back into `.org/.ke` sources
 
@@ -256,6 +260,14 @@ The fix was checked against the warning-producing Little Busters!, Little
 Busters! EX, Kud Wafter, Tomoyo After 2005, Tomoyo After Memorial Edition 2010,
 and Tomoyo After Steam files.
 
+Version 1.3.4 adds `rlsave`, a RealLive save inspector/editor. It can decode
+compressed `.sav` bodies, identify global/game/system save kinds, read selected
+global `intG` values, dump all non-zero `intG` values, and write targeted
+`AVG_GLOBAL_SAVE` / `save999.sav` counters with timestamped backups. The Windows
+and Linux GUIs now expose the same workflow through a RealLive save editor panel,
+which is useful for route flags, one-shot animations, and other global progress
+counters without deleting regular save slots.
+
 ### BABEL runtime folder
 
 For releases, the Babel runtime pack should keep only the runtime files needed
@@ -318,6 +330,26 @@ default when the archive requires it.
 | `PRID` | Princess Heart Link DL edition |
 | `HINA` | Hinasawa Tomoka no Zettai Joousei |
 | `LUV` | Lovedori Halation |
+
+### RealLive save editor (`rlsave`)
+
+`rlsave` inspects and edits RealLive `.sav` files. The first supported editing
+target is `AVG_GLOBAL_SAVE` / `save999.sav`, whose first 4000 32-bit values map
+to global `intG` variables. Regular save slots can already be decoded with
+`info`, but their variable banks are intentionally read-only until their layout
+is mapped per engine/version.
+
+Examples:
+
+```bat
+rlsave.exe info SAVEDATA\save999.sav
+rlsave.exe get SAVEDATA\save999.sav intG[30] intG[0]
+rlsave.exe set SAVEDATA\save999.sav intG[30]=0 intG[0]=2
+rlsave.exe dump -json SAVEDATA\save999.sav
+```
+
+Writes create a timestamped `.bak-YYYYMMDD-HHMMSS` backup by default. Use
+`-no-backup` only when the save folder is already backed up elsewhere.
 
 
 <table>

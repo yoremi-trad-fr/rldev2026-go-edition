@@ -24,6 +24,10 @@
     RldevNwaToAudio,
     RldevDatToJson,
     RldevDatJsonToBinary,
+    RldevSaveInfo,
+    RldevSaveGet,
+    RldevSaveSet,
+    RldevSaveDump,
     RldevBabelPrepareRuntime,
     RldevBabelWriteHeader,
     DetectRealLiveVersion
@@ -77,6 +81,12 @@
   let rlDatJsonFile = '';
   let rlDatJsonDir = '';
   let rlDatJsonBatch = false;
+  let rlSaveFile = '';
+  let rlSaveRefs = 'intG[0] intG[6] intG[30] intG[31]';
+  let rlSaveAssignments = 'intG[6]=0 intG[30]=0';
+  let rlSaveBackup = true;
+  let rlSaveDumpAll = false;
+  let rlSaveDumpJson = false;
   let rlBabelRoot = '';
   let rlBabelGameDir = '';
   let rlBabelVersion = '1.2.3.5';
@@ -104,6 +114,8 @@
     { id: '_rs6', label: 'DAT (CG/TCC)', section: true },
     { id: 'dat_to_json', label: 'CGM/TCC → JSON' },
     { id: 'dat_from_json', label: 'JSON → CGM/TCC' },
+    { id: '_rs_save', label: 'SAVE', section: true },
+    { id: 'save_editor', label: 'RealLive save editor' },
     { id: '_rs7', label: 'BABEL', section: true },
     { id: 'babel_runtime', label: 'Runtime setup' },
     { id: 'babel_header', label: 'global.kh helper' }
@@ -185,7 +197,7 @@
   onMount(async () => {
     EventsOn('log', (msg) => addLine(msg));
     addLine('RLdev 2026 - Go édition');
-    addLine('Prêt. Place les binaires dans ./bin : kprl16.exe, rlc2026.exe, vaconv.exe, rlxml.exe.');
+    addLine('Prêt. Place les binaires dans ./bin : kprl16.exe, rlc2026.exe, vaconv.exe, rlxml.exe, rlsave.exe.');
     const kfn = await DefaultKFN();
     if (kfn && !rlKfnFile) {
       rlKfnFile = kfn;
@@ -328,6 +340,10 @@
       if (f) rlDatJsonFile = f;
     }
   }
+  async function browseRlSave() {
+    const f = await SelectFile('Select RealLive save', '*.sav;*.SAV', 'RealLive saves');
+    if (f) rlSaveFile = f;
+  }
   async function browseRlBabelRoot() {
     const d = await SelectDirectory('Select BABEL folder');
     if (d) rlBabelRoot = d;
@@ -432,6 +448,18 @@
   }
   function startDatFromJson() {
     run(() => RldevDatJsonToBinary(rlDatJsonBatch ? rlDatJsonDir : rlDatJsonFile, rlOutputDir, rlDatJsonBatch));
+  }
+  function startSaveInfo() {
+    run(() => RldevSaveInfo(rlSaveFile));
+  }
+  function startSaveGet() {
+    run(() => RldevSaveGet(rlSaveFile, rlSaveRefs));
+  }
+  function startSaveSet() {
+    run(() => RldevSaveSet(rlSaveFile, rlSaveAssignments, rlSaveBackup));
+  }
+  function startSaveDump() {
+    run(() => RldevSaveDump(rlSaveFile, rlSaveDumpAll, rlSaveDumpJson));
   }
   function startBabelRuntime() {
     run(() => RldevBabelPrepareRuntime(rlBabelRoot, rlBabelGameDir, rlBabelVersion, rlBabelDllMode, rlBabelNameEnc, rlBabelUpdateGameexe));
@@ -633,6 +661,24 @@
         <div class="form-group"><label>Output folder :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
         <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startDatFromJson} disabled={(rlDatJsonBatch ? !rlDatJsonDir : !rlDatJsonFile) || !rlOutputDir}>Rebuild DAT</button>{/if}</div>
 
+      {:else if rldevSelectedOp === 'save_editor'}
+        <div class="form-title">RealLive save editor</div>
+        <div class="form-group"><label>Save file :</label><div class="form-row"><input type="text" bind:value={rlSaveFile} readonly /><button class="btn" on:click={browseRlSave}>Select</button></div></div>
+        <div class="form-group"><label>Variables :</label><div class="form-row"><input type="text" bind:value={rlSaveRefs} placeholder="intG[0] intG[6] intG[30]" /></div></div>
+        <div class="form-group"><label>Assignations :</label><div class="form-row"><input type="text" bind:value={rlSaveAssignments} placeholder="intG[6]=0 intG[30]=0" /></div></div>
+        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveBackup} /> Backup before write</label></div></div>
+        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveDumpAll} /> Dump all intG values</label><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveDumpJson} /> JSON</label></div></div>
+        <div class="form-actions">
+          {#if running}
+            <span class="running-indicator"></span> Running...
+          {:else}
+            <button class="btn" on:click={startSaveInfo} disabled={!rlSaveFile}>Info</button>
+            <button class="btn" on:click={startSaveGet} disabled={!rlSaveFile || !rlSaveRefs.trim()}>Get</button>
+            <button class="btn" on:click={startSaveDump} disabled={!rlSaveFile}>Dump</button>
+            <button class="btn btn-primary" on:click={startSaveSet} disabled={!rlSaveFile || !rlSaveAssignments.trim()}>Set</button>
+          {/if}
+        </div>
+
       {:else if rldevSelectedOp === 'babel_runtime'}
         <div class="form-title">Babel runtime setup</div>
         <div class="form-hint" style="margin-bottom:10px">Copie rlBabel dans le dossier du jeu, ajoute la map de version si elle existe, et peut préparer GAMEEXE.INI.</div>
@@ -660,7 +706,7 @@
         <div class="about-modal-header">
           <div>
             <div id="about-title" class="about-title">Rldev2026-Go édition</div>
-            <div class="about-version">Version 1.3.3 - juin 2026</div>
+            <div class="about-version">Version 1.3.4 - juin 2026</div>
           </div>
           <button class="about-close" aria-label="Fermer" on:click={() => showAbout = false}>×</button>
         </div>

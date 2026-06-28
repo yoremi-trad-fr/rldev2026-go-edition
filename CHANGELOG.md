@@ -3,6 +3,28 @@
 This file tracks the RLdev2026 Go Edition beta history and the compatibility
 fixes validated during the project sessions.
 
+## v1.3.4 - 2026-06-28
+
+RealLive save tooling:
+
+- Added the new `rlsave` command-line tool for RealLive `.sav` files.
+- `rlsave info` decodes compressed save bodies and reports save kind, header
+  size, compressed size, and uncompressed size.
+- `rlsave get`, `rlsave set`, and `rlsave dump` support `AVG_GLOBAL_SAVE` /
+  `save999.sav` global `intG` values, with timestamped backups before writes.
+- Integrated the save editor into the Windows and Linux Wails GUIs with Info,
+  Get, Dump, and Set actions.
+- Regular game slots can be inspected for now; their variable banks remain
+  read-only until the per-slot layout is mapped safely.
+
+Validation:
+
+- Confirmed the supplied CLANNAD 2007 `save999.sav` global flags can be read
+  through `rlsave`, including the Yukine-route `intG[6]` / `intG[30]` counters.
+- Built the Windows and Linux GUI frontends after adding the save editor panel.
+- Automated checks passed for `kprl`, `rlsave`, and the Windows/Linux GUI Go
+  packages.
+
 ## v1.3.3 - 2026-06-27
 
 Post-audit RealLive re-extraction regression fixes:

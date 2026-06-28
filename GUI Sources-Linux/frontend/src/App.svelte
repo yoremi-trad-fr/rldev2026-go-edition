@@ -16,7 +16,11 @@
     RldevG00ToPng,
     RldevPngToG00,
     RldevGanToXml,
-    RldevXmlToGan
+    RldevXmlToGan,
+    RldevSaveInfo,
+    RldevSaveGet,
+    RldevSaveSet,
+    RldevSaveDump
   } from '../wailsjs/go/main/App.js';
 
   let rldevSelectedOp = 'kprl_disasm';
@@ -48,6 +52,12 @@
   let rlPngXmlPath = '';
   let rlG00Format = 'auto';
   let rlGanFile = '';
+  let rlSaveFile = '';
+  let rlSaveRefs = 'intG[0] intG[6] intG[30] intG[31]';
+  let rlSaveAssignments = 'intG[6]=0 intG[30]=0';
+  let rlSaveBackup = true;
+  let rlSaveDumpAll = false;
+  let rlSaveDumpJson = false;
 
   const rldevOperations = [
     { id: '_rs1', label: 'KPRL / RLC', section: true },
@@ -61,7 +71,9 @@
     { id: 'g00_import', label: 'PNG → G00' },
     { id: '_rs4', label: 'ANIMATION (GAN)', section: true },
     { id: 'gan_to_xml', label: 'GAN → XML' },
-    { id: 'gan_from_xml', label: 'XML → GAN' }
+    { id: 'gan_from_xml', label: 'XML → GAN' },
+    { id: '_rs_save', label: 'SAVE', section: true },
+    { id: 'save_editor', label: 'RealLive save editor' }
   ];
 
   let pendingLines = [];
@@ -98,7 +110,7 @@
   onMount(async () => {
     EventsOn('log', (msg) => addLine(msg));
     addLine('RLdev 2026 - Go édition');
-    addLine('Prêt. Place les binaires dans ./bin : kprl16, rlc2026, vaconv, rlxml (ou .exe sous Windows).');
+    addLine('Prêt. Place les binaires dans ./bin : kprl16, rlc2026, vaconv, rlxml, rlsave (ou .exe sous Windows).');
     const kfn = await DefaultKFN();
     if (kfn && !rlKfnFile) {
       rlKfnFile = kfn;
@@ -185,6 +197,10 @@
     const f = await SelectFile('Select .gan/.ganxml', '*.gan;*.ganxml', 'GAN files');
     if (f) rlGanFile = f;
   }
+  async function browseRlSave() {
+    const f = await SelectFile('Select RealLive save', '*.sav;*.SAV', 'RealLive saves');
+    if (f) rlSaveFile = f;
+  }
 
   async function run(fn) {
     if (running) return;
@@ -241,6 +257,18 @@
   }
   function startGanFromXml() {
     run(() => RldevXmlToGan(rlGanFile, rlOutputDir));
+  }
+  function startSaveInfo() {
+    run(() => RldevSaveInfo(rlSaveFile));
+  }
+  function startSaveGet() {
+    run(() => RldevSaveGet(rlSaveFile, rlSaveRefs));
+  }
+  function startSaveSet() {
+    run(() => RldevSaveSet(rlSaveFile, rlSaveAssignments, rlSaveBackup));
+  }
+  function startSaveDump() {
+    run(() => RldevSaveDump(rlSaveFile, rlSaveDumpAll, rlSaveDumpJson));
   }
   async function stopProcess() {
     await StopProcess();
@@ -357,6 +385,24 @@
         <div class="form-group"><label>GANXML file :</label><div class="form-row"><input type="text" bind:value={rlGanFile} readonly /><button class="btn" on:click={browseRlGan}>Select</button></div></div>
         <div class="form-group"><label>Output folder :</label><div class="form-row"><input type="text" bind:value={rlOutputDir} readonly /><button class="btn" on:click={browseRlOutputDir}>Select</button></div></div>
         <div class="form-actions">{#if running}<span class="running-indicator"></span> Running...{:else}<button class="btn btn-primary" on:click={startGanFromXml} disabled={!rlGanFile || !rlOutputDir}>Convert</button>{/if}</div>
+
+      {:else if rldevSelectedOp === 'save_editor'}
+        <div class="form-title">RealLive save editor</div>
+        <div class="form-group"><label>Save file :</label><div class="form-row"><input type="text" bind:value={rlSaveFile} readonly /><button class="btn" on:click={browseRlSave}>Select</button></div></div>
+        <div class="form-group"><label>Variables :</label><div class="form-row"><input type="text" bind:value={rlSaveRefs} placeholder="intG[0] intG[6] intG[30]" /></div></div>
+        <div class="form-group"><label>Assignations :</label><div class="form-row"><input type="text" bind:value={rlSaveAssignments} placeholder="intG[6]=0 intG[30]=0" /></div></div>
+        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveBackup} /> Backup before write</label></div></div>
+        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveDumpAll} /> Dump all intG values</label><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveDumpJson} /> JSON</label></div></div>
+        <div class="form-actions">
+          {#if running}
+            <span class="running-indicator"></span> Running...
+          {:else}
+            <button class="btn" on:click={startSaveInfo} disabled={!rlSaveFile}>Info</button>
+            <button class="btn" on:click={startSaveGet} disabled={!rlSaveFile || !rlSaveRefs.trim()}>Get</button>
+            <button class="btn" on:click={startSaveDump} disabled={!rlSaveFile}>Dump</button>
+            <button class="btn btn-primary" on:click={startSaveSet} disabled={!rlSaveFile || !rlSaveAssignments.trim()}>Set</button>
+          {/if}
+        </div>
       {/if}
     </div>
   </div>

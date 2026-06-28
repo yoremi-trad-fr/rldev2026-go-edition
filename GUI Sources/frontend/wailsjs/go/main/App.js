@@ -78,6 +78,22 @@ export function RldevPngToG00(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['RldevPngToG00'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function RldevSaveDump(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RldevSaveDump'](arg1, arg2, arg3);
+}
+
+export function RldevSaveGet(arg1, arg2) {
+  return window['go']['main']['App']['RldevSaveGet'](arg1, arg2);
+}
+
+export function RldevSaveInfo(arg1) {
+  return window['go']['main']['App']['RldevSaveInfo'](arg1);
+}
+
+export function RldevSaveSet(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RldevSaveSet'](arg1, arg2, arg3);
+}
+
 export function RldevXmlToGan(arg1, arg2) {
   return window['go']['main']['App']['RldevXmlToGan'](arg1, arg2);
 }
