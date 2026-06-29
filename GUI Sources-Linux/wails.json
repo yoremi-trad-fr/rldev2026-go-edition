@@ -13,8 +13,8 @@
   "info": {
     "companyName": "Yoremi",
     "productName": "RLdev 2026 Go",
-    "productVersion": "1.3.4",
+    "productVersion": "1.3.5",
     "copyright": "Copyright (c) 2026 Yoremi",
-    "comments": "Linux GUI for the RLdev2026-Go RealLive toolchain version 1.3.4"
+    "comments": "Linux GUI for the RLdev2026-Go RealLive toolchain version 1.3.5"
   }
 }

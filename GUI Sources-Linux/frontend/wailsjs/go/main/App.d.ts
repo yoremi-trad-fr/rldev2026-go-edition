@@ -27,7 +27,17 @@ export function RldevSaveGet(arg1:string,arg2:string):Promise<string>;
 
 export function RldevSaveInfo(arg1:string):Promise<string>;
 
+export function RldevSaveMap(arg1:string,arg2:boolean):Promise<string>;
+
+export function RldevSaveDoctor(arg1:string,arg2:boolean):Promise<string>;
+
+export function RldevSaveDiff(arg1:string,arg2:string,arg3:boolean):Promise<string>;
+
 export function RldevSaveSet(arg1:string,arg2:string,arg3:boolean):Promise<string>;
+
+export function RldevSaveExport(arg1:string,arg2:string,arg3:boolean):Promise<string>;
+
+export function RldevSaveBuild(arg1:string,arg2:string,arg3:boolean):Promise<string>;
 
 export function RldevXmlToGan(arg1:string,arg2:string):Promise<string>;
 

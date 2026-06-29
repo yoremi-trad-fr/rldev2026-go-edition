@@ -67,7 +67,7 @@ html, body {
 .form-title { font-size: 17px; font-weight: 700; margin-bottom: 14px; padding-bottom: 6px; border-bottom: 2px solid var(--bg-list-selected); }
 .form-group { margin-bottom: 8px; }
 .form-group label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 3px; }
-.form-row { display: flex; gap: 6px; align-items: center; }
+.form-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .form-row input[type="text"] {
   flex: 1; height: 26px; padding: 0 8px; border: 1px solid var(--border); border-radius: 2px;
   font-size: 12px; font-family: Consolas, monospace; background: white; outline: none;
@@ -83,15 +83,21 @@ html, body {
 .btn-primary { background: var(--btn-primary); color: white; border-color: var(--btn-primary); font-weight: 600; padding: 0 24px; height: 30px; font-size: 13px; }
 .btn-primary:hover { background: var(--btn-primary-hover); }
 .btn-primary:disabled { background: #aaa; border-color: #aaa; cursor: not-allowed; }
-.form-actions { margin-top: 14px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.form-actions { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 
 /* Checkboxes */
-.checkbox-row { gap: 16px; }
+.checkbox-row { gap: 16px; row-gap: 8px; }
 .checkbox-label { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: normal; cursor: pointer; }
 .checkbox-label input[type="checkbox"] { margin: 0; cursor: pointer; }
 
 /* Console */
 .console-wrapper { border-top: 1px solid var(--border); flex-shrink: 0; display: flex; flex-direction: column; }
+.console-wrapper.resizing { user-select: none; }
+.console-resizer {
+  height: 7px; flex-shrink: 0; cursor: row-resize;
+  background: #242438; border-top: 1px solid #3a3a4a; border-bottom: 1px solid #11111b;
+}
+.console-resizer:hover, .console-resizer.resizing { background: #2f5f88; }
 .console-header { display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: #2a2a3a; border-bottom: 1px solid #3a3a4a; }
 .console-header span { color: #999; font-size: 11px; font-weight: 600; }
 .console-clear { background: transparent; border: 1px solid #555; color: #999; padding: 1px 8px; font-size: 10px; cursor: pointer; border-radius: 2px; }

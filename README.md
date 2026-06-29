@@ -1,4 +1,4 @@
-### Status update: `28/06/2026`
+### Status update: `29/06/2026`
 <table>
   <tr>
     <td align="center" width="100%">
@@ -6,6 +6,8 @@
     </td>
   </tr>
 </table>
+
+Update : 29/06/2026 : v1.3.5 adds parallel batch jobs for `rlsave map/doctor` and `vaconv`, removes project-specific save presets, and makes the GUI console resizable
 
 Update : 28/06/2026 : v1.3.4 adds `rlsave`, a RealLive save inspector/editor for `AVG_GLOBAL_SAVE` / `save999.sav` `intG` values, with Windows/Linux GUI integration and automatic backups before writes
 
@@ -133,7 +135,7 @@ rldev2026-go now behaves in the same way as OCaml when it comes to handling enco
 
 ### -BABEL release folder support: bundled runtime files are expected under `BABEL/rtl`
 
-### -RealLive save editor: `rlsave` and the GUI can inspect/edit `AVG_GLOBAL_SAVE` / `save999.sav` `intG` values with automatic backups
+### -RealLive save editor: `rlsave` and the GUI can inspect/edit `AVG_GLOBAL_SAVE` / `save999.sav` `intG` values, map and diagnose save folders, compare saves, export/import lossless text, and reset `read.sav` `seen[n]` progression entries with automatic backups and GUI profiles
 
 ### -ORG/KE text workflow: GUI `Extract text ORG` and `rlc --text-export/--text-import` export dialogue strings to editable `.utf` files and import translated text back into `.org/.ke` sources
 
@@ -260,13 +262,22 @@ The fix was checked against the warning-producing Little Busters!, Little
 Busters! EX, Kud Wafter, Tomoyo After 2005, Tomoyo After Memorial Edition 2010,
 and Tomoyo After Steam files.
 
-Version 1.3.4 adds `rlsave`, a RealLive save inspector/editor. It can decode
+Version 1.3.4 introduced `rlsave`, a RealLive save inspector/editor. It can decode
 compressed `.sav` bodies, identify global/game/system save kinds, read selected
 global `intG` values, dump all non-zero `intG` values, and write targeted
-`AVG_GLOBAL_SAVE` / `save999.sav` counters with timestamped backups. The Windows
-and Linux GUIs now expose the same workflow through a RealLive save editor panel,
-which is useful for route flags, one-shot animations, and other global progress
-counters without deleting regular save slots.
+`AVG_GLOBAL_SAVE` / `save999.sav` counters with timestamped backups. It also maps
+mixed save folders, recognises raw `read.sav` progression tables and raw system
+saves, exports saves to editable text, and rebuilds from lossless exports. The
+Windows and Linux GUIs expose the same wrapper workflow through a RealLive save
+editor panel, which is useful for route flags, one-shot animations, and other
+progress counters without deleting regular save slots.
+
+Version 1.3.5 polishes the save workflow for public use. The GUI now ships with
+generic `read.sav`, `save999.sav`, and raw-dword profiles instead of
+project-specific presets, the console panel can be resized while long operations
+run, and batch scans/conversions can use worker pools. `rlsave map` and
+`rlsave doctor` accept `-jobs`, while `vaconv` accepts `-jobs` / `-j` for folder
+conversions.
 
 ### BABEL runtime folder
 
@@ -333,11 +344,10 @@ default when the archive requires it.
 
 ### RealLive save editor (`rlsave`)
 
-`rlsave` inspects and edits RealLive `.sav` files. The first supported editing
-target is `AVG_GLOBAL_SAVE` / `save999.sav`, whose first 4000 32-bit values map
-to global `intG` variables. Regular save slots can already be decoded with
-`info`, but their variable banks are intentionally read-only until their layout
-is mapped per engine/version.
+`rlsave` inspects and edits RealLive `.sav` files. It supports compressed
+`AVG_GLOBAL_SAVE` / `save999.sav` global `intG` values, raw `read.sav`
+progression entries exposed as `seen[n]`, raw system saves, and regular
+compressed save slots for inspection/export.
 
 Examples:
 
@@ -346,10 +356,17 @@ rlsave.exe info SAVEDATA\save999.sav
 rlsave.exe get SAVEDATA\save999.sav intG[30] intG[0]
 rlsave.exe set SAVEDATA\save999.sav intG[30]=0 intG[0]=2
 rlsave.exe dump -json SAVEDATA\save999.sav
+rlsave.exe map SAVEDATA
+rlsave.exe get SAVEDATA\read.sav seen[100]
+rlsave.exe set SAVEDATA\read.sav seen[100]=0
+rlsave.exe export -lossless SAVEDATA\read.sav read.txt
+rlsave.exe build read.txt read-rebuilt.sav
 ```
 
 Writes create a timestamped `.bak-YYYYMMDD-HHMMSS` backup by default. Use
 `-no-backup` only when the save folder is already backed up elsewhere.
+`export` without `-lossless` is a readable report. `build` requires `-lossless`
+data so the binary header/body can be reconstructed safely after text edits.
 
 
 <table>

@@ -3,6 +3,27 @@
 This file tracks the RLdev2026 Go Edition beta history and the compatibility
 fixes validated during the project sessions.
 
+## v1.3.5 - 2026-06-29
+
+Batch and GUI polish:
+
+- Added `-jobs` to `rlsave map` and `rlsave doctor`, with automatic worker
+  sizing for recursive save-folder scans.
+- Added `-jobs` / `-j` to `vaconv` batch conversions so large image/audio/DAT
+  folders can be processed in parallel.
+- Made the Windows and Linux GUI console panel vertically resizable, which makes
+  long wrapper output easier to inspect without leaving the app.
+- Replaced project-specific save presets with generic `read.sav` progression,
+  `save999.sav` global flag, and low-level dword profiles.
+- Updated public save-editor examples so they no longer point at a private
+  route/test value.
+
+Validation:
+
+- Automated checks passed for `rlsave`, `vaconv`, and the touched GUI frontends.
+- Windows and Linux frontends rebuild successfully with the resizable console and
+  generic save profiles.
+
 ## v1.3.4 - 2026-06-28
 
 RealLive save tooling:
@@ -12,15 +33,38 @@ RealLive save tooling:
   size, compressed size, and uncompressed size.
 - `rlsave get`, `rlsave set`, and `rlsave dump` support `AVG_GLOBAL_SAVE` /
   `save999.sav` global `intG` values, with timestamped backups before writes.
+- `rlsave map` recursively inventories save folders and classifies compressed
+  game/global saves, raw `read.sav` progression saves, and raw system saves.
+- `rlsave export -lossless` writes editable text exports, including `seen[n]`
+  progression entries for `read.sav`; `rlsave build` rebuilds `.sav` files from
+  those lossless exports after edits.
+- `rlsave get/set` now also support `seen[n]` / `seenNNNN` aliases for
+  `read.sav` and low-level `dword[n]` body entries.
+- Added `rlsave diff` to compare two saves and report changed `intG`, `seen`,
+  or body dword entries.
+- Added `rlsave doctor` to run a non-destructive structural diagnostic on one
+  save or a save folder.
+- `read.sav` text exports now annotate `seen[n]` entries with the matching
+  `seenNNNN` / `seenNNNN.org` script hint.
 - Integrated the save editor into the Windows and Linux Wails GUIs with Info,
-  Get, Dump, and Set actions.
-- Regular game slots can be inspected for now; their variable banks remain
-  read-only until the per-slot layout is mapped safely.
+  Map, Doctor, Diff, Get, Dump, Set, Export, and Build actions, still using
+  `rlsave` as a wrapper backend; the panel also includes quick profiles for
+  common `read.sav` / `save999.sav` edits.
+- Regular game slots can be inspected and exported for now; their named
+  variable banks remain unmapped until the per-slot layout is decoded safely.
 
 Validation:
 
 - Confirmed the supplied CLANNAD 2007 `save999.sav` global flags can be read
-  through `rlsave`, including the Yukine-route `intG[6]` / `intG[30]` counters.
+  through `rlsave`, including representative route/progression counters.
+- Mapped the supplied multi-game save corpus across AIR, CLANNAD, Kud Wafter,
+  Little Busters!, Planetarian, and Tomoyo After with no unsupported save kind.
+- Confirmed CLANNAD `read.sav` exposes editable `seen[n]` progression entries
+  and that setting one to zero on a temporary copy preserves the save structure.
+- Confirmed `rlsave diff` reports a temporary-copy `seen[n]` edit correctly,
+  and `rlsave doctor` reports the original `read.sav` without warnings or errors.
+- Verified a CLANNAD `read.sav` lossless export/rebuild roundtrip is
+  byte-for-byte identical before edits.
 - Built the Windows and Linux GUI frontends after adding the save editor panel.
 - Automated checks passed for `kprl`, `rlsave`, and the Windows/Linux GUI Go
   packages.

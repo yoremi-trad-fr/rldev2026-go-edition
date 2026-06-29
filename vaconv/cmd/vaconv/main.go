@@ -19,7 +19,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/yoremi/rldev-go/vaconv/pkg/datasset"
 	"github.com/yoremi/rldev-go/vaconv/pkg/g00"
@@ -41,6 +43,8 @@ func main() {
 	audioFmt := flag.String("audio", "auto", "NWA audio output format: mp3, wav, or auto")
 	metafile := flag.String("m", "", "metadata XML file")
 	noMeta := flag.Bool("q", false, "disable metadata")
+	jobs := flag.Int("jobs", 0, "parallel jobs for batch conversions; 0 uses an automatic value")
+	flag.IntVar(jobs, "j", 0, "parallel jobs for batch conversions (alias for -jobs)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "%s %s - VisualArt's bitmap format converter\n\n", appName, appVersion)
@@ -90,12 +94,91 @@ func main() {
 		os.Exit(1)
 	}
 
-	for _, f := range files {
-		if err := convert(f, *verbose, *outdir, *outfile, inFmt, *g00Fmt, *audioFmt, *metafile, *noMeta); err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", f, err)
-			os.Exit(1)
+	opts := convertOptions{
+		verbose:  *verbose,
+		outdir:   *outdir,
+		outfile:  *outfile,
+		inFmt:    inFmt,
+		g00Fmt:   *g00Fmt,
+		audioFmt: *audioFmt,
+		metafile: *metafile,
+		noMeta:   *noMeta,
+	}
+	if err := convertFiles(files, opts, *jobs); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", appName, err)
+		os.Exit(1)
+	}
+}
+
+type convertOptions struct {
+	verbose  bool
+	outdir   string
+	outfile  string
+	inFmt    string
+	g00Fmt   string
+	audioFmt string
+	metafile string
+	noMeta   bool
+}
+
+func convertFiles(files []string, opts convertOptions, jobs int) error {
+	jobs = batchJobs(len(files), jobs)
+	if jobs <= 1 {
+		for _, file := range files {
+			if err := convert(file, opts.verbose, opts.outdir, opts.outfile, opts.inFmt, opts.g00Fmt, opts.audioFmt, opts.metafile, opts.noMeta); err != nil {
+				return fmt.Errorf("%s: %w", file, err)
+			}
+		}
+		return nil
+	}
+
+	errs := make([]error, len(files))
+	indexes := make(chan int)
+	var wg sync.WaitGroup
+	for worker := 0; worker < jobs; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range indexes {
+				file := files[index]
+				if err := convert(file, opts.verbose, opts.outdir, opts.outfile, opts.inFmt, opts.g00Fmt, opts.audioFmt, opts.metafile, opts.noMeta); err != nil {
+					errs[index] = err
+				}
+			}
+		}()
+	}
+	for index := range files {
+		indexes <- index
+	}
+	close(indexes)
+	wg.Wait()
+
+	for index, err := range errs {
+		if err != nil {
+			return fmt.Errorf("%s: %w", files[index], err)
 		}
 	}
+	return nil
+}
+
+func batchJobs(count, requested int) int {
+	if count <= 1 {
+		return 1
+	}
+	jobs := requested
+	if jobs <= 0 {
+		jobs = runtime.NumCPU()
+		if jobs > 4 {
+			jobs = 4
+		}
+	}
+	if jobs < 1 {
+		jobs = 1
+	}
+	if jobs > count {
+		jobs = count
+	}
+	return jobs
 }
 
 func convert(file string, verbose bool, outdir, outfile, inFmt, g00Fmt, audioFmt, metafile string, noMeta bool) error {

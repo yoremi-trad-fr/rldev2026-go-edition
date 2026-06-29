@@ -821,6 +821,66 @@ func (a *App) RldevSaveInfo(saveFile string) string {
 	return ""
 }
 
+func (a *App) RldevSaveMap(savePath string, jsonOutput bool) string {
+	a.log("========================================")
+	a.log("  RLdev - Cartographie sauvegardes RealLive")
+	a.log("========================================")
+
+	if err := required("fichier ou dossier .sav", savePath); err != nil {
+		return a.failIf(err)
+	}
+	args := []string{"map"}
+	if jsonOutput {
+		args = append(args, "-json")
+	}
+	args = append(args, savePath)
+	if err := a.runTool("rlsave", args...); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+func (a *App) RldevSaveDoctor(savePath string, jsonOutput bool) string {
+	a.log("========================================")
+	a.log("  RLdev - Diagnostic sauvegardes RealLive")
+	a.log("========================================")
+
+	if err := required("fichier ou dossier .sav", savePath); err != nil {
+		return a.failIf(err)
+	}
+	args := []string{"doctor"}
+	if jsonOutput {
+		args = append(args, "-json")
+	}
+	args = append(args, savePath)
+	if err := a.runTool("rlsave", args...); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+func (a *App) RldevSaveDiff(beforeSave, afterSave string, jsonOutput bool) string {
+	a.log("========================================")
+	a.log("  RLdev - Comparaison sauvegardes RealLive")
+	a.log("========================================")
+
+	if err := required("premiere sauvegarde .sav", beforeSave); err != nil {
+		return a.failIf(err)
+	}
+	if err := required("deuxieme sauvegarde .sav", afterSave); err != nil {
+		return a.failIf(err)
+	}
+	args := []string{"diff"}
+	if jsonOutput {
+		args = append(args, "-json")
+	}
+	args = append(args, beforeSave, afterSave)
+	if err := a.runTool("rlsave", args...); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
 func (a *App) RldevSaveGet(saveFile, refs string) string {
 	a.log("========================================")
 	a.log("  RLdev - Lecture sauvegarde RealLive")
@@ -884,6 +944,62 @@ func (a *App) RldevSaveDump(saveFile string, includeAll, jsonOutput bool) string
 	if err := a.runTool("rlsave", args...); err != nil {
 		return err.Error()
 	}
+	return ""
+}
+
+func (a *App) RldevSaveExport(saveFile, outputText string, lossless bool) string {
+	a.log("========================================")
+	a.log("  RLdev - Export texte sauvegarde RealLive")
+	a.log("========================================")
+
+	if err := required("fichier .sav", saveFile); err != nil {
+		return a.failIf(err)
+	}
+	if err := required("fichier texte de sortie", outputText); err != nil {
+		return a.failIf(err)
+	}
+	outputText = ensurePathExtension(outputText, ".txt")
+	args := []string{"export"}
+	if lossless {
+		args = append(args, "-lossless")
+	}
+	args = append(args, saveFile, outputText)
+	if err := a.runTool("rlsave", args...); err != nil {
+		return err.Error()
+	}
+	a.logOK("Export termine.")
+	return ""
+}
+
+func ensurePathExtension(path, ext string) string {
+	path = strings.TrimSpace(path)
+	current := filepath.Ext(path)
+	if current == "" || current == "." {
+		return path + ext
+	}
+	return path
+}
+
+func (a *App) RldevSaveBuild(inputText, outputSave string, backup bool) string {
+	a.log("========================================")
+	a.log("  RLdev - Rebuild sauvegarde RealLive")
+	a.log("========================================")
+
+	if err := required("fichier texte", inputText); err != nil {
+		return a.failIf(err)
+	}
+	if err := required("fichier .sav de sortie", outputSave); err != nil {
+		return a.failIf(err)
+	}
+	args := []string{"build"}
+	if !backup {
+		args = append(args, "-no-backup")
+	}
+	args = append(args, inputText, outputSave)
+	if err := a.runTool("rlsave", args...); err != nil {
+		return err.Error()
+	}
+	a.logOK("Sauvegarde reconstruite.")
 	return ""
 }
 

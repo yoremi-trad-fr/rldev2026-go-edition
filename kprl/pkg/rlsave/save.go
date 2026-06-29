@@ -13,18 +13,25 @@ import (
 )
 
 const (
-	KindUnknown    Kind = "unknown"
-	KindGame       Kind = "game"
-	KindGlobal     Kind = "global"
-	KindSystem     Kind = "system"
-	GlobalIntCount      = 4000
+	KindUnknown         Kind      = "unknown"
+	KindGame            Kind      = "game"
+	KindGlobal          Kind      = "global"
+	KindRead            Kind      = "read"
+	KindSystem          Kind      = "system"
+	ContainerUnknown    Container = "unknown"
+	ContainerCompressed Container = "compressed"
+	ContainerRaw        Container = "raw"
+	ContainerRawSized   Container = "raw-sized"
+	GlobalIntCount                = 4000
 )
 
 type Kind string
+type Container string
 
 type Save struct {
 	Path             string
 	Kind             Kind
+	Container        Container
 	Label            string
 	HeaderLen        int
 	CompressedSize   int
@@ -62,6 +69,18 @@ func Parse(raw []byte) (*Save, error) {
 		return nil, fmt.Errorf("save file too small: %d bytes", len(raw))
 	}
 
+	if save, err := parseCompressed(raw); err == nil {
+		return save, nil
+	}
+	if save, err := parseRaw(raw); err == nil {
+		return save, nil
+	}
+
+	headerLen := int(le32(raw, 0))
+	return nil, fmt.Errorf("unsupported save container: first dword=%d file size=%d label=%q", headerLen, len(raw), readCString(raw, 0x18, 64))
+}
+
+func parseCompressed(raw []byte) (*Save, error) {
 	headerLen := int(le32(raw, 0))
 	if headerLen < 32 || headerLen+8 > len(raw) {
 		return nil, fmt.Errorf("invalid save header length %d for file size %d", headerLen, len(raw))
@@ -83,11 +102,47 @@ func Parse(raw []byte) (*Save, error) {
 
 	label := readCString(raw, 0x18, 64)
 	return &Save{
-		Kind:             detectKind(label),
+		Kind:             detectKind(label, ContainerCompressed),
+		Container:        ContainerCompressed,
 		Label:            label,
 		HeaderLen:        headerLen,
 		CompressedSize:   compSize,
 		UncompressedSize: uncompSize,
+		Body:             body,
+		raw:              bytes.Clone(raw),
+	}, nil
+}
+
+func parseRaw(raw []byte) (*Save, error) {
+	label := readCString(raw, 0x18, 64)
+	if !isPlausibleLabel(label) {
+		return nil, fmt.Errorf("raw save label is not plausible: %q", label)
+	}
+
+	first := int(le32(raw, 0))
+	headerLen := 0
+	container := ContainerRaw
+	switch {
+	case first >= 32 && first < len(raw):
+		headerLen = first
+	case first == len(raw) && len(raw) > 0x98:
+		headerLen = 0x98
+		container = ContainerRawSized
+	default:
+		return nil, fmt.Errorf("raw save has no recognizable header/body split")
+	}
+	if headerLen < 32 || headerLen > len(raw) {
+		return nil, fmt.Errorf("invalid raw save header length %d for file size %d", headerLen, len(raw))
+	}
+
+	body := bytes.Clone(raw[headerLen:])
+	return &Save{
+		Kind:             detectKind(label, container),
+		Container:        container,
+		Label:            label,
+		HeaderLen:        headerLen,
+		CompressedSize:   0,
+		UncompressedSize: len(body),
 		Body:             body,
 		raw:              bytes.Clone(raw),
 	}, nil
@@ -102,6 +157,22 @@ func (s *Save) Bytes() ([]byte, error) {
 	}
 	if len(s.Body) == 0 {
 		return nil, fmt.Errorf("empty save body")
+	}
+
+	if s.Container == "" {
+		s.Container = ContainerCompressed
+	}
+	if s.Container == ContainerRaw || s.Container == ContainerRawSized {
+		out := make([]byte, s.HeaderLen+len(s.Body))
+		copy(out[:s.HeaderLen], s.raw[:s.HeaderLen])
+		copy(out[s.HeaderLen:], s.Body)
+		switch s.Container {
+		case ContainerRaw:
+			put32(out, 0, uint32(s.HeaderLen))
+		case ContainerRawSized:
+			put32(out, 0, uint32(len(out)))
+		}
+		return out, nil
 	}
 
 	payload := compression.Compress(s.Body)
@@ -158,8 +229,13 @@ func (s *Save) WriteFile(path string, opts WriteOptions) (WriteResult, error) {
 		return result, err
 	}
 	s.raw = bytes.Clone(out)
-	s.CompressedSize = int(le32(out, s.HeaderLen))
-	s.UncompressedSize = int(le32(out, s.HeaderLen+4))
+	if s.Container == ContainerCompressed {
+		s.CompressedSize = int(le32(out, s.HeaderLen))
+		s.UncompressedSize = int(le32(out, s.HeaderLen+4))
+	} else {
+		s.CompressedSize = 0
+		s.UncompressedSize = len(s.Body)
+	}
 	return result, nil
 }
 
@@ -213,17 +289,36 @@ func (s *Save) checkGlobalIntIndex(index int) error {
 	return nil
 }
 
-func detectKind(label string) Kind {
+func detectKind(label string, container Container) Kind {
 	switch label {
 	case "AVG_GLOBAL_SAVE":
 		return KindGlobal
 	case "AVG_SYSTEM_SAVE":
 		return KindSystem
 	case "":
+		if container == ContainerCompressed {
+			return KindGame
+		}
 		return KindUnknown
 	default:
+		if container == ContainerRaw || container == ContainerRawSized {
+			return KindRead
+		}
 		return KindGame
 	}
+}
+
+func isPlausibleLabel(label string) bool {
+	if label == "" || len(label) > 63 {
+		return false
+	}
+	for i := 0; i < len(label); i++ {
+		ch := label[i]
+		if ch < 0x20 || ch == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func le32(buf []byte, off int) uint32 {

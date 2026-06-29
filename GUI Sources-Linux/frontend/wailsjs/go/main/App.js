@@ -54,8 +54,28 @@ export function RldevSaveInfo(arg1) {
   return window['go']['main']['App']['RldevSaveInfo'](arg1);
 }
 
+export function RldevSaveMap(arg1, arg2) {
+  return window['go']['main']['App']['RldevSaveMap'](arg1, arg2);
+}
+
+export function RldevSaveDoctor(arg1, arg2) {
+  return window['go']['main']['App']['RldevSaveDoctor'](arg1, arg2);
+}
+
+export function RldevSaveDiff(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RldevSaveDiff'](arg1, arg2, arg3);
+}
+
 export function RldevSaveSet(arg1, arg2, arg3) {
   return window['go']['main']['App']['RldevSaveSet'](arg1, arg2, arg3);
+}
+
+export function RldevSaveExport(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RldevSaveExport'](arg1, arg2, arg3);
+}
+
+export function RldevSaveBuild(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RldevSaveBuild'](arg1, arg2, arg3);
 }
 
 export function RldevXmlToGan(arg1, arg2) {

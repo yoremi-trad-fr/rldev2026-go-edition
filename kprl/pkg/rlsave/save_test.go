@@ -1,8 +1,10 @@
 package rlsave
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yoremi/rldev-go/pkg/compression"
@@ -104,6 +106,153 @@ func TestWriteFileCreatesBackup(t *testing.T) {
 	}
 }
 
+func TestParseRawReadSave(t *testing.T) {
+	raw := makeRawSave("CLANNAD", ContainerRaw, 64)
+	put32(raw, 0x98+4, 3)
+
+	save, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if save.Kind != KindRead {
+		t.Fatalf("kind = %s, want %s", save.Kind, KindRead)
+	}
+	if save.Container != ContainerRaw {
+		t.Fatalf("container = %s, want %s", save.Container, ContainerRaw)
+	}
+	if got, want := le32(save.Body, 4), uint32(3); got != want {
+		t.Fatalf("body dword[1] = %d, want %d", got, want)
+	}
+	if got, want := mustReadProgress(t, save, 1), uint32(3); got != want {
+		t.Fatalf("seen[1] = %d, want %d", got, want)
+	}
+
+	rewritten, err := save.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := le32(rewritten, 0), uint32(0x98); got != want {
+		t.Fatalf("first dword = %d, want %d", got, want)
+	}
+}
+
+func TestParseRawSizedSystemSave(t *testing.T) {
+	raw := makeRawSave("AVG_SYSTEM_SAVE", ContainerRawSized, 96)
+
+	save, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if save.Kind != KindSystem {
+		t.Fatalf("kind = %s, want %s", save.Kind, KindSystem)
+	}
+	if save.Container != ContainerRawSized {
+		t.Fatalf("container = %s, want %s", save.Container, ContainerRawSized)
+	}
+
+	rewritten, err := save.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := le32(rewritten, 0), uint32(len(rewritten)); got != want {
+		t.Fatalf("first dword = %d, want file size %d", got, want)
+	}
+}
+
+func TestExportImportRawReadDWordEdit(t *testing.T) {
+	raw := makeRawSave("CLANNAD", ContainerRaw, 64)
+	put32(raw, 0x98+4, 3)
+
+	save, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := ExportText(&buf, save, ExportOptions{Lossless: true}); err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Replace(buf.String(), "seen[1] = 3", "seen[1] = 0", 1)
+
+	rebuilt, err := ImportText(strings.NewReader(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := le32(rebuilt.Body, 4), uint32(0); got != want {
+		t.Fatalf("body dword[1] = %d, want %d", got, want)
+	}
+}
+
+func TestDiffGlobalInts(t *testing.T) {
+	before, err := Parse(makeGlobalSave(t, "AVG_GLOBAL_SAVE", map[int]int32{30: 1, 31: 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := Parse(makeGlobalSave(t, "AVG_GLOBAL_SAVE", map[int]int32{30: 0, 31: 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := DiffSaves(before, after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(diff.Changes), 1; got != want {
+		t.Fatalf("changes = %d, want %d: %#v", got, want, diff.Changes)
+	}
+	change := diff.Changes[0]
+	if change.Name != "intG[30]" || change.Old != 1 || change.New != 0 {
+		t.Fatalf("unexpected change: %#v", change)
+	}
+}
+
+func TestDiffRawReadProgress(t *testing.T) {
+	rawBefore := makeRawSave("CLANNAD", ContainerRaw, 64)
+	put32(rawBefore, 0x98+4, 3)
+	rawAfter := makeRawSave("CLANNAD", ContainerRaw, 64)
+	put32(rawAfter, 0x98+4, 4)
+
+	before, err := Parse(rawBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := Parse(rawAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff, err := DiffSaves(before, after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(diff.Changes), 1; got != want {
+		t.Fatalf("changes = %d, want %d: %#v", got, want, diff.Changes)
+	}
+	change := diff.Changes[0]
+	if change.Name != "seen[1]" || change.Old != 3 || change.New != 4 {
+		t.Fatalf("unexpected change: %#v", change)
+	}
+}
+
+func TestDiagnoseSaveReportsReadProgress(t *testing.T) {
+	raw := makeRawSave("CLANNAD", ContainerRaw, 64)
+	put32(raw, 0x98+4, 3)
+	save, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	findings := DiagnoseSave(save)
+	found := false
+	for _, finding := range findings {
+		if finding.Severity == SeverityInfo && strings.Contains(finding.Message, "highest script seen[1]=3") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("read progress finding missing: %#v", findings)
+	}
+}
+
 func makeGlobalSave(t *testing.T, label string, ints map[int]int32) []byte {
 	t.Helper()
 	body := make([]byte, 51296)
@@ -130,9 +279,35 @@ func makeGlobalSave(t *testing.T, label string, ints map[int]int32) []byte {
 	return raw
 }
 
+func makeRawSave(label string, container Container, bodySize int) []byte {
+	headerLen := 0x98
+	raw := make([]byte, headerLen+bodySize)
+	switch container {
+	case ContainerRawSized:
+		put32(raw, 0, uint32(len(raw)))
+	default:
+		put32(raw, 0, uint32(headerLen))
+	}
+	put32(raw, 4, 10002)
+	copy(raw[0x18:], []byte(label))
+	if label != "" {
+		raw[0x18+len(label)] = 0
+	}
+	return raw
+}
+
 func mustGlobalInt(t *testing.T, save *Save, index int) int32 {
 	t.Helper()
 	value, err := save.GlobalInt(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func mustReadProgress(t *testing.T, save *Save, seen int) uint32 {
+	t.Helper()
+	value, err := save.ReadProgress(seen)
 	if err != nil {
 		t.Fatal(err)
 	}

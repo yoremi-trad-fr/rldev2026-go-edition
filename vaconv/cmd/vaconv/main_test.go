@@ -46,3 +46,15 @@ func TestExpandInputFilesReportsEmptyDirectoryForFormat(t *testing.T) {
 		t.Fatalf("expected error to mention .g00, got %v", err)
 	}
 }
+
+func TestBatchJobsClampsRequestedValue(t *testing.T) {
+	if got := batchJobs(3, 10); got != 3 {
+		t.Fatalf("batchJobs clamps to file count = %d, want 3", got)
+	}
+	if got := batchJobs(3, 1); got != 1 {
+		t.Fatalf("batchJobs explicit sequential = %d, want 1", got)
+	}
+	if got := batchJobs(1, 0); got != 1 {
+		t.Fatalf("batchJobs single file = %d, want 1", got)
+	}
+}

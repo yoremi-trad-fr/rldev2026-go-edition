@@ -18,15 +18,24 @@
     RldevGanToXml,
     RldevXmlToGan,
     RldevSaveInfo,
+    RldevSaveMap,
+    RldevSaveDoctor,
+    RldevSaveDiff,
     RldevSaveGet,
     RldevSaveSet,
-    RldevSaveDump
+    RldevSaveDump,
+    RldevSaveExport,
+    RldevSaveBuild
   } from '../wailsjs/go/main/App.js';
 
   let rldevSelectedOp = 'kprl_disasm';
   let running = false;
   let consoleLines = [];
   let consoleEl;
+  let consoleHeight = 160;
+  let consoleResizing = false;
+  let consoleResizeStartY = 0;
+  let consoleResizeStartHeight = 160;
 
   let rlSeenFile = '';
   let rlTemplateSeenFile = '';
@@ -52,12 +61,21 @@
   let rlPngXmlPath = '';
   let rlG00Format = 'auto';
   let rlGanFile = '';
+  let rlSaveMapPath = '';
   let rlSaveFile = '';
-  let rlSaveRefs = 'intG[0] intG[6] intG[30] intG[31]';
-  let rlSaveAssignments = 'intG[6]=0 intG[30]=0';
+  let rlSaveCompareFile = '';
+  let rlSaveProfile = 'read_progress';
+  let rlSaveRefs = 'seen[1] seen[100] dword[1]';
+  let rlSaveAssignments = 'seen[1]=0';
+  let rlSaveTextFile = '';
+  let rlSaveBuildOutput = '';
   let rlSaveBackup = true;
+  let rlSaveLossless = true;
+  let rlSaveMapJson = false;
   let rlSaveDumpAll = false;
   let rlSaveDumpJson = false;
+  let rlSaveDoctorJson = false;
+  let rlSaveDiffJson = false;
 
   const rldevOperations = [
     { id: '_rs1', label: 'KPRL / RLC', section: true },
@@ -74,6 +92,27 @@
     { id: 'gan_from_xml', label: 'XML → GAN' },
     { id: '_rs_save', label: 'SAVE', section: true },
     { id: 'save_editor', label: 'RealLive save editor' }
+  ];
+
+  const saveProfiles = [
+    {
+      id: 'read_progress',
+      label: 'read.sav progression',
+      refs: 'seen[1] seen[100] seen[1000]',
+      assignments: 'seen[1]=0'
+    },
+    {
+      id: 'global_flags',
+      label: 'save999 intG flags',
+      refs: 'intG[0] intG[1] intG[30] intG[31]',
+      assignments: 'intG[1]=0'
+    },
+    {
+      id: 'raw_dwords',
+      label: 'low-level dwords',
+      refs: 'dword[0] dword[1] dword[2]',
+      assignments: 'dword[1]=0'
+    }
   ];
 
   let pendingLines = [];
@@ -118,7 +157,33 @@
     }
   });
 
-  onDestroy(() => { EventsOff('log'); });
+  onDestroy(() => {
+    EventsOff('log');
+    stopConsoleResize();
+  });
+
+  function startConsoleResize(event) {
+    event.preventDefault();
+    consoleResizing = true;
+    consoleResizeStartY = event.clientY;
+    consoleResizeStartHeight = consoleHeight;
+    window.addEventListener('mousemove', resizeConsole);
+    window.addEventListener('mouseup', stopConsoleResize);
+  }
+
+  function resizeConsole(event) {
+    if (!consoleResizing) return;
+    const maxHeight = Math.max(180, window.innerHeight - 130);
+    const nextHeight = consoleResizeStartHeight + (consoleResizeStartY - event.clientY);
+    consoleHeight = Math.min(maxHeight, Math.max(96, nextHeight));
+  }
+
+  function stopConsoleResize() {
+    if (!consoleResizing) return;
+    consoleResizing = false;
+    window.removeEventListener('mousemove', resizeConsole);
+    window.removeEventListener('mouseup', stopConsoleResize);
+  }
 
   async function browseRlSeen() {
     const f = await SelectFile('Select SEEN.txt', '*.txt;*.TXT', 'SEEN archives');
@@ -201,6 +266,30 @@
     const f = await SelectFile('Select RealLive save', '*.sav;*.SAV', 'RealLive saves');
     if (f) rlSaveFile = f;
   }
+  async function browseRlSaveCompare() {
+    const f = await SelectFile('Select RealLive save to compare', '*.sav;*.SAV', 'RealLive saves');
+    if (f) rlSaveCompareFile = f;
+  }
+  async function browseRlSaveMapFile() {
+    const f = await SelectFile('Select RealLive save', '*.sav;*.SAV', 'RealLive saves');
+    if (f) rlSaveMapPath = f;
+  }
+  async function browseRlSaveMapDir() {
+    const d = await SelectDirectory('Select folder with RealLive saves');
+    if (d) rlSaveMapPath = d;
+  }
+  async function browseRlSaveTextInput() {
+    const f = await SelectFile('Select rlsave text export', '*.txt;*.TXT;*.rlsavetxt', 'rlsave text exports');
+    if (f) rlSaveTextFile = f;
+  }
+  async function browseRlSaveTextOutput() {
+    const f = await SelectSaveFile('Save rlsave text export as', 'save.txt', '*.txt;*.TXT;*.rlsavetxt', 'rlsave text exports');
+    if (f) rlSaveTextFile = f;
+  }
+  async function browseRlSaveBuildOutput() {
+    const f = await SelectSaveFile('Save rebuilt RealLive save as', 'rebuilt.sav', '*.sav;*.SAV', 'RealLive saves');
+    if (f) rlSaveBuildOutput = f;
+  }
 
   async function run(fn) {
     if (running) return;
@@ -261,6 +350,15 @@
   function startSaveInfo() {
     run(() => RldevSaveInfo(rlSaveFile));
   }
+  function startSaveMap() {
+    run(() => RldevSaveMap(rlSaveMapPath || rlSaveFile, rlSaveMapJson));
+  }
+  function startSaveDoctor() {
+    run(() => RldevSaveDoctor(rlSaveMapPath || rlSaveFile, rlSaveDoctorJson));
+  }
+  function startSaveDiff() {
+    run(() => RldevSaveDiff(rlSaveFile, rlSaveCompareFile, rlSaveDiffJson));
+  }
   function startSaveGet() {
     run(() => RldevSaveGet(rlSaveFile, rlSaveRefs));
   }
@@ -269,6 +367,18 @@
   }
   function startSaveDump() {
     run(() => RldevSaveDump(rlSaveFile, rlSaveDumpAll, rlSaveDumpJson));
+  }
+  function startSaveExport() {
+    run(() => RldevSaveExport(rlSaveFile, rlSaveTextFile, rlSaveLossless));
+  }
+  function startSaveBuild() {
+    run(() => RldevSaveBuild(rlSaveTextFile, rlSaveBuildOutput, rlSaveBackup));
+  }
+  function applySaveProfile() {
+    const profile = saveProfiles.find((item) => item.id === rlSaveProfile);
+    if (!profile) return;
+    rlSaveRefs = profile.refs;
+    rlSaveAssignments = profile.assignments;
   }
   async function stopProcess() {
     await StopProcess();
@@ -388,18 +498,28 @@
 
       {:else if rldevSelectedOp === 'save_editor'}
         <div class="form-title">RealLive save editor</div>
+        <div class="form-group"><label>Profile :</label><div class="form-row"><select bind:value={rlSaveProfile}>{#each saveProfiles as profile}<option value={profile.id}>{profile.label}</option>{/each}</select><button class="btn" on:click={applySaveProfile}>Apply</button></div></div>
+        <div class="form-group"><label>Map target :</label><div class="form-row"><input type="text" bind:value={rlSaveMapPath} readonly placeholder="File or folder" /><button class="btn" on:click={browseRlSaveMapFile}>File</button><button class="btn" on:click={browseRlSaveMapDir}>Folder</button></div></div>
         <div class="form-group"><label>Save file :</label><div class="form-row"><input type="text" bind:value={rlSaveFile} readonly /><button class="btn" on:click={browseRlSave}>Select</button></div></div>
-        <div class="form-group"><label>Variables :</label><div class="form-row"><input type="text" bind:value={rlSaveRefs} placeholder="intG[0] intG[6] intG[30]" /></div></div>
-        <div class="form-group"><label>Assignations :</label><div class="form-row"><input type="text" bind:value={rlSaveAssignments} placeholder="intG[6]=0 intG[30]=0" /></div></div>
-        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveBackup} /> Backup before write</label></div></div>
-        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveDumpAll} /> Dump all intG values</label><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveDumpJson} /> JSON</label></div></div>
+        <div class="form-group"><label>Compare with :</label><div class="form-row"><input type="text" bind:value={rlSaveCompareFile} readonly /><button class="btn" on:click={browseRlSaveCompare}>Select</button></div></div>
+        <div class="form-group"><label>Variables :</label><div class="form-row"><input type="text" bind:value={rlSaveRefs} placeholder="intG[0] seen[100] dword[1]" /></div></div>
+        <div class="form-group"><label>Assignations :</label><div class="form-row"><input type="text" bind:value={rlSaveAssignments} placeholder="intG[30]=0 seen[100]=0" /></div></div>
+        <div class="form-group"><label>Text export :</label><div class="form-row"><input type="text" bind:value={rlSaveTextFile} readonly /><button class="btn" on:click={browseRlSaveTextOutput}>Export path</button><button class="btn" on:click={browseRlSaveTextInput}>Build input</button></div></div>
+        <div class="form-group"><label>Rebuilt save :</label><div class="form-row"><input type="text" bind:value={rlSaveBuildOutput} readonly /><button class="btn" on:click={browseRlSaveBuildOutput}>Select</button></div></div>
+        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveBackup} /> Backup before write</label><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveLossless} /> Lossless export</label></div></div>
+        <div class="form-group"><div class="form-row checkbox-row"><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveMapJson} /> Map JSON</label><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveDoctorJson} /> Doctor JSON</label><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveDiffJson} /> Diff JSON</label><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveDumpAll} /> Dump all intG values</label><label class="checkbox-label"><input type="checkbox" bind:checked={rlSaveDumpJson} /> Dump JSON</label></div></div>
         <div class="form-actions">
           {#if running}
             <span class="running-indicator"></span> Running...
           {:else}
+            <button class="btn" on:click={startSaveMap} disabled={!rlSaveMapPath && !rlSaveFile}>Map</button>
+            <button class="btn" on:click={startSaveDoctor} disabled={!rlSaveMapPath && !rlSaveFile}>Doctor</button>
             <button class="btn" on:click={startSaveInfo} disabled={!rlSaveFile}>Info</button>
+            <button class="btn" on:click={startSaveDiff} disabled={!rlSaveFile || !rlSaveCompareFile}>Diff</button>
             <button class="btn" on:click={startSaveGet} disabled={!rlSaveFile || !rlSaveRefs.trim()}>Get</button>
             <button class="btn" on:click={startSaveDump} disabled={!rlSaveFile}>Dump</button>
+            <button class="btn" on:click={startSaveExport} disabled={!rlSaveFile || !rlSaveTextFile}>Export</button>
+            <button class="btn" on:click={startSaveBuild} disabled={!rlSaveTextFile || !rlSaveBuildOutput}>Build</button>
             <button class="btn btn-primary" on:click={startSaveSet} disabled={!rlSaveFile || !rlSaveAssignments.trim()}>Set</button>
           {/if}
         </div>
@@ -407,7 +527,8 @@
     </div>
   </div>
 
-  <div class="console-wrapper">
+  <div class="console-wrapper" class:resizing={consoleResizing}>
+    <div class="console-resizer" class:resizing={consoleResizing} on:mousedown={startConsoleResize}></div>
     <div class="console-header">
       <span>Console</span>
       <div>
@@ -415,7 +536,7 @@
         <button class="console-clear" on:click={clearConsole}>Clear</button>
       </div>
     </div>
-    <div class="console" bind:this={consoleEl}>
+    <div class="console" bind:this={consoleEl} style:height={consoleHeight + 'px'}>
       {#each consoleLines as line}
         <div class={line.cls}>{line.text}</div>
       {/each}
